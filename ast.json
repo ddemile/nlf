@@ -1,0 +1,90 @@
+{
+  "type": "program",
+  "body": [
+    {
+      "type": "expression",
+      "expression": {
+        "type": "assignment",
+        "left": {
+          "type": "variable",
+          "value": "a"
+        },
+        "right": {
+          "type": "literal",
+          "value": 2
+        }
+      }
+    },
+    {
+      "type": "expression",
+      "expression": {
+        "type": "assignment",
+        "left": {
+          "type": "variable",
+          "value": "b"
+        },
+        "right": {
+          "type": "literal",
+          "value": 0
+        }
+      }
+    },
+    {
+      "type": "if",
+      "condition": {
+        "type": "literal",
+        "value": true
+      },
+      "statements": [
+        {
+          "type": "for",
+          "left": {
+            "type": "literal",
+            "value": 0
+          },
+          "right": {
+            "type": "literal",
+            "value": 10
+          },
+          "statements": [
+            {
+              "type": "expression",
+              "expression": {
+                "type": "assignment",
+                "left": {
+                  "type": "variable",
+                  "value": "b"
+                },
+                "right": {
+                  "type": "binary",
+                  "left": {
+                    "type": "variable",
+                    "value": "b"
+                  },
+                  "operator": "+",
+                  "right": {
+                    "type": "literal",
+                    "value": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "expression",
+      "expression": {
+        "type": "call",
+        "name": "println",
+        "arguments": [
+          {
+            "type": "variable",
+            "value": "b"
+          }
+        ]
+      }
+    }
+  ]
+}

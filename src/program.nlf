@@ -1,0 +1,9 @@
+a = 2
+b = 0
+if true {
+    for 0..10 {
+        b = b + 1
+    }
+}
+
+println(b)
