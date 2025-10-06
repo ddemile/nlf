@@ -1,0 +1,13 @@
+if true == true {
+    c = 15
+    println(pow(c, 2) + 2, test)
+}
+
+a = "test"
+
+fn test(a, b, c) {
+    println(a + b * c)
+}
+
+test(1, 2, 3)
+
