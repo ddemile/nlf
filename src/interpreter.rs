@@ -1,7 +1,6 @@
-use std::{collections::HashMap, fmt::{self, format}, ops::Index};
+use std::{collections::HashMap, fmt};
 
 use lazy_static::lazy_static;
-use serde::de::value;
 
 use crate::{
     lexer::Token,
@@ -45,8 +44,7 @@ lazy_static! {
                         ValueHolder::Int(value) => format!("{value}"),
                         ValueHolder::Bool(value) => format!("{value}"),
                         ValueHolder::Fn(Function { .. }) => format!("fn()"),
-                        ValueHolder::Void => format!("Void"),
-                        _ => panic!("[Invalid type]"), 
+                        ValueHolder::Void => format!("Void")
                     }
                 }).collect();
 
