@@ -1,0 +1,13 @@
+let grade = 20
+
+for i in 0.. {
+    println(i)
+    if i >= 100 {
+        breaking()
+    }
+}
+
+fn breaking() {
+    // Should not be able to break the outer loop
+    break;
+}

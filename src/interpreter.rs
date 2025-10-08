@@ -1,11 +1,33 @@
-use std::{collections::HashMap, fmt::format, ops::Index};
+use std::{collections::HashMap, fmt::{self, format}, ops::Index};
 
 use lazy_static::lazy_static;
+use serde::de::value;
 
 use crate::{
     lexer::Token,
-    parser::{Argument, Expression, Function, LiteralExpressionKind, Program, Statement, ValueHolder},
+    parser::{Argument, Block, Expression, Function, LiteralExpressionKind, Program, Statement, ValueHolder},
 };
+
+#[derive(Debug)]
+enum RuntimeError {
+    InvalidType(String),
+    Custom(String),
+    VariableNotFound(String),
+    VariableAlreadyDeclared(String)
+}
+
+impl fmt::Display for RuntimeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RuntimeError::InvalidType(value) => write!(f, "[InvalidType] {}", value),
+            RuntimeError::Custom(value) => write!(f, "[CustomError] {}", value),
+            RuntimeError::VariableNotFound(name) => write!(f, "[VariableNotFound] {}", name),
+            RuntimeError::VariableAlreadyDeclared(name) => write!(f, "[VariableAlreadyDeclared] {}", name)
+        }
+    }
+}
+
+type RuntimeResult = Result<ValueHolder, RuntimeError>;
 
 lazy_static! {
     static ref BUILT_IN_FUNCTIONS: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> ValueHolder + Send + Sync>> = {
@@ -23,6 +45,7 @@ lazy_static! {
                         ValueHolder::Int(value) => format!("{value}"),
                         ValueHolder::Bool(value) => format!("{value}"),
                         ValueHolder::Fn(Function { .. }) => format!("fn()"),
+                        ValueHolder::Void => format!("Void"),
                         _ => panic!("[Invalid type]"), 
                     }
                 }).collect();
@@ -57,9 +80,20 @@ struct ProgramContext {
     pub environment: Environment,
 }
 
+#[derive(Debug, Clone)]
+enum ScopeKind {
+    Program,
+    Call(i32),
+    Loop,
+    Regular
+}
+
+#[derive(Debug, Clone)]
 struct Scope {
+    kind: ScopeKind,
     variables: HashMap<String, ValueHolder>,
     isolated: bool,
+    interrupted: Option<ValueHolder>
 }
 
 struct Environment {
@@ -70,16 +104,20 @@ impl Environment {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope {
+                kind: ScopeKind::Program,
                 variables: HashMap::new(),
                 isolated: false,
+                interrupted: None
             }],
         }
     }
 
-    pub fn enter_scope(&mut self, isolated: bool) {
+    pub fn enter_scope(&mut self, kind: ScopeKind) {
         self.scopes.push(Scope {
+            kind,
             variables: HashMap::new(),
-            isolated,
+            isolated: false,
+            interrupted: None
         });
     }
 
@@ -87,14 +125,38 @@ impl Environment {
         self.scopes.pop().expect("No scope to exit");
     }
 
-    pub fn set(&mut self, name: String, value: ValueHolder) {
-        if let Some(scope) = self.scopes.last_mut() {
+    pub fn set(&mut self, name: String, value: ValueHolder, define: bool) -> Result<(), RuntimeError> {
+        if !define {
+            for scope in self.scopes.iter_mut().rev() {
+                if scope.variables.contains_key(&name) {
+                    scope.variables.insert(name.clone(), value.clone());
+                    return Ok(())
+                }
+
+                if let ScopeKind::Call(_) = scope.kind {
+                    break;
+                }
+            }
+            return Err(RuntimeError::VariableNotFound(name))
+        } else if let Some(scope) = self.scopes.last_mut() {
+            if scope.variables.contains_key(&name) {
+                return Err(RuntimeError::VariableAlreadyDeclared(name))
+            }
+            
             scope.variables.insert(name, value);
+            return Ok(())
         }
+        unreachable!()
     }
 
     pub fn get(&self, name: &str) -> Option<&ValueHolder> {
-        for scope in self.scopes.iter().rev() {
+        let mut scopes = self.scopes.iter().rev();
+
+        while let Some(scope) = scopes.next() {
+            if let ScopeKind::Call(idx) = scope.kind {
+                scopes = self.scopes[0..((idx + 1) as usize)].iter().rev();
+            }
+
             if let Some(v) = scope.variables.get(name) {
                 return Some(v);
             }
@@ -111,11 +173,11 @@ pub fn interpret(program: Program) {
 
     let mut context = ProgramContext { environment };
 
-    eval_body(&program.body, &mut context);
+    eval_body(&program.body, &mut context).unwrap();
 }
 
-fn eval_body(statements: &Vec<Statement>, context: &mut ProgramContext) {
-    statements.iter().filter(|statement| matches!(*statement, Statement::Function { .. })).for_each(|statement| {
+fn define_functions(statements: &Vec<Statement>, context: &mut ProgramContext) -> Result<(), RuntimeError> {
+    for statement in statements.iter().filter(|statement| matches!(*statement, Statement::Function { .. })) {
         let Statement::Function { name, arguments, statements } = statement else {
             panic!()
         };
@@ -123,34 +185,69 @@ fn eval_body(statements: &Vec<Statement>, context: &mut ProgramContext) {
         context.environment.set(name.clone(), ValueHolder::Fn(Function {
             arguments: arguments.to_vec(),
             statements: statements.to_vec()
-        }));
-    });
-    for statement in statements {
-        eval_statement(statement.clone(), context);
+        }), true)?
     }
+
+    Ok(())
 }
 
-fn eval_statement(statement: Statement, context: &mut ProgramContext) -> ValueHolder {
+fn eval_body(statements: &Vec<Statement>, context: &mut ProgramContext) -> RuntimeResult {
+    define_functions(statements, context)?;
+
+    for statement in statements {
+        let value = eval_statement(statement.clone(), context)?;
+        if let Some(value) = &context.environment.scopes.last().unwrap().interrupted {
+            return Ok(value.clone());
+        }   
+
+        for scope in context.environment.scopes.iter_mut().rev() {
+            match (statement.clone(), scope.kind.clone(), ) {
+                (Statement::Return { .. }, ScopeKind::Call(_)) => {
+                    scope.interrupted = Some(value.clone());
+
+                    return Ok(value);
+                },
+                (_, ScopeKind::Call(_)) => {
+                    break;
+                },
+                (Statement::Break, ScopeKind::Loop) => {
+                    scope.interrupted = Some(ValueHolder::Void);
+
+                    return Ok(value);
+                },
+                _ => ()
+            }
+        }
+    }
+
+    Ok(ValueHolder::Void)
+}
+
+fn eval_statement(statement: Statement, context: &mut ProgramContext) -> RuntimeResult {
     match statement {
         Statement::Expression { expression } => eval_expr(expression, context),
         Statement::If {
             condition,
-            statements,
-        } => eval_if(condition, statements, context),
+            block,
+            alternate
+        } => eval_if(condition, block, alternate, context),
         Statement::For {
             variable,
             left,
             right,
             statements,
         } => eval_for(variable, left, right, statements, context),
-        Statement::Function { name, arguments, statements } => eval_function(name, arguments, statements)
+        Statement::Function { name, arguments, statements } => eval_function(name, arguments, statements),
+        Statement::Return { expression } => eval_expr(expression, context),
+        Statement::Break => Ok(ValueHolder::Void),
+        Statement::Block(_) => Ok(ValueHolder::Void)
     }
 }
 
-fn eval_function(name: String, arguments: Vec<Argument>, statements: Vec<Statement>) -> ValueHolder {
+fn eval_function(_name: String, _arguments: Vec<Argument>, _statements: Vec<Statement>) -> RuntimeResult {
     
 
-    ValueHolder::Void
+    Ok(ValueHolder::Void)
 }
 
 fn eval_for(
@@ -159,33 +256,31 @@ fn eval_for(
     right: Option<Expression>,
     statements: Vec<Statement>,
     context: &mut ProgramContext,
-) -> ValueHolder {
+) -> RuntimeResult {
     let Expression::Literal { value, ..} = variable else {
-        panic!("For loop variable should be a literal");
+        return Err(RuntimeError::InvalidType("For loop variable should be a literal".to_string()))
     };
 
     let ValueHolder::String(variable_identifer) = value else {
-        panic!("For loop variable should be a variable")
+        return Err(RuntimeError::InvalidType("For loop variable should be a variable".to_string()))
     };
 
     let mut iter: Box<dyn Iterator<Item=i32>> = Box::new(0..);
 
     match (&left, &right) {
-        (Some(Expression::Literal { .. }), Some(Expression::Literal { .. })) => {
-            let left: i32 = eval_expr(left.unwrap(), context).into();
-            let right: i32 = eval_expr(right.unwrap(), context).into();
+        (Some(_), Some(_)) => {
+            let left: i32 = eval_expr(left.unwrap(), context)?.into();
+            let right: i32 = eval_expr(right.unwrap(), context)?.into();
 
             iter = if left < right { Box::new(left..right) } else { Box::new(((right + 1)..(left + 1)).rev()) };
-
-
         },
-        (Some(Expression::Literal { .. }), None) => {
-            let left: i32 = eval_expr(left.unwrap(), context).into();
+        (Some(_), None) => {
+            let left: i32 = eval_expr(left.unwrap(), context)?.into();
 
             iter = Box::new(left..)
         },
-        (None, Some(Expression::Literal { .. })) => {
-            let right: i32 = eval_expr(right.unwrap(), context).into();
+        (None, Some(_)) => {
+            let right: i32 = eval_expr(right.unwrap(), context)?.into();
 
             iter = Box::new(0..right)
         },
@@ -193,58 +288,68 @@ fn eval_for(
     }
 
     for i in iter {
-        context.environment.enter_scope(false);
-        context.environment.set(variable_identifer.clone(), ValueHolder::Int(i));
-        eval_body(&statements, context);
+        context.environment.enter_scope(ScopeKind::Loop);
+        context.environment.set(variable_identifer.clone(), ValueHolder::Int(i), true)?;
+        eval_body(&statements, context)?;
+        let broken = context.environment.scopes.last().unwrap().interrupted.is_some();
         context.environment.exit_scope();
+
+        if broken {
+            break;
+        }
     }
 
-    ValueHolder::Void
+    Ok(ValueHolder::Void)
 }
 
 fn eval_if(
     condition: Expression,
-    statements: Vec<Statement>,
+    block: Block,
+    alternate: Option<Box<Statement>>,
     context: &mut ProgramContext,
-) -> ValueHolder {
-    let cond: bool = eval_expr(condition, context).into();
+) -> RuntimeResult {
+    let cond: bool = eval_expr(condition, context)?.into();
     if cond {
-        context.environment.enter_scope(false);
-        eval_body(&statements, context);
+        context.environment.enter_scope(ScopeKind::Regular);
+        eval_body(&block.statements, context)?;
         context.environment.exit_scope();
+    } else if let Some(box Statement::If { condition, block, alternate }) = alternate {
+        return eval_if(condition, block, alternate, context);
+    } else if let Some(box Statement::Block(Block { statements })) = alternate {
+        return eval_body(&statements, context);
     }
-    ValueHolder::Void
+    Ok(ValueHolder::Void)
 }
 
-fn eval_expr(expr: Expression, context: &mut ProgramContext) -> ValueHolder {
+fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
     return match expr {
         Expression::Binary {
             left,
             operator,
             right,
-        } => ValueHolder::Float(eval_binary(left, operator, right, context)),
+        } => eval_binary(left, operator, right, context),
         Expression::Literal { r#type, value } => {
             if let LiteralExpressionKind::Literal = r#type {
-                return value;
+                return Ok(value);
             } else {
                 if let ValueHolder::String(value) = value {
-                    return context
+                    return Ok(context
                         .environment
                         .get(&value)
-                        .expect(&format!("Unknown variable {}", value))
-                        .clone();
+                        .ok_or(RuntimeError::Custom(format!("Variable '{value}' not found")))?
+                        .clone());
                 }
 
                 panic!("Variable error")
             };
         }
-        Expression::Assignment { left, right } => {
+        Expression::Assignment { left, right, is_definition } => {
             if let Expression::Literal { r#type: _, value } = *left {
                 if let ValueHolder::String(value) = value {
-                    let expr = eval_expr(*right, context);
-                    let _ = context.environment.set(value, expr);
+                    let expr = eval_expr(*right, context)?;
+                    let _ = context.environment.set(value, expr, is_definition)?;
 
-                    return ValueHolder::Void;
+                    return Ok(ValueHolder::Void);
                 }
             }
 
@@ -255,18 +360,17 @@ fn eval_expr(expr: Expression, context: &mut ProgramContext) -> ValueHolder {
             left,
             operator,
             right,
-        } => ValueHolder::Bool(eval_equality(left, operator, right, context)),
+        } => eval_equality(left, operator, right, context),
         Expression::Relational {
             left,
             operator,
             right,
-        } => ValueHolder::Bool(eval_relational(left, operator, right, context)),
+        } => eval_relational(left, operator, right, context),
         Expression::Logical {
             left,
             operator,
             right,
-        } => ValueHolder::Bool(eval_logical(left, operator, right, context)),
-        _ => panic!("Invalid expression"),
+        } => eval_logical(left, operator, right, context),
     };
 }
 
@@ -275,23 +379,23 @@ fn eval_binary(
     operator: Token,
     right: Box<Expression>,
     context: &mut ProgramContext,
-) -> f64 {
+) -> RuntimeResult {
     let left_val = match eval_expr(*left, context) {
-        ValueHolder::Float(f) => f,
-        ValueHolder::Int(f) => f.into(),
-        _ => panic!("Expected float value"),
+        Ok(ValueHolder::Float(f)) => f,
+        Ok(ValueHolder::Int(f)) => f.into(),
+        _ => return Err(RuntimeError::InvalidType("Expected float value for binary operation".to_string())),
     };
     let right_val = match eval_expr(*right, context) {
-        ValueHolder::Float(f) => f,
-        ValueHolder::Int(f) => f.into(),
-        _ => panic!("Expected float value"),
+        Ok(ValueHolder::Float(f)) => f,
+        Ok(ValueHolder::Int(f)) => f.into(),
+        _ => return Err(RuntimeError::InvalidType("Expected float value for binary operation".to_string())),
     };
 
     match operator {
-        Token::Plus => left_val + right_val,
-        Token::Minus => left_val - right_val,
-        Token::Asterisk => left_val * right_val,
-        Token::Slash => left_val / right_val,
+        Token::Plus => Ok(ValueHolder::Float(left_val + right_val)),
+        Token::Minus => Ok(ValueHolder::Float(left_val - right_val)),
+        Token::Asterisk => Ok(ValueHolder::Float(left_val * right_val)),
+        Token::Slash => Ok(ValueHolder::Float(left_val / right_val)),
         _ => panic!("Invalid binary operator"),
     }
 }
@@ -300,41 +404,44 @@ fn eval_call(
     name: String,
     call_arguments: Vec<Expression>,
     context: &mut ProgramContext,
-) -> ValueHolder {
+) -> RuntimeResult {
     let func = BUILT_IN_FUNCTIONS.get(&name);
 
     if let Some(func) = func {
         let arguments: Vec<ValueHolder> = call_arguments
             .into_iter()
             .map(|arg| eval_expr(arg, context))
-            .collect();
+            .collect::<Result<Vec<_>, RuntimeError>>()?;
 
-        return func(arguments);
+        return Ok(func(arguments));
     };
     
     let func = context.environment.get(&name).cloned();
 
     if let Some(ValueHolder::Fn(Function { arguments, statements })) = func {
+        let scope_position = context.environment.scopes.iter().position(|scope| scope.variables.contains_key(&name)).unwrap();
+
         if arguments.len() != call_arguments.len() {
-            panic!("Invalid number of args");
+            return Err(RuntimeError::Custom("Invalid number of args".to_string()))
         }
 
         // Evaluate all arguments before entering the scope to avoid multiple mutable borrows
         let evaluated_args: Vec<ValueHolder> = call_arguments
             .into_iter()
             .map(|arg| eval_expr(arg, context))
-            .collect();
+        .collect::<Result<Vec<_>, RuntimeError>>()?;
 
-        context.environment.enter_scope(false);
+        context.environment.enter_scope(ScopeKind::Call(scope_position as i32));
         for (argument, value) in arguments.iter().zip(evaluated_args.iter()) {
             context.environment.set(
                 argument.name.clone(),
-                value.clone()
-            );
+                value.clone(),
+                true
+            )?;
         }
-        eval_body(&statements, context);
+        let return_value = eval_body(&statements, context);
         context.environment.exit_scope();
-        return ValueHolder::Void;
+        return return_value;
     }
 
     panic!("Tried to call invalid function : {}", name);
@@ -345,14 +452,14 @@ fn eval_equality(
     operator: Token,
     right: Box<Expression>,
     context: &mut ProgramContext,
-) -> bool {
-    let left = eval_expr(*left, context);
-    let right = eval_expr(*right, context);
+) -> RuntimeResult {
+    let left = eval_expr(*left, context)?;
+    let right = eval_expr(*right, context)?;
 
     match operator {
-        Token::EQ => left == right,
-        Token::NE => left != right,
-        _ => panic!("Invalid equality operator"),
+        Token::EQ => Ok(ValueHolder::Bool(left == right)),
+        Token::NE => Ok(ValueHolder::Bool(left != right)),
+        _ => Err(RuntimeError::Custom("Invalid equality operator".to_string())),
     }
 }
 
@@ -361,17 +468,19 @@ fn eval_relational(
     operator: Token,
     right: Box<Expression>,
     context: &mut ProgramContext,
-) -> bool {
-    let left = eval_expr(*left, context);
-    let right = eval_expr(*right, context);
+) -> RuntimeResult {
+    let left = eval_expr(*left, context)?;
+    let right = eval_expr(*right, context)?;
 
-    match operator {
-        Token::GT => left > right,
-        Token::GTE => left >= right,
-        Token::LT => left < right,
-        Token::LTE => left <= right,
-        _ => panic!("Invalid relational operator"),
-    }
+    Ok(ValueHolder::Bool(
+        match operator {
+            Token::GT => left > right,
+            Token::GTE => left >= right,
+            Token::LT => left < right,
+            Token::LTE => left <= right,
+            _ => unreachable!(),
+        }
+    ))
 }
 
 fn eval_logical(
@@ -379,13 +488,13 @@ fn eval_logical(
     operator: Token,
     right: Box<Expression>,
     context: &mut ProgramContext,
-) -> bool {
-    let left = eval_expr(*left, context);
-    let right = eval_expr(*right, context);
+) -> RuntimeResult {
+    let left = eval_expr(*left, context)?;
+    let right = eval_expr(*right, context)?;
 
     match operator {
-        Token::And => left.into() && right.into(),
-        Token::Or => left.into() || right.into(),
-        _ => panic!("Invalid relational operator"),
+        Token::And => Ok(ValueHolder::Bool(left.into() && right.into())),
+        Token::Or => Ok(ValueHolder::Bool(left.into() || right.into())),
+        _ => Err(RuntimeError::Custom("Invalid relational operator".to_string())),
     }
 }

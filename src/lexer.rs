@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 #[serde(tag = "type")] // "type" field will contain the variant name
 #[derive(PartialEq)]
 pub enum Token {
-    Keyword { value: String },
+    Keyword(KeywordKind),
     Identifier { value: String },
     NumericLiteral { value: f64 },
     BooleanLiteral { value: bool },
@@ -32,20 +32,43 @@ pub enum Token {
     Or
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind")] // "kind" field will contain the variant name
+#[derive(PartialEq)]
+pub enum KeywordKind {
+    If,
+    Else,
+    For,
+    In,
+    Fn,
+    Return,
+    Break,
+    Throw,
+    Try,
+    Catch,
+    Let
+}
+
 pub fn lex(code: String) -> Vec<Token> {
     let mut cursor = 0;
 
     let mut tokens: Vec<Token> = vec![];
 
-    let char_at = |pos: usize| code.chars().nth(pos).unwrap();
+    let char_at = |pos: usize| code.chars().nth(pos);
     while cursor < code.len() {
-        let char = char_at(cursor);
+        let char = char_at(cursor).unwrap();
         cursor += 1;
 
         match char {
             ' ' | '\0' | '\n' | '\r' | '\t' => continue,
             _ => {
                 let map = match_table();
+
+                if code[(cursor - 1)..].starts_with("//") {
+                    while !matches!(char_at(cursor), Some('\n')) && cursor < code.len() {
+                        cursor += 1;
+                    }
+                }
 
                 let mut longest_match = "";
 
@@ -58,19 +81,14 @@ pub fn lex(code: String) -> Vec<Token> {
                 }
 
                 if longest_match.len() > 0 {
-                    tokens.push(map.get(longest_match).unwrap().clone());
-                    cursor += longest_match.len() - 1;
-                    continue;
-                }
+                    let token = map.get(longest_match).unwrap().clone();
 
-                // if let Some((key, value)) = map
-                //     .iter()
-                //     .find(|(key, _)| code[(cursor - 1)..].starts_with(*key))
-                // {
-                //     tokens.push(value.clone());
-                //     cursor += key.len() - 1;
-                //     continue;
-                // }
+                    if !matches!(token, Token::Keyword(_)) || (matches!(token, Token::Keyword(_)) && matches!(char_at(cursor + longest_match.len() - 1).map(|char| char.is_ascii_alphabetic() || char == '_'), Some(false))) {
+                        tokens.push(token);
+                        cursor += longest_match.len() - 1;
+                        continue;
+                    }
+                }
 
                 if char.is_numeric() {
                     number(&code, &mut cursor, &mut tokens);
@@ -105,10 +123,17 @@ fn match_table() -> HashMap<&'static str, Token> {
     map.insert("..", Token::Range);
 
     // Keywords
-    map.insert("if", Token::Keyword { value: String::from("if") });
-    map.insert("for", Token::Keyword { value: String::from("for") });
-    map.insert("in", Token::Keyword { value: String::from("in") });
-    map.insert("fn", Token::Keyword { value: String::from("fn") });
+    map.insert("if", Token::Keyword(KeywordKind::If));
+    map.insert("else", Token::Keyword(KeywordKind::Else));
+    map.insert("for", Token::Keyword(KeywordKind::For));
+    map.insert("in", Token::Keyword(KeywordKind::In));
+    map.insert("fn", Token::Keyword(KeywordKind::Fn));
+    map.insert("return", Token::Keyword(KeywordKind::Return));
+    map.insert("break", Token::Keyword(KeywordKind::Break));
+    map.insert("throw", Token::Keyword(KeywordKind::Throw));
+    map.insert("try", Token::Keyword(KeywordKind::Try));
+    map.insert("catch", Token::Keyword(KeywordKind::Catch));
+    map.insert("let", Token::Keyword(KeywordKind::Let));
 
     // Booleans
     map.insert("true", Token::BooleanLiteral { value: true });

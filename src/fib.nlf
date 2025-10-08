@@ -1,0 +1,24 @@
+fn fib_slow(n) {
+    if n <= 1 {
+        return n
+    }
+    if n > 1 {
+        return fib_slow(n - 1) + fib_slow(n - 2)
+    }
+}
+
+fn fib_fast(n) {
+    a = 1
+    b = 1
+    for i in 3..(n + 1) {
+        c = a + b
+        a = b
+        b = c
+    }
+    return b
+}
+
+stop = 20
+
+println(fib_slow(stop))
+println(fib_fast(stop))

@@ -1,6 +1,6 @@
 use serde::{Serialize};
 
-use crate::lexer::Token;
+use crate::lexer::{KeywordKind, Token};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Function {
@@ -42,6 +42,8 @@ impl PartialOrd for ValueHolder {
         match (self, other) {
             (ValueHolder::Int(a), ValueHolder::Int(b)) => a.partial_cmp(b),
             (ValueHolder::Float(a), ValueHolder::Float(b)) => a.partial_cmp(b),
+            (ValueHolder::Int(a), ValueHolder::Float(b)) => a.partial_cmp(&(*b as i32)),
+            (ValueHolder::Float(a), ValueHolder::Int(b)) => a.partial_cmp(&(*b as f64)),
             (ValueHolder::String(a), ValueHolder::String(b)) => a.partial_cmp(b),
             (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a.partial_cmp(b),
             (ValueHolder::Void, ValueHolder::Void) => Some(std::cmp::Ordering::Equal),
@@ -74,11 +76,20 @@ impl Into<i32> for ValueHolder {
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")] // "type" field will contain the variant name
+pub struct Block {
+    pub statements: Vec<Statement>
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(tag = "kind")] // "kind" field will contain the variant name
 pub enum Statement {
     Expression { expression: Expression },
-    If { condition: Expression, statements: Vec<Statement> },
+    If { condition: Expression, block: Block, alternate: Option<Box<Statement>> },
     For { variable: Expression, left: Option<Expression>, right: Option<Expression>, statements: Vec<Statement> },
-    Function { name: String, arguments: Vec<Argument>, statements: Vec<Statement> }
+    Function { name: String, arguments: Vec<Argument>, statements: Vec<Statement> },
+    Return { expression: Expression },
+    Break,
+    Block(Block)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -120,7 +131,8 @@ pub enum Expression {
     },
     Assignment {
         left: Box<Expression>,
-        right: Box<Expression>
+        right: Box<Expression>,
+        is_definition: bool
     }
 }
 
@@ -138,119 +150,112 @@ fn parse_internal(mut tokens: Vec<Token>) -> (Vec<Statement>, usize) {
         let token: &Token = tokens.get(cursor).unwrap();
 
         match token {
-            Token::Keyword { value } => {
+            Token::Keyword(KeywordKind::If) => {
                 cursor += 1;
 
-                if value == "if" {
-                    let condition = equality_expression(&mut cursor, &mut tokens);
-
-                    let inner_statements = block(&mut cursor, &mut tokens);
-
-                    statements.push(Statement::If { condition, statements: inner_statements })
-                } else if value == "for" {
-                    let Some(Token::Identifier { value: _ }) = tokens.get(cursor) else {
-                        panic!("Expected identifier")
-                    };
-
-                    let loop_variable: Expression = literal_expression(&mut cursor, &mut tokens);
-
-                    let Some(Token::Keyword { value }) = tokens.get(cursor) else {
-                        panic!("Expected 'in' keyword")
-                    };
-
-                    assert_eq!(value, "in", "Expected 'in' keyword, got '{}'", value);
-
-                    match tokens.get(cursor) {
-                        Some(Token::Keyword { value }) => {
-                            if value != "in" {
-                                panic!("Expected 'in' keyword, got '{}'", value);
-                            }
-                        },
-                        _ => panic!("Expected 'in' keyword")
-                    };
-
-                    cursor += 1;
-
-                    let left = matches!(
-                        tokens.get(cursor),
-                        Some(Token::NumericLiteral { .. }) | Some(Token::Identifier { .. })
-                    )
-                    .then(|| literal_expression(&mut cursor, &mut tokens));
-
-                    if !matches!(tokens.get(cursor), Some(Token::Range)) {
-                        panic!("Expected range (..) token");
-                    }
-
-                    cursor += 1;
-
-                    let right = matches!(
-                        tokens.get(cursor),
-                        Some(Token::NumericLiteral { .. }) | Some(Token::Identifier { .. })
-                    )
-                    .then(|| literal_expression(&mut cursor, &mut tokens));
-
-                    let inner_statements = block(&mut cursor, &mut tokens);
-
-                    match (&left, &right) {
-                        (None, None) => panic!("Both sides of a range expression cannot be None"),
-                        _ => {}
-                    }
-
-                    statements.push(Statement::For { variable: loop_variable, left, right, statements: inner_statements });
-                } else if value == "fn" {
-                    let Some(Token::Identifier { value }) = tokens.get(cursor) else {
-                        panic!("Expected identifier");
-                    };
-
-                    let value = value.clone();
-
-                    if matches!(tokens.get(cursor + 1), Some(Token::OpeningParenthesis)) {
-                        cursor += 2; // move to the first character after (
-
-                        let mut args: Vec<Argument> = vec![];
-
-                        while let Some(token) = tokens.get(cursor) {
-                            match token {
-                                Token::ClosingParenthesis => {
-                                    // End of argument list
-                                    break;
-                                }
-                                _ => {
-                                    // Parse the argument
-                                    let expr = literal_expression(&mut cursor, &mut tokens);
-
-                                    let Expression::Literal { r#type, value } = expr else {
-                                        panic!();
-                                    };
-
-                                    let ValueHolder::String(name) = value else {
-                                        panic!();
-                                    };
-
-                                    args.push(Argument { name });
-
-                                    // After parsing argument, check if next token is a comma
-                                    match tokens.get(cursor) {
-                                        Some(Token::Comma) => cursor += 1, // skip comma, continue loop
-                                        Some(Token::ClosingParenthesis) => break, // done
-                                        _ => panic!("Expected ',' or ')' after argument"),
-                                    }
-                                }
-                            }
-                        }
-
-                        if !matches!(tokens.get(cursor), Some(Token::ClosingParenthesis)) {
-                            panic!("Expected ')'");
-                        }
-
-                        cursor += 1; // move past ')'
-
-                        let inner_statements = block(&mut cursor, &mut tokens);
-
-                        statements.push(Statement::Function { name: value.to_string(), arguments: args, statements: inner_statements });
-                    }
-                }
+                statements.push(parse_if(&mut cursor, &mut tokens))
             }
+            Token::Keyword(KeywordKind::For) => {
+                cursor += 1;
+
+                let Some(Token::Identifier { value: _ }) = tokens.get(cursor) else {
+                    panic!("Expected identifier")
+                };
+
+                let loop_variable: Expression = literal_expression(&mut cursor, &mut tokens);
+
+                let Some(Token::Keyword(KeywordKind::In)) = tokens.get(cursor) else {
+                    panic!("Expected 'in' keyword")
+                };
+
+                cursor += 1;
+
+                let left = matches!(
+                    tokens.get(cursor),
+                    Some(Token::NumericLiteral { .. }) | Some(Token::Identifier { .. }) | Some(Token::OpeningParenthesis)
+                )
+                .then(|| literal_expression(&mut cursor, &mut tokens));
+
+                if !matches!(tokens.get(cursor), Some(Token::Range)) {
+                    panic!("Expected range (..) token");
+                }
+
+                cursor += 1;
+
+                let right = matches!(
+                    tokens.get(cursor),
+                    Some(Token::NumericLiteral { .. }) | Some(Token::Identifier { .. }) | Some(Token::OpeningParenthesis)
+                )
+                .then(|| literal_expression(&mut cursor, &mut tokens));
+
+                let inner_statements = block(&mut cursor, &mut tokens);
+
+                match (&left, &right) {
+                    (None, None) => panic!("Both sides of a range expression cannot be None"),
+                    _ => {}
+                }
+
+                statements.push(Statement::For { variable: loop_variable, left, right, statements: inner_statements });
+            }
+            Token::Keyword(KeywordKind::Fn) => {
+                cursor += 1;
+                
+                let Some(Token::Identifier { value }) = tokens.get(cursor) else {
+                    panic!("Expected identifier");
+                };
+
+                let value = value.clone();
+
+                if matches!(tokens.get(cursor + 1), Some(Token::OpeningParenthesis)) {
+                    cursor += 2; // move to the first character after (
+
+                    let mut args: Vec<Argument> = vec![];
+
+                    while let Some(token) = tokens.get(cursor) {
+                        match token {
+                            Token::ClosingParenthesis => {
+                                // End of argument list
+                                break;
+                            }
+                            _ => {
+                                // Parse the argument
+                                let expr = literal_expression(&mut cursor, &mut tokens);
+
+                                let Expression::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } = expr else {
+                                    panic!();
+                                };
+
+                                args.push(Argument { name });
+
+                                // After parsing argument, check if next token is a comma
+                                match tokens.get(cursor) {
+                                    Some(Token::Comma) => cursor += 1, // skip comma, continue loop
+                                    Some(Token::ClosingParenthesis) => break, // done
+                                    _ => panic!("Expected ',' or ')' after argument"),
+                                }
+                            }
+                        }
+                    }
+
+                    if !matches!(tokens.get(cursor), Some(Token::ClosingParenthesis)) {
+                        panic!("Expected ')'");
+                    }
+
+                    cursor += 1; // move past ')'
+
+                    let inner_statements = block(&mut cursor, &mut tokens);
+
+                    statements.push(Statement::Function { name: value.to_string(), arguments: args, statements: inner_statements });
+                }
+            },
+            Token::Keyword(KeywordKind::Return) => {
+                cursor += 1;
+                statements.push(Statement::Return { expression: equality_expression(&mut cursor, &mut tokens) });
+            }
+            Token::Keyword(KeywordKind::Break) => {
+                cursor += 1;
+                statements.push(Statement::Break);
+            },
             Token::ClosingBracket => break,
             _ => {
                 statements.push(Statement::Expression { expression: expression(&mut cursor, &mut tokens) });
@@ -265,6 +270,26 @@ pub fn parse(tokens: Vec<Token>) -> Program {
     return Program {
         body: parse_internal(tokens).0
     };
+}
+
+fn parse_if(cursor: &mut usize, tokens: &mut Vec<Token>) -> Statement {
+    let condition = equality_expression(cursor, tokens);
+
+    let inner_statements = block(cursor, tokens);
+
+    let mut alternate: Option<Box<Statement>> = None;
+
+    if let Some(Token::Keyword(KeywordKind::Else)) = tokens.get(*cursor) {
+        *cursor += 1;
+        if let Some(Token::Keyword(KeywordKind::If)) = tokens.get(*cursor) {
+            *cursor += 1;
+            alternate = Some(Box::new(parse_if(cursor, tokens)));
+        } else {
+            alternate = Some(Box::new(Statement::Block(Block { statements: block(cursor, tokens) })));
+        }
+    }
+
+    Statement::If { condition, block: Block { statements: inner_statements }, alternate }
 }
 
 fn block(cursor: &mut usize, tokens: &mut Vec<Token>) -> Vec<Statement> {
@@ -289,13 +314,16 @@ fn expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression {
 }
 
 fn assignment_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression {
+    let is_definition = if let Some(Token::Keyword(KeywordKind::Let)) = tokens.get(*cursor) { *cursor += 1; true } else { false };
+
     let left = equality_expression(cursor, tokens);
 
     if let Some(Token::Assign) = tokens.get(*cursor) {
         *cursor += 1;
         return Expression::Assignment {
             left: Box::new(left),
-            right: Box::new(equality_expression(cursor, tokens))
+            right: Box::new(equality_expression(cursor, tokens)),
+            is_definition
         }
     }
 
