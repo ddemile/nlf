@@ -1,13 +1,6 @@
-let grade = 20
+let start = now();
+for i in ..1000000 {
 
-for i in 0.. {
-    println(i)
-    if i >= 100 {
-        breaking()
-    }
 }
-
-fn breaking() {
-    // Should not be able to break the outer loop
-    break;
-}
+let end = now();
+println(end - start, "ms")

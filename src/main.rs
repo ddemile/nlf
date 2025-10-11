@@ -1,4 +1,5 @@
 #![feature(box_patterns)]
+#![feature(duration_millis_float)]
 use std::fs;
 
 use crate::{parser::parse};

@@ -29,7 +29,9 @@ pub enum Token {
     Comma,
     Range,
     And,
-    Or
+    Or,
+    Period,
+    Colon
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -121,6 +123,8 @@ fn match_table() -> HashMap<&'static str, Token> {
     map.insert("}", Token::ClosingBracket);
     map.insert(",", Token::Comma);
     map.insert("..", Token::Range);
+    map.insert(".", Token::Period);
+    map.insert(":", Token::Colon);
 
     // Keywords
     map.insert("if", Token::Keyword(KeywordKind::If));
