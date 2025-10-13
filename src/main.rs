@@ -7,6 +7,7 @@ use clap::Parser;
 
 mod lexer;
 mod parser;
+mod translator;
 mod interpreter;
 
 #[derive(Parser, Debug)]
@@ -32,5 +33,10 @@ fn main() {
 
     let _ = fs::write("debug/ast.json", serde_json::to_string_pretty(&ast).unwrap());
 
-    interpreter::interpret(ast);
+    let ir  = translator::translate(ast);
+
+    let _ = fs::write("debug/ir.json", serde_json::to_string_pretty(&ir).unwrap());
+
+    interpreter::interpret(ir);
+
 }

@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::HashMap, fmt, time::{SystemTime, UNIX_EPOCH}};
+use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
 
 use indexmap::IndexSet;
 use lazy_static::lazy_static;
@@ -8,7 +8,7 @@ use crate::{
     lexer::Token,
     parser::{
         Argument, Block, Expression, Function, LiteralExpressionKind, ObjectRef, Program,
-        Statement, ValueHolder,
+        Statement, ValueHolder, VariableRef,
     },
 };
 
@@ -45,7 +45,7 @@ lazy_static! {
             HashMap::new();
 
         m.insert(
-            String::from("println"),
+            String::from("print"),
             Box::new(|arguments| {
                 let arguments: Vec<String> = arguments
                     .iter()
@@ -168,7 +168,7 @@ impl ObjectRef {
             return Ok(object.values[index].clone());
         }
 
-        Err(RuntimeError::Custom("Property not found".to_string()))
+        Err(RuntimeError::NoSuchProperty(property))
     }
 
     pub(self) fn set(&self, property: String, value: ValueHolder, context: &mut ProgramContext) {
@@ -198,13 +198,10 @@ impl ObjectRef {
 
         let schema = get_schema(keys, context);
 
-        println!("{:?}", values);
         let object = Object {
             schema_id: schema.id,
             values,
         };
-
-        println!("{:?}", context.schemas);
 
         context.store.insert(self.object_id, object);
     }
@@ -221,9 +218,10 @@ enum ScopeKind {
 #[derive(Debug, Clone)]
 struct Scope {
     kind: ScopeKind,
-    variables: HashMap<String, ValueHolder>,
+    slots: Vec<ValueHolder>,
     isolated: bool,
     interrupted: Option<ValueHolder>,
+    parent: Option<usize>
 }
 
 struct Environment {
@@ -235,9 +233,10 @@ impl Environment {
         Self {
             scopes: vec![Scope {
                 kind: ScopeKind::Program,
-                variables: HashMap::new(),
+                slots: vec![],
                 isolated: false,
                 interrupted: None,
+                parent: None
             }],
         }
     }
@@ -245,9 +244,10 @@ impl Environment {
     pub fn enter_scope(&mut self, kind: ScopeKind) {
         self.scopes.push(Scope {
             kind,
-            variables: HashMap::new(),
+            slots: vec![],
             isolated: false,
             interrupted: None,
+            parent: Some(self.scopes.len() - 1)
         });
     }
 
@@ -255,51 +255,49 @@ impl Environment {
         self.scopes.pop().expect("No scope to exit");
     }
 
-    pub fn set(
+pub fn set(
         &mut self,
-        name: String,
+        var_ref: VariableRef,
         value: ValueHolder,
         define: bool,
     ) -> Result<(), RuntimeError> {
         if !define {
-            for scope in self.scopes.iter_mut().rev() {
-                if scope.variables.contains_key(&name) {
-                    scope.variables.insert(name.clone(), value.clone());
-                    return Ok(());
-                }
-
-                if let ScopeKind::Call(_) = scope.kind {
-                    break;
-                }
+            // Traverse up the parent chain to find the correct scope
+            let mut scope_idx = self.scopes.len() - 1;
+            for _ in 0..var_ref.depth {
+                let scope = &self.scopes[scope_idx];
+                scope_idx = scope.parent.ok_or(RuntimeError::VariableNotFound(format!(
+                    "Parent scope not found for slot {} at depth {}",
+                    var_ref.slot, var_ref.depth
+                )))?;
             }
-            return Err(RuntimeError::VariableNotFound(name));
+            self.scopes[scope_idx]
+                .slots
+                .get_mut(var_ref.slot)
+                .map(|v| *v = value)
+                .ok_or(RuntimeError::VariableNotFound(format!(
+                    "Slot {} at depth {} not found",
+                    var_ref.slot, var_ref.depth
+                )))?;
+            return Ok(());
         } else if let Some(scope) = self.scopes.last_mut() {
-            if scope.variables.contains_key(&name) {
-                return Err(RuntimeError::VariableAlreadyDeclared(name));
+            if scope.slots.len() <= var_ref.slot {
+                scope.slots.resize(var_ref.slot + 1, ValueHolder::Void);
             }
-
-            scope.variables.insert(name, value);
+            scope.slots[var_ref.slot] = value;
             return Ok(());
         }
         unreachable!()
     }
 
-    pub fn get(&self, name: &str) -> Option<&ValueHolder> {
-        let mut scopes = self.scopes.iter().rev();
-
-        while let Some(scope) = scopes.next() {
-            if let ScopeKind::Call(idx) = scope.kind {
-                scopes = self.scopes[0..((idx + 1) as usize)].iter().rev();
-            }
-
-            if let Some(v) = scope.variables.get(name) {
-                return Some(v);
-            }
-            if scope.isolated {
-                break; // stop searching outer scopes
-            }
+    pub fn get(&self, var_ref: VariableRef) -> Option<&ValueHolder> {
+        // Traverse up the parent chain to find the correct scope
+        let mut scope_idx = self.scopes.len() - 1;
+        for _ in 0..var_ref.depth {
+            let scope = &self.scopes[scope_idx];
+            scope_idx = scope.parent?;
         }
-        None
+        self.scopes[scope_idx].slots.get(var_ref.slot)
     }
 }
 
@@ -312,7 +310,15 @@ pub fn interpret(program: Program) {
         store: HashMap::new(),
     };
 
-    eval_body(&program.body, &mut context).unwrap();
+    match eval_body(&program.body, &mut context) {
+        Ok(_) => (),
+        Err(e) => {
+            for scope in context.environment.scopes.iter() {
+                // println!("{:?}", scope);
+            }
+            println!("Runtime error: {}", e)
+        }
+    }
 }
 
 fn define_functions(
@@ -321,10 +327,10 @@ fn define_functions(
 ) -> Result<(), RuntimeError> {
     for statement in statements
         .iter()
-        .filter(|statement| matches!(*statement, Statement::Function { .. }))
+        .filter(|statement| matches!(*statement, Statement::FunctionIR { .. }))
     {
-        let Statement::Function {
-            name,
+        let Statement::FunctionIR {
+            var_ref,
             arguments,
             statements,
         } = statement
@@ -333,7 +339,7 @@ fn define_functions(
         };
 
         context.environment.set(
-            name.clone(),
+            var_ref.clone(),
             ValueHolder::Fn(Function {
                 arguments: arguments.to_vec(),
                 statements: statements.to_vec(),
@@ -386,50 +392,39 @@ fn eval_statement(statement: Statement, context: &mut ProgramContext) -> Runtime
             block,
             alternate,
         } => eval_if(condition, block, alternate, context),
-        Statement::For {
+        Statement::ForIR {
             variable,
             left,
             right,
             statements,
         } => eval_for(variable, left, right, statements, context),
-        Statement::Function {
-            name,
+        Statement::FunctionIR {
+            var_ref,
             arguments,
             statements,
-        } => eval_function(name, arguments, statements),
+        } => eval_function(var_ref, arguments, statements),
         Statement::Return { expression } => eval_expr(expression, context),
         Statement::Break => Ok(ValueHolder::Void),
         Statement::Block(_) => Ok(ValueHolder::Void),
+        _ => panic!("Invalid statement"),
     }
 }
 
 fn eval_function(
-    _name: String,
-    _arguments: Vec<Argument>,
+    _var_ref: VariableRef,
+    _arguments: Vec<VariableRef>,
     _statements: Vec<Statement>,
 ) -> RuntimeResult {
     Ok(ValueHolder::Void)
 }
 
 fn eval_for(
-    variable: Expression,
+    variable: VariableRef,
     left: Option<Expression>,
     right: Option<Expression>,
     statements: Vec<Statement>,
     context: &mut ProgramContext,
 ) -> RuntimeResult {
-    let Expression::Literal { value, .. } = variable else {
-        return Err(RuntimeError::InvalidType(
-            "For loop variable should be a literal".to_string(),
-        ));
-    };
-
-    let ValueHolder::String(variable_identifer) = value else {
-        return Err(RuntimeError::InvalidType(
-            "For loop variable should be a variable".to_string(),
-        ));
-    };
-
     let mut iter: Box<dyn Iterator<Item = i32>> = Box::new(0..);
 
     match (&left, &right) {
@@ -456,11 +451,18 @@ fn eval_for(
         _ => (),
     }
 
+    context.environment.enter_scope(ScopeKind::Loop);
+    context
+        .environment
+        .set(variable.clone(), ValueHolder::Int(0), true)?;
+
     for i in iter {
-        context.environment.enter_scope(ScopeKind::Loop);
-        context
-            .environment
-            .set(variable_identifer.clone(), ValueHolder::Int(i), true)?;
+        // Faster than environment.set in this context
+        let scope: &mut &mut Scope = &mut context.environment.scopes.last_mut().unwrap();
+        scope.slots[variable.slot] = ValueHolder::Int(i);
+
+        context.environment.enter_scope(ScopeKind::Regular);
+
         eval_body(&statements, context)?;
         let broken = context
             .environment
@@ -475,6 +477,7 @@ fn eval_for(
             break;
         }
     }
+    context.environment.exit_scope();
 
     Ok(ValueHolder::Void)
 }
@@ -486,20 +489,20 @@ fn eval_if(
     context: &mut ProgramContext,
 ) -> RuntimeResult {
     let cond: bool = eval_expr(condition, context)?.into();
+    context.environment.enter_scope(ScopeKind::Regular);
     if cond {
-        context.environment.enter_scope(ScopeKind::Regular);
         eval_body(&block.statements, context)?;
-        context.environment.exit_scope();
     } else if let Some(box Statement::If {
         condition,
         block,
         alternate,
     }) = alternate
     {
-        return eval_if(condition, block, alternate, context);
+        eval_if(condition, block, alternate, context)?;
     } else if let Some(box Statement::Block(Block { statements })) = alternate {
-        return eval_body(&statements, context);
+        eval_body(&statements, context)?;
     }
+    context.environment.exit_scope();
     Ok(ValueHolder::Void)
 }
 
@@ -540,34 +543,61 @@ fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
                 let object_ref = ObjectRef::new(entries, context);
                 return Ok(ValueHolder::Object(object_ref));
             } else {
-                if let ValueHolder::String(value) = value {
-                    return Ok(context
-                        .environment
-                        .get(&value)
-                        .ok_or(RuntimeError::Custom(format!(
-                            "Variable '{value}' not found"
-                        )))?
-                        .clone());
-                }
-
                 panic!("Variable error")
             };
+        }
+        Expression::Variable(variable) => {
+            context.environment
+                .get(variable.clone())
+                .cloned()
+                .ok_or(RuntimeError::VariableNotFound(format!(
+                    "Slot {} at depth {} not found",
+                    variable.slot, variable.depth
+                )))
         }
         Expression::Assignment {
             left,
             right,
             is_definition,
         } => {
-            if let Expression::Literal { r#type: _, value } = *left {
-                if let ValueHolder::String(value) = value {
+            if let Expression::Variable(var_ref) = *left {
+                let expr = eval_expr(*right, context)?;
+                // Could break
+                let _ = context.environment.set(var_ref, expr, is_definition)?;
+
+                return Ok(ValueHolder::Void);
+            } else if let Expression::Member { object, property } = *left {
+                let value = eval_expr(*object, context)?;
+                
+                if let ValueHolder::Object(ObjectRef { object_id }) = value {
+                    let value =  match *property {
+                        Expression::Literal { r#type: _, value } => value,
+                        _ => {
+                            return Err(RuntimeError::InvalidType(
+                                "Property should be a variable".to_string(),
+                            ));
+                        }
+                    };
+
+                    let ValueHolder::String(property) = value else {
+                        return Err(RuntimeError::InvalidType(
+                            "Property should be a variable".to_string(),
+                        ));
+                    };
+
+                    let object_ref = ObjectRef { object_id };
                     let expr = eval_expr(*right, context)?;
-                    let _ = context.environment.set(value, expr, is_definition)?;
+                    object_ref.set(property, expr, context);
 
                     return Ok(ValueHolder::Void);
+                } else {
+                    return Err(RuntimeError::InvalidType(
+                        "Cannot access property on type other than Object".to_string(),
+                    ));
                 }
             }
 
-            panic!("Expected variable for assignment")
+            panic!("Expected variable for assignment got {:?}", *left);
         }
         Expression::Call { callee, arguments } => eval_call(callee, arguments, context),
         Expression::Equality {
@@ -597,7 +627,8 @@ fn eval_binary(
     let left_val = match eval_expr(*left, context) {
         Ok(ValueHolder::Float(f)) => f,
         Ok(ValueHolder::Int(f)) => f.into(),
-        _ => {
+        other => {
+            println!("DEBUG: Left operand is not a number: {:?}", other); // Add this line
             return Err(RuntimeError::InvalidType(
                 "Expected float value for binary operation".to_string(),
             ));
@@ -628,8 +659,8 @@ fn eval_call(
     context: &mut ProgramContext,
 ) -> RuntimeResult {
     if let Expression::Literal {
-        r#type,
         value: ValueHolder::String(name),
+        ..
     } = *callee.clone()
     {
         let func = BUILT_IN_FUNCTIONS.get(&name);
@@ -663,17 +694,22 @@ fn eval_call(
         context
             .environment
             .enter_scope(ScopeKind::Call(scope_position as i32));
+        
+        context
+            .environment
+            .set(VariableRef { slot: 0, depth: 0 }, ValueHolder::Fn(Function { arguments: arguments.clone(), statements: statements.clone(), scope_position }), true)?;
+
         for (argument, value) in arguments.iter().zip(evaluated_args.iter()) {
             context
                 .environment
-                .set(argument.name.clone(), value.clone(), true)?;
+                .set(argument.clone(), value.clone(), true)?;
         }
         let return_value = eval_body(&statements, context);
         context.environment.exit_scope();
         return return_value;
     }
 
-    panic!("Tried to call invalid function");
+    panic!("Tried to call invalid function expression: {:?}", *callee);
 }
 
 fn eval_equality(

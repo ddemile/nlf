@@ -1,6 +1,8 @@
-let start = now();
-for i in ..1000000 {
+let start = now()
 
+for i in ..1000000 {
 }
-let end = now();
-println(end - start, "ms")
+
+let end = now()
+
+print(end - start)

@@ -3,7 +3,6 @@ fn fib_slow(n) {
         return n
     } else {
         return fib_slow(n - 1) + fib_slow(n - 2)
-
     }
 }
 
@@ -20,5 +19,5 @@ fn fib_fast(n) {
 
 let stop = 20
 
-println(fib_slow(stop))
-println(fib_fast(stop))
+print(fib_slow(stop))
+print(fib_fast(stop))

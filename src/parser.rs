@@ -6,9 +6,9 @@ use crate::lexer::{KeywordKind, Token};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Function {
-    pub arguments: Vec<Argument>,
+    pub arguments: Vec<VariableRef>,
     pub statements: Vec<Statement>,
-    pub scope_position: usize
+    pub scope_position: usize,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -106,9 +106,20 @@ pub enum Statement {
         right: Option<Expression>,
         statements: Vec<Statement>,
     },
+    ForIR {
+        variable: VariableRef,
+        left: Option<Expression>,
+        right: Option<Expression>,
+        statements: Vec<Statement>,
+    },
     Function {
         name: String,
         arguments: Vec<Argument>,
+        statements: Vec<Statement>,
+    },
+    FunctionIR {
+        var_ref: VariableRef,
+        arguments: Vec<VariableRef>,
         statements: Vec<Statement>,
     },
     Return {
@@ -126,12 +137,19 @@ pub enum LiteralExpressionKind {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct VariableRef {
+    pub slot: usize,
+    pub depth: usize,
+}
+
+#[derive(Serialize, Debug, Clone)]
 #[serde(tag = "#type")] // "type" field will contain the variant name
 pub enum Expression {
     Literal {
         r#type: LiteralExpressionKind,
         value: ValueHolder,
     },
+    Variable(VariableRef),
     Member {
         object: Box<Expression>,
         property: Box<Expression>,
@@ -383,13 +401,15 @@ fn assignment_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Express
 
     let left = equality_expression(cursor, tokens);
 
-    if let Some(Token::Assign) = tokens.get(*cursor) {
-        *cursor += 1;
-        return Expression::Assignment {
-            left: Box::new(left),
-            right: Box::new(equality_expression(cursor, tokens)),
-            is_definition,
-        };
+    if matches!(left, Expression::Literal { .. }) || (!is_definition && matches!(left, Expression::Member { .. })) {
+        if let Some(Token::Assign) = tokens.get(*cursor) {
+            *cursor += 1;
+            return Expression::Assignment {
+                left: Box::new(left),
+                right: Box::new(equality_expression(cursor, tokens)),
+                is_definition,
+            };
+        }
     }
 
     return left;
@@ -548,71 +568,12 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression
             value: ValueHolder::String(value.clone()),
         },
         Token::Identifier { value } => {
-            let mut expr = Expression::Literal {
+            let expr = Expression::Literal {
                 r#type: LiteralExpressionKind::Variable,
                 value: ValueHolder::String(value.clone()),
             };
 
-            loop {
-                if matches!(tokens.get(*cursor), Some(Token::Period)) {
-                    *cursor += 1;
-                    let Some(Token::Identifier { value }) = tokens.get(*cursor).cloned() else {
-                        panic!()
-                    };
-
-                    *cursor += 1;
-
-                    expr = Expression::Member {
-                        object: Box::new(expr),
-                        property: Box::new(Expression::Literal {
-                            r#type: LiteralExpressionKind::Variable,
-                            value: ValueHolder::String(value.to_string()),
-                        })
-                    };
-
-                    // Check if call
-                    if matches!(tokens.get(*cursor), Some(Token::OpeningParenthesis)) {
-                        *cursor += 1; // move to the first token inside parentheses
-                        let mut args: Vec<Expression> = vec![];
-
-                        while let Some(token) = tokens.get(*cursor) {
-                            match token {
-                                Token::ClosingParenthesis => {
-                                    // End of argument list
-                                    break;
-                                }
-                                _ => {
-                                    // Parse the argument
-                                    let expr = equality_expression(cursor, tokens);
-                                    args.push(expr);
-
-                                    // After parsing argument, check if next token is a comma
-                                    match tokens.get(*cursor) {
-                                        Some(Token::Comma) => *cursor += 1, // skip comma, continue loop
-                                        Some(Token::ClosingParenthesis) => break, // done
-                                        _ => panic!("Expected ',' or ')' after argument"),
-                                    }
-                                }
-                            }
-                        }
-
-                        if !matches!(tokens.get(*cursor), Some(Token::ClosingParenthesis)) {
-                            panic!("Expected ')'");
-                        }
-
-                        *cursor += 1; // move past ')'
-
-                        expr = Expression::Call {
-                            callee: Box::new(expr),
-                            arguments: args,
-                        };
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            return expr;
+            member(cursor, tokens, expr, true)
         }
         Token::OpeningParenthesis => {
             let expr = expression(cursor, tokens);
@@ -670,4 +631,67 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression
         }
         _ => panic!("Unexpected token {json}"),
     }
+}
+
+fn member(cursor: &mut usize, tokens: &mut Vec<Token>, mut expr: Expression, match_call: bool) -> Expression {
+    loop {
+        if matches!(tokens.get(*cursor), Some(Token::Period)) {
+            *cursor += 1;
+            let Some(Token::Identifier { value }) = tokens.get(*cursor).cloned() else {
+                panic!()
+            };
+
+            *cursor += 1;
+
+            expr = Expression::Member {
+                object: Box::new(expr),
+                property: Box::new(Expression::Literal {
+                    r#type: LiteralExpressionKind::Variable,
+                    value: ValueHolder::String(value.to_string()),
+                }),
+            };
+
+            // Check if call
+            if match_call && matches!(tokens.get(*cursor), Some(Token::OpeningParenthesis)) {
+                *cursor += 1; // move to the first token inside parentheses
+                let mut args: Vec<Expression> = vec![];
+
+                while let Some(token) = tokens.get(*cursor) {
+                    match token {
+                        Token::ClosingParenthesis => {
+                            // End of argument list
+                            break;
+                        }
+                        _ => {
+                            // Parse the argument
+                            let expr = equality_expression(cursor, tokens);
+                            args.push(expr);
+
+                            // After parsing argument, check if next token is a comma
+                            match tokens.get(*cursor) {
+                                Some(Token::Comma) => *cursor += 1, // skip comma, continue loop
+                                Some(Token::ClosingParenthesis) => break, // done
+                                _ => panic!("Expected ',' or ')' after argument"),
+                            }
+                        }
+                    }
+                }
+
+                if !matches!(tokens.get(*cursor), Some(Token::ClosingParenthesis)) {
+                    panic!("Expected ')'");
+                }
+
+                *cursor += 1; // move past ')'
+
+                expr = Expression::Call {
+                    callee: Box::new(expr),
+                    arguments: args,
+                };
+            }
+        } else {
+            break;
+        }
+    }
+
+    return expr;
 }
