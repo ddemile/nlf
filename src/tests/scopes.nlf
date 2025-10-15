@@ -1,0 +1,19 @@
+// Name: Inner function definition
+let a = 10
+
+fn foo() {
+    let a = 15
+}
+
+foo()
+assert(a == 10)
+
+// Name: Inner function assignment
+let a = 10
+
+fn foo() {
+    a = 15
+}
+
+foo()
+assert(a == 15)

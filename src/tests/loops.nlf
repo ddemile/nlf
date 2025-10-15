@@ -1,0 +1,23 @@
+// Name: For loop with 1 million iterations
+for i in ..1000000 {}
+
+// Name: For loop with 1 million iterations and assignment
+for i in ..1000000 {
+    let b = 0
+}
+
+// Name: While true loop with 1 million iterations
+let iter = 0
+while true {
+    iter = iter + 1
+
+    if iter >= 1000000 {
+        break
+    }
+}
+
+// Name: While loop with 1 million iterations
+let iter = 0
+while iter < 1000000 {
+    iter = iter + 1
+}

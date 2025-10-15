@@ -41,6 +41,7 @@ pub enum KeywordKind {
     If,
     Else,
     For,
+    While,
     In,
     Fn,
     Return,
@@ -130,6 +131,7 @@ fn match_table() -> HashMap<&'static str, Token> {
     map.insert("if", Token::Keyword(KeywordKind::If));
     map.insert("else", Token::Keyword(KeywordKind::Else));
     map.insert("for", Token::Keyword(KeywordKind::For));
+    map.insert("while", Token::Keyword(KeywordKind::While));
     map.insert("in", Token::Keyword(KeywordKind::In));
     map.insert("fn", Token::Keyword(KeywordKind::Fn));
     map.insert("return", Token::Keyword(KeywordKind::Return));

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, vec};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, vec};
 
 use clap::ValueHint;
 use serde::Serialize;
@@ -153,12 +153,19 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
 
             context.enter_scope(ScopeKind::Loop);
             let var_ref = context.set(&value);
-            context.enter_scope(ScopeKind::Block);
             let statements = translate_body(&statements, context)?;
-            context.exit_scope();
             context.exit_scope();
 
             Ok(Statement::ForIR { variable: var_ref, left, right, statements })
+        }
+        Statement::While { condition, statements } => {
+            let condition = translate_expression(condition, context)?;
+
+            context.enter_scope(ScopeKind::Loop);
+            let statements = translate_body(&statements, context)?;
+            context.exit_scope();
+
+            Ok(Statement::While { condition, statements })
         }
         Statement::Return { expression } => {
             Ok(Statement::Return { expression: translate_expression(expression, context)? })
@@ -170,8 +177,22 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
 fn translate_expression(expression: Expression, context: &mut Context) -> Result<Expression, String> {
     match &expression {
         Expression::Assignment { left, right, is_definition } => {
-            let box Expression::Literal { value: ValueHolder::String(name), ..  } = left else {
-                return Err("no".to_string());
+            let mut variable = *left.clone();
+
+            // Find the innermost literal variable name
+            loop {
+                if matches!(&variable, Expression::Literal { .. }) {
+                    break;
+                }
+                if let Expression::Member { object, .. } = &variable {
+                    variable = object.as_ref().clone();
+                } else {
+                    break;
+                }
+            }
+
+            let Expression::Literal { value: ValueHolder::String(name), ..  } = &variable else {
+                return Err("Cannot access property on type other than a variable".to_string());
             };
 
             if *is_definition {
@@ -182,11 +203,10 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
         }
         Expression::Member { object, property } => {
             let object = translate_expression(*object.clone(), context)?;
-            let property = translate_expression(*property.clone(), context)?;
 
             Ok(Expression::Member {
                 object: Box::new(object),
-                property: Box::new(property),
+                property: property.clone(),
             })
         }
         Expression::Literal { r#type, value: ValueHolder::String(value) } => {

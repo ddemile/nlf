@@ -122,6 +122,10 @@ pub enum Statement {
         arguments: Vec<VariableRef>,
         statements: Vec<Statement>,
     },
+    While {
+        condition: Expression,
+        statements: Vec<Statement>,   
+    },
     Return {
         expression: Expression,
     },
@@ -252,6 +256,18 @@ fn parse_internal(mut tokens: Vec<Token>) -> (Vec<Statement>, usize) {
                     variable: loop_variable,
                     left,
                     right,
+                    statements: inner_statements,
+                });
+            }
+            Token::Keyword(KeywordKind::While) => {
+                cursor += 1;
+
+                let condition = equality_expression(&mut cursor, &mut tokens);
+
+                let inner_statements = block(&mut cursor, &mut tokens);
+
+                statements.push(Statement::While {
+                    condition,
                     statements: inner_statements,
                 });
             }

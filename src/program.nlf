@@ -1,8 +1,9 @@
-let start = now()
-
-for i in ..1000000 {
+let obj = {
+    "key": {
+        "nested_key": "value"
+    }
 }
 
-let end = now()
-
-print(end - start)
+print(obj.key.nested_key)
+obj.key.nested_key = "test"
+print(obj.key.nested_key)

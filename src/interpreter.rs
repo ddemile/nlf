@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-enum RuntimeError {
+pub enum RuntimeError {
     InvalidType(String),
     Custom(String),
     VariableNotFound(String),
@@ -40,8 +40,8 @@ impl fmt::Display for RuntimeError {
 type RuntimeResult = Result<ValueHolder, RuntimeError>;
 
 lazy_static! {
-    static ref BUILT_IN_FUNCTIONS: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> ValueHolder + Send + Sync>> = {
-        let mut m: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> ValueHolder + Send + Sync>> =
+    static ref BUILT_IN_FUNCTIONS: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> RuntimeResult + Send + Sync>> = {
+        let mut m: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> RuntimeResult + Send + Sync>> =
             HashMap::new();
 
         m.insert(
@@ -64,7 +64,7 @@ lazy_static! {
 
                 println!("{}", arguments.join(" "));
 
-                ValueHolder::Void
+                Ok(ValueHolder::Void)
             }),
         );
 
@@ -72,15 +72,15 @@ lazy_static! {
             String::from("pow"),
             Box::new(|arguments| {
                 let a = match arguments.get(0).unwrap() {
-                    ValueHolder::Float(f) => f,
-                    _ => panic!("Expected float value"),
-                };
+                    ValueHolder::Float(f) => Ok(f),
+                    _ => Err(RuntimeError::InvalidType("Expected float value".to_string())),
+                }?;
                 let b = match arguments.get(1).unwrap() {
-                    ValueHolder::Float(f) => f,
-                    _ => panic!("Expected float value"),
-                };
+                    ValueHolder::Float(f) => Ok(f),
+                    _ => Err(RuntimeError::InvalidType("Expected float value".to_string())),
+                }?;
 
-                ValueHolder::Float(a.powf(*b))
+                Ok(ValueHolder::Float(a.powf(*b)))
             }),
         );
 
@@ -91,7 +91,23 @@ lazy_static! {
                 let since_the_epoch = start
                     .duration_since(UNIX_EPOCH)
                     .expect("time should go forward");
-                ValueHolder::Float(since_the_epoch.as_millis_f64())
+                Ok(ValueHolder::Float(since_the_epoch.as_millis_f64()))
+            }),
+        );
+
+        m.insert(
+            String::from("assert"),
+            Box::new(|arguments| {
+                let a = match arguments.get(0).unwrap() {
+                    ValueHolder::Bool(f) => f,
+                    _ => panic!("Expected bool value"),
+                };
+
+                if !a {
+                    return Err(RuntimeError::Custom("Assertion failed".to_string()))
+                }
+
+                Ok(ValueHolder::Void)
             }),
         );
 
@@ -255,7 +271,7 @@ impl Environment {
         self.scopes.pop().expect("No scope to exit");
     }
 
-pub fn set(
+    pub fn set(
         &mut self,
         var_ref: VariableRef,
         value: ValueHolder,
@@ -301,7 +317,7 @@ pub fn set(
     }
 }
 
-pub fn interpret(program: Program) {
+pub fn interpret(program: Program) -> Result<(), RuntimeError> {
     let environment = Environment::new();
 
     let mut context = ProgramContext {
@@ -310,15 +326,9 @@ pub fn interpret(program: Program) {
         store: HashMap::new(),
     };
 
-    match eval_body(&program.body, &mut context) {
-        Ok(_) => (),
-        Err(e) => {
-            for scope in context.environment.scopes.iter() {
-                // println!("{:?}", scope);
-            }
-            println!("Runtime error: {}", e)
-        }
-    }
+    eval_body(&program.body, &mut context)?;
+
+    Ok(())
 }
 
 fn define_functions(
@@ -398,6 +408,7 @@ fn eval_statement(statement: Statement, context: &mut ProgramContext) -> Runtime
             right,
             statements,
         } => eval_for(variable, left, right, statements, context),
+        Statement::While { condition, statements } => eval_while(condition, statements, context),
         Statement::FunctionIR {
             var_ref,
             arguments,
@@ -458,10 +469,13 @@ fn eval_for(
 
     for i in iter {
         // Faster than environment.set in this context
-        let scope: &mut &mut Scope = &mut context.environment.scopes.last_mut().unwrap();
-        scope.slots[variable.slot] = ValueHolder::Int(i);
+        let scope = context.environment.scopes.last_mut().unwrap();
 
-        context.environment.enter_scope(ScopeKind::Regular);
+        for v in &mut scope.slots {
+            *v = ValueHolder::Void;
+        }
+
+        scope.slots[variable.slot] = ValueHolder::Int(i);
 
         eval_body(&statements, context)?;
         let broken = context
@@ -471,7 +485,6 @@ fn eval_for(
             .unwrap()
             .interrupted
             .is_some();
-        context.environment.exit_scope();
 
         if broken {
             break;
@@ -480,6 +493,34 @@ fn eval_for(
     context.environment.exit_scope();
 
     Ok(ValueHolder::Void)
+}
+
+fn eval_while(condition: Expression, statements: Vec<Statement>, context: &mut ProgramContext) -> RuntimeResult {
+    while eval_expr(condition.clone(), context)?.into() {
+        context.environment.enter_scope(ScopeKind::Loop);
+        let scope = context.environment.scopes.last_mut().unwrap();
+
+        for v in &mut scope.slots {
+            *v = ValueHolder::Void;
+        }
+
+        eval_body(&statements, context)?;
+        let broken = context
+            .environment
+            .scopes
+            .last()
+            .unwrap()
+            .interrupted
+            .is_some();
+
+        context.environment.exit_scope();
+        if broken {
+            break;
+        }
+    }
+
+    Ok(ValueHolder::Void)
+
 }
 
 fn eval_if(
@@ -671,7 +712,7 @@ fn eval_call(
                 .map(|arg| eval_expr(arg, context))
                 .collect::<Result<Vec<_>, RuntimeError>>()?;
 
-            return Ok(func(arguments));
+            return func(arguments);
         };
     }
 
