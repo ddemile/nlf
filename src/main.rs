@@ -1,6 +1,7 @@
 #![feature(box_patterns)]
 #![feature(duration_millis_float)]
 use std::{fs, path::Path};
+use inline_colorization::*;
 
 use crate::{parser::parse};
 use clap::Parser;
@@ -23,7 +24,7 @@ fn main() {
     let args = Args::parse();
 
     if args.tests {
-        tests::run_tests(Path::new("./src/tests"));
+        tests::run_tests(Path::new("./tests"));
         return;
     }
 
@@ -47,6 +48,6 @@ fn main() {
 
     match interpreter::interpret(ir) {
         Ok(_) => (),
-        Err(e) => println!("Runtime error: {}", e)
+        Err(e) => println!("{color_red}Runtime error{color_reset}: {}", e)
     }
 }

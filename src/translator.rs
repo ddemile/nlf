@@ -1,6 +1,5 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, vec};
+use std::{collections::HashMap, vec};
 
-use clap::ValueHint;
 use serde::Serialize;
 
 use crate::parser::{Block, Expression, LiteralExpressionKind, Program, Statement, ValueHolder, VariableRef};
@@ -260,10 +259,10 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
         }
         Expression::Call { callee, arguments } => {
             let callee = match translate_expression(*callee.clone(), context) {
-                Ok(Expression::Variable(v)) => Ok(Expression::Variable(v)),
-                Ok(_) => Err("Callee must be a variable".to_string()),
-                Err(e) => Ok(*callee.clone()),
-            }?;
+                Ok(Expression::Variable(v)) => Expression::Variable(v),
+                Ok(_) => *callee.clone(),
+                Err(_) => *callee.clone(),
+            };
             let mut inner_arguments: Vec<Expression> = vec![];
 
             for arg in arguments {

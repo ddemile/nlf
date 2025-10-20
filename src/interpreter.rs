@@ -1,16 +1,18 @@
 use core::panic;
-use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, fmt, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
 
 use indexmap::IndexSet;
 use lazy_static::lazy_static;
 
 use crate::{
-    lexer::Token,
-    parser::{
-        Argument, Block, Expression, Function, LiteralExpressionKind, ObjectRef, Program,
-        Statement, ValueHolder, VariableRef,
-    },
+    interpreter::prototypes::{Operation, Prototype, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, STRING_PROTOTYPE}, lexer::Token, parser::{
+        Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
+    }
 };
+
+use inline_colorization::*;
+
+pub mod prototypes;
 
 #[derive(Debug)]
 pub enum RuntimeError {
@@ -19,6 +21,7 @@ pub enum RuntimeError {
     VariableNotFound(String),
     VariableAlreadyDeclared(String),
     NoSuchProperty(String),
+    OperationNotSupported(String)
 }
 
 impl fmt::Display for RuntimeError {
@@ -33,11 +36,53 @@ impl fmt::Display for RuntimeError {
             RuntimeError::NoSuchProperty(name) => {
                 write!(f, "[NoSuchProperty] {}", name)
             }
+            RuntimeError::OperationNotSupported(name) => {
+                write!(f, "[OperationNotSupported] {}", name)
+            }
         }
     }
 }
 
-type RuntimeResult = Result<ValueHolder, RuntimeError>;
+impl ValueHolder {
+    fn get_prototype(&self) -> &Prototype {
+        match self {
+            ValueHolder::String(_) => &*STRING_PROTOTYPE,
+            ValueHolder::Int(_) => &*INT_PROTOTYPE,
+            ValueHolder::Float(_) => &*FLOAT_PROTOTYPE,
+            ValueHolder::Object(_) => &*OBJECT_PROTOTYPE,
+            _ => todo!()
+        }
+    }
+
+    fn to_string(&self) -> String {
+        match self {
+            ValueHolder::String(value) => format!("{value}"),
+            ValueHolder::Float(value) => format!("{value}"),
+            ValueHolder::Int(value) => format!("{value}"),
+            ValueHolder::Bool(value) => format!("{value}"),
+            ValueHolder::Fn(FunctionKind::Runtime(_)) => format!("fn() {{ TODO }}"),
+            ValueHolder::Fn(FunctionKind::BuiltIn(_)) => format!("fn() {{ native code }}"),
+            ValueHolder::Object(_) => format!("ObjectRef"),
+            ValueHolder::Void => format!("Void"),
+        }
+    }
+}
+
+impl fmt::Display for ValueHolder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ValueHolder::String(_) => write!(f, "{}", self.to_string()),
+            ValueHolder::Float(_) => write!(f, "{color_yellow}{}{color_reset}", self.to_string()),
+            ValueHolder::Int(_) => write!(f, "{color_yellow}{}{color_reset}", self.to_string()),
+            ValueHolder::Bool(_) => write!(f, "{color_blue}{}{color_reset}", self.to_string()),
+            ValueHolder::Fn(_) => write!(f, "{color_black}{}{color_reset}", self.to_string()),
+            ValueHolder::Object(_) => write!(f, "{}", self.to_string()),
+            ValueHolder::Void => write!(f, "{}", self.to_string()),
+        }
+    }
+}
+
+pub type RuntimeResult = Result<ValueHolder, RuntimeError>;
 
 lazy_static! {
     static ref BUILT_IN_FUNCTIONS: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> RuntimeResult + Send + Sync>> = {
@@ -50,15 +95,7 @@ lazy_static! {
                 let arguments: Vec<String> = arguments
                     .iter()
                     .map(|argument| -> String {
-                        match argument {
-                            ValueHolder::String(value) => format!("{value}"),
-                            ValueHolder::Float(value) => format!("{value}"),
-                            ValueHolder::Int(value) => format!("{value}"),
-                            ValueHolder::Bool(value) => format!("{value}"),
-                            ValueHolder::Fn(Function { .. }) => format!("fn()"),
-                            ValueHolder::Object(_) => format!("ObjectRef"),
-                            ValueHolder::Void => format!("Void"),
-                        }
+                        format!("{argument}")
                     })
                     .collect();
 
@@ -235,7 +272,6 @@ enum ScopeKind {
 struct Scope {
     kind: ScopeKind,
     slots: Vec<ValueHolder>,
-    isolated: bool,
     interrupted: Option<ValueHolder>,
     parent: Option<usize>
 }
@@ -250,7 +286,6 @@ impl Environment {
             scopes: vec![Scope {
                 kind: ScopeKind::Program,
                 slots: vec![],
-                isolated: false,
                 interrupted: None,
                 parent: None
             }],
@@ -261,7 +296,6 @@ impl Environment {
         self.scopes.push(Scope {
             kind,
             slots: vec![],
-            isolated: false,
             interrupted: None,
             parent: Some(self.scopes.len() - 1)
         });
@@ -282,10 +316,15 @@ impl Environment {
             let mut scope_idx = self.scopes.len() - 1;
             for _ in 0..var_ref.depth {
                 let scope = &self.scopes[scope_idx];
-                scope_idx = scope.parent.ok_or(RuntimeError::VariableNotFound(format!(
-                    "Parent scope not found for slot {} at depth {}",
-                    var_ref.slot, var_ref.depth
-                )))?;
+
+                if let Scope { kind: ScopeKind::Call(idx), .. } = scope {
+                    scope_idx = *idx as usize;
+                } else {
+                    scope_idx = scope.parent.ok_or(RuntimeError::VariableNotFound(format!(
+                        "Parent scope not found for slot {} at depth {}",
+                        var_ref.slot, var_ref.depth
+                    )))?;
+                }
             }
             self.scopes[scope_idx]
                 .slots
@@ -311,7 +350,12 @@ impl Environment {
         let mut scope_idx = self.scopes.len() - 1;
         for _ in 0..var_ref.depth {
             let scope = &self.scopes[scope_idx];
-            scope_idx = scope.parent?;
+
+            if let Scope { kind: ScopeKind::Call(idx), .. } = scope {
+                scope_idx = *idx as usize;
+            } else {
+                scope_idx = scope.parent?;
+            }
         }
         self.scopes[scope_idx].slots.get(var_ref.slot)
     }
@@ -350,11 +394,11 @@ fn define_functions(
 
         context.environment.set(
             var_ref.clone(),
-            ValueHolder::Fn(Function {
+            ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                 arguments: arguments.to_vec(),
                 statements: statements.to_vec(),
                 scope_position: context.environment.scopes.len() - 1
-            }),
+            })),
             true,
         )?
     }
@@ -565,13 +609,18 @@ fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
                 unreachable!();
             };
 
-            let ValueHolder::Object(object) = value else {
-                return Err(RuntimeError::InvalidType(
-                    "Cannot access property on type other than Object".to_string(),
-                ));
+            if let ValueHolder::Object(object) = &value {
+                match object.clone().get(property.clone(), context) {
+                    Ok(object) => return Ok(object),
+                    Err(_) => () 
+                };
             };
 
-            object.get(property, context)
+            let prototype = value.get_prototype();
+
+            let method = Rc::new(prototype.get_method(&property).ok_or(RuntimeError::NoSuchProperty(property))?.clone());
+
+            Ok(ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func: method, instance: Rc::new(value) })))
         }
         Expression::Literal { r#type, value } => {
             if let LiteralExpressionKind::Literal = r#type {
@@ -665,31 +714,15 @@ fn eval_binary(
     right: Box<Expression>,
     context: &mut ProgramContext,
 ) -> RuntimeResult {
-    let left_val = match eval_expr(*left, context) {
-        Ok(ValueHolder::Float(f)) => f,
-        Ok(ValueHolder::Int(f)) => f.into(),
-        other => {
-            println!("DEBUG: Left operand is not a number: {:?}", other); // Add this line
-            return Err(RuntimeError::InvalidType(
-                "Expected float value for binary operation".to_string(),
-            ));
-        }
-    };
-    let right_val = match eval_expr(*right, context) {
-        Ok(ValueHolder::Float(f)) => f,
-        Ok(ValueHolder::Int(f)) => f.into(),
-        _ => {
-            return Err(RuntimeError::InvalidType(
-                "Expected float value for binary operation".to_string(),
-            ));
-        }
-    };
+    let left = &eval_expr(*left, context)?;
+    let right = &eval_expr(*right, context)?;
+    let left_proto = left.get_prototype();
 
     match operator {
-        Token::Plus => Ok(ValueHolder::Float(left_val + right_val)),
-        Token::Minus => Ok(ValueHolder::Float(left_val - right_val)),
-        Token::Asterisk => Ok(ValueHolder::Float(left_val * right_val)),
-        Token::Slash => Ok(ValueHolder::Float(left_val / right_val)),
+        Token::Plus => left_proto.operate(Operation::Addition, left, right),
+        Token::Minus => left_proto.operate(Operation::Substraction, left, right),
+        Token::Asterisk => left_proto.operate(Operation::Multiplication, left, right),
+        Token::Slash => left_proto.operate(Operation::Division, left, right),
         _ => panic!("Invalid binary operator"),
     }
 }
@@ -715,12 +748,14 @@ fn eval_call(
             return func(arguments);
         };
     }
+    
+    let expr = eval_expr(*callee.clone(), context)?;
 
-    if let ValueHolder::Fn(Function {
+    if let ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
         arguments,
         statements,
         scope_position
-    }) = eval_expr(*callee.clone(), context)?
+    })) = expr
     {
         if arguments.len() != call_arguments.len() {
             return Err(RuntimeError::Custom("Invalid number of args".to_string()));
@@ -738,7 +773,7 @@ fn eval_call(
         
         context
             .environment
-            .set(VariableRef { slot: 0, depth: 0 }, ValueHolder::Fn(Function { arguments: arguments.clone(), statements: statements.clone(), scope_position }), true)?;
+            .set(VariableRef { slot: 0, depth: 0 }, ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction { arguments: arguments.clone(), statements: statements.clone(), scope_position })), true)?;
 
         for (argument, value) in arguments.iter().zip(evaluated_args.iter()) {
             context
@@ -748,6 +783,10 @@ fn eval_call(
         let return_value = eval_body(&statements, context);
         context.environment.exit_scope();
         return return_value;
+    }
+
+    if let ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func, instance  })) = expr {
+        return func(&instance, call_arguments);
     }
 
     panic!("Tried to call invalid function expression: {:?}", *callee);

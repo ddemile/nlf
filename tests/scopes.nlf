@@ -15,5 +15,8 @@ fn foo() {
     a = 15
 }
 
-foo()
+if true {
+    foo()
+}
+
 assert(a == 15)

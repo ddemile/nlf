@@ -1,15 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::{self, Debug}, rc::Rc};
 
 use serde::Serialize;
 
-use crate::lexer::{KeywordKind, Token};
-
-#[derive(Serialize, Debug, Clone)]
-pub struct Function {
-    pub arguments: Vec<VariableRef>,
-    pub statements: Vec<Statement>,
-    pub scope_position: usize,
-}
+use crate::{interpreter::prototypes::MethodFunc, lexer::{KeywordKind, Token}};
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Argument {
@@ -22,13 +15,41 @@ pub struct ObjectRef {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct RuntimeFunction {
+    pub arguments: Vec<VariableRef>,
+    pub statements: Vec<Statement>,
+    pub scope_position: usize,
+}
+
+#[derive(Serialize, Clone)]
+pub struct BuiltInFunction {
+    #[serde(skip)]
+    pub func: Rc<MethodFunc>,
+    #[serde(skip)]
+    pub instance: Rc<ValueHolder>
+} 
+
+impl Debug for BuiltInFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Function")
+            .finish()
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub enum FunctionKind {
+    Runtime(RuntimeFunction),
+    BuiltIn(BuiltInFunction)
+}
+
+#[derive(Serialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum ValueHolder {
     Int(i32),
     String(String),
     Float(f64),
     Bool(bool),
-    Fn(Function),
+    Fn(FunctionKind),
     Object(ObjectRef),
     Void,
 }
@@ -570,7 +591,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression
 
     let json = serde_json::to_string_pretty(&token).unwrap();
 
-    match token {
+    let expr = match token {
         Token::NumericLiteral { value } => Expression::Literal {
             r#type: LiteralExpressionKind::Literal,
             value: ValueHolder::Float(*value),
@@ -583,14 +604,10 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression
             r#type: LiteralExpressionKind::Literal,
             value: ValueHolder::String(value.clone()),
         },
-        Token::Identifier { value } => {
-            let expr = Expression::Literal {
-                r#type: LiteralExpressionKind::Variable,
-                value: ValueHolder::String(value.clone()),
-            };
-
-            member(cursor, tokens, expr, true)
-        }
+        Token::Identifier { value } => Expression::Literal {
+            r#type: LiteralExpressionKind::Variable,
+            value: ValueHolder::String(value.clone()),
+        },
         Token::OpeningParenthesis => {
             let expr = expression(cursor, tokens);
 
@@ -601,7 +618,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression
 
             *cursor += 1;
 
-            return expr;
+            expr
         }
         Token::OpeningBracket => {
             let mut entries: HashMap<String, Expression> = HashMap::new();
@@ -640,13 +657,15 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Expression
 
             *cursor += 1;
 
-            return Expression::Literal {
+            Expression::Literal {
                 r#type: LiteralExpressionKind::Object(entries),
                 value: ValueHolder::Void,
-            };
+            }
         }
         _ => panic!("Unexpected token {json}"),
-    }
+    };
+
+    member(cursor, tokens, expr, true)
 }
 
 fn member(cursor: &mut usize, tokens: &mut Vec<Token>, mut expr: Expression, match_call: bool) -> Expression {
