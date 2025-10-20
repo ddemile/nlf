@@ -58,7 +58,7 @@ impl Context {
             }
 
             if let Some(v) = scope.symbol_table.get(name) {
-                return Some(VariableRef { slot: v, depth });
+                return Some(VariableRef { name: None, slot: v, depth });
             }
 
             depth += 1;
@@ -73,7 +73,7 @@ impl Context {
         let id = scope.symbol_table.set(name);
 
         // TOOD: refactor
-        VariableRef { slot: id, depth: 0 }
+        VariableRef { name: Some(name.to_owned()), slot: id, depth: 0 }
     }
 
     fn enter_scope(&mut self, scope: ScopeKind) {
@@ -168,6 +168,20 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
         }
         Statement::Return { expression } => {
             Ok(Statement::Return { expression: translate_expression(expression, context)? })
+        }
+        Statement::Import { specifiers, source } => {
+            let specifiers= specifiers.iter().map(|specifier| {
+                let Expression::Literal { value: ValueHolder::String(name), ..  } = &specifier.local else {
+                    unreachable!()
+                };
+
+                context.set(name)
+            }).collect();
+
+            Ok(Statement::ImportIR { specifiers, source })
+        }
+        Statement::Export { declaration } => {
+            Ok(Statement::Export { declaration: Box::new(translate_statement(*declaration, context)?) })
         }
         _ => Ok(statement)
     }

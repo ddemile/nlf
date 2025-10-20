@@ -31,7 +31,8 @@ pub enum Token {
     And,
     Or,
     Period,
-    Colon
+    Colon,
+    Arrow
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -49,7 +50,10 @@ pub enum KeywordKind {
     Throw,
     Try,
     Catch,
-    Let
+    Let,
+    Export,
+    Import,
+    From
 }
 
 pub fn lex(code: String) -> Vec<Token> {
@@ -140,6 +144,9 @@ fn match_table() -> HashMap<&'static str, Token> {
     map.insert("try", Token::Keyword(KeywordKind::Try));
     map.insert("catch", Token::Keyword(KeywordKind::Catch));
     map.insert("let", Token::Keyword(KeywordKind::Let));
+    map.insert("export", Token::Keyword(KeywordKind::Export));
+    map.insert("import", Token::Keyword(KeywordKind::Import));
+    map.insert("from", Token::Keyword(KeywordKind::From));
 
     // Booleans
     map.insert("true", Token::BooleanLiteral { value: true });
@@ -162,6 +169,8 @@ fn match_table() -> HashMap<&'static str, Token> {
 
     map.insert("&&", Token::And);
     map.insert("||", Token::Or);
+
+    map.insert("->", Token::Arrow);
     
     return map;
 }

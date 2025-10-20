@@ -1,9 +1,5 @@
-let obj = {
-    "key": {
-        "nested_key": "value"
-    }
-}
+import {} from "./src/mod.nlf"
 
-print(obj.key.nested_key)
-obj.key.nested_key = "test"
-print(obj.key.nested_key)
+let var = 2
+// Should not be possible
+print(pow(var, 0 - 1))

@@ -1,0 +1,13 @@
+
+
+export fn pow(a, b) {
+    if b == 0 {
+        return 1
+    }
+
+    let result = a
+    for _ in ..(b - 1) {
+        result = result * a
+    }
+    return result
+}

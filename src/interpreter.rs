@@ -1,13 +1,13 @@
 use core::panic;
-use std::{collections::HashMap, fmt, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, fmt::{self, format}, fs, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
 
 use indexmap::IndexSet;
 use lazy_static::lazy_static;
 
 use crate::{
-    interpreter::prototypes::{Operation, Prototype, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, STRING_PROTOTYPE}, lexer::Token, parser::{
-        Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
-    }
+    interpreter::prototypes::{Operation, Prototype, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, STRING_PROTOTYPE}, lexer::{self, Token}, parser::{
+        self, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
+    }, translator
 };
 
 use inline_colorization::*;
@@ -156,6 +156,7 @@ struct ProgramContext {
     pub environment: Environment,
     pub schemas: Vec<Schema>,
     pub store: HashMap<usize, Object>,
+    pub modules: ModulesContext
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +168,25 @@ struct Schema {
 struct Object {
     schema_id: usize,
     values: Vec<ValueHolder>,
+}
+
+struct Module {
+    exports: HashMap<String, ValueHolder>
+}
+
+struct ModulesContext {
+    _cache: HashMap<String, Module>
+}
+
+impl ModulesContext {
+    fn new() -> Self {
+        Self { _cache: HashMap::new() }
+    }
+    
+
+    fn cache() {
+
+    }
 }
 
 fn get_schema(keys: IndexSet<String>, context: &mut ProgramContext) -> Schema {
@@ -368,9 +388,14 @@ pub fn interpret(program: Program) -> Result<(), RuntimeError> {
         environment,
         schemas: vec![],
         store: HashMap::new(),
+        modules: ModulesContext::new()
     };
 
-    eval_body(&program.body, &mut context)?;
+    let imports_count = eval_imports(&program.body, &mut context)?;
+
+    let statements = &program.body[imports_count..].to_vec();
+
+    eval_body(statements, &mut context)?;
 
     Ok(())
 }
@@ -381,15 +406,20 @@ fn define_functions(
 ) -> Result<(), RuntimeError> {
     for statement in statements
         .iter()
-        .filter(|statement| matches!(*statement, Statement::FunctionIR { .. }))
+        .filter(|statement| matches!(*statement, Statement::FunctionIR { .. } | Statement::Export { declaration: box Statement::FunctionIR { .. } }))
     {
-        let Statement::FunctionIR {
-            var_ref,
-            arguments,
-            statements,
-        } = statement
-        else {
-            panic!()
+        let (var_ref, arguments, statements) = match statement {
+            Statement::FunctionIR {
+                var_ref,
+                arguments,
+                statements,
+            } => (var_ref, arguments, statements),
+            Statement::Export { declaration: box Statement::FunctionIR {
+                var_ref,
+                arguments,
+                statements,
+            } } => (var_ref, arguments, statements),
+            _ => panic!("Expected function declaration")
         };
 
         context.environment.set(
@@ -461,7 +491,11 @@ fn eval_statement(statement: Statement, context: &mut ProgramContext) -> Runtime
         Statement::Return { expression } => eval_expr(expression, context),
         Statement::Break => Ok(ValueHolder::Void),
         Statement::Block(_) => Ok(ValueHolder::Void),
-        _ => panic!("Invalid statement"),
+        Statement::ImportIR { .. } => Err(RuntimeError::Custom("Import declarations can only be at the top of modules".into())),
+        Statement::Export { declaration } => {
+            eval_statement(*declaration, context)
+        },
+        _ => panic!("Invalid statement : {:?}", statement),
     }
 }
 
@@ -632,9 +666,11 @@ fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
                     .collect();
                 let object_ref = ObjectRef::new(entries, context);
                 return Ok(ValueHolder::Object(object_ref));
+            } else if let LiteralExpressionKind::Variable = r#type {
+                return Err(RuntimeError::VariableNotFound(value.to_string()));
             } else {
-                panic!("Variable error")
-            };
+                unreachable!();
+            }
         }
         Expression::Variable(variable) => {
             context.environment
@@ -773,7 +809,7 @@ fn eval_call(
         
         context
             .environment
-            .set(VariableRef { slot: 0, depth: 0 }, ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction { arguments: arguments.clone(), statements: statements.clone(), scope_position })), true)?;
+            .set(VariableRef { name: None, slot: 0, depth: 0 }, ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction { arguments: arguments.clone(), statements: statements.clone(), scope_position })), true)?;
 
         for (argument, value) in arguments.iter().zip(evaluated_args.iter()) {
             context
@@ -844,4 +880,47 @@ fn eval_logical(
             "Invalid relational operator".to_string(),
         )),
     }
+}
+
+fn eval_imports(statements: &Vec<Statement>, context: &mut ProgramContext) -> Result<usize, RuntimeError> {
+    let mut imports_count = 0;
+    for statement in statements {
+        let Statement::ImportIR { specifiers, source } = statement else {
+            break;
+        };
+
+        imports_count += 1;
+
+        let contents = fs::read_to_string(source).map_err(|_| RuntimeError::Custom("Module not found".into()))?;
+        
+        let tokens = lexer::lex(contents);
+
+        let ast = parser::parse(tokens);
+
+        let ir = translator::translate(ast);
+
+        let mut module = Module {
+            exports: HashMap::new()
+        };
+
+        for statement in ir.body {
+            let Statement::Export{ declaration: box Statement::FunctionIR { var_ref, arguments, statements }} = &statement else {
+                continue;
+            };
+
+            module.exports.insert(var_ref.name.clone().unwrap(), ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction { arguments: arguments.to_vec(), scope_position: 0, statements: statements.to_vec() })));
+        }
+
+        // TODO: function def is accessible from outside the module
+
+        for specifier in specifiers {
+            println!("{:?}", specifier);
+            let name = specifier.clone().name.unwrap();
+            let value = module.exports.get(&name).ok_or(RuntimeError::VariableNotFound(format!("Module has no such property: {}", name)))?;
+            
+            context.environment.set(specifier.clone(), value.clone(), true)?;
+        }
+    }
+
+    Ok(imports_count)
 }
