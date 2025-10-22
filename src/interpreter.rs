@@ -8,9 +8,9 @@ use lazy_static::lazy_static;
 
 use crate::{
     interpreter::prototypes::{
-        FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE,
+        Operation, Prototype, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, STRING_PROTOTYPE
     },
-    lexer::{Token},
+    lexer::{TokenKind},
     loader::Module,
     parser::{
         Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef,
@@ -27,7 +27,6 @@ pub enum RuntimeError {
     InvalidType(String),
     Custom(String),
     VariableNotFound(String),
-    VariableAlreadyDeclared(String),
     NoSuchProperty(String),
     OperationNotSupported(String),
 }
@@ -38,9 +37,6 @@ impl fmt::Display for RuntimeError {
             RuntimeError::InvalidType(value) => write!(f, "[InvalidType] {}", value),
             RuntimeError::Custom(value) => write!(f, "[CustomError] {}", value),
             RuntimeError::VariableNotFound(name) => write!(f, "[VariableNotFound] {}", name),
-            RuntimeError::VariableAlreadyDeclared(name) => {
-                write!(f, "[VariableAlreadyDeclared] {}", name)
-            }
             RuntimeError::NoSuchProperty(name) => {
                 write!(f, "[NoSuchProperty] {}", name)
             }
@@ -94,17 +90,25 @@ impl fmt::Display for ValueHolder {
 
 pub type RuntimeResult = Result<ValueHolder, RuntimeError>;
 
+type BuiltInFunctionMethod = HashMap<String, Box<dyn Fn(Vec<ValueHolder>, &mut ModuleContext) -> RuntimeResult + Send + Sync>>;
+
 lazy_static! {
-    static ref BUILT_IN_FUNCTIONS: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> RuntimeResult + Send + Sync>> = {
-        let mut m: HashMap<String, Box<dyn Fn(Vec<ValueHolder>) -> RuntimeResult + Send + Sync>> =
+    static ref BUILT_IN_FUNCTIONS: BuiltInFunctionMethod = {
+        let mut m: BuiltInFunctionMethod =
             HashMap::new();
 
         m.insert(
             String::from("print"),
-            Box::new(|arguments| {
+            Box::new(|arguments, context| {
                 let arguments: Vec<String> = arguments
                     .iter()
-                    .map(|argument| -> String { format!("{argument}") })
+                    .map(|argument| -> String {
+                        if let ValueHolder::Object(object_ref) = argument {
+                            return serde_json::to_string(&object_ref.fetch(context)).expect("Failed to parse object");
+                        }
+
+                        format!("{argument}")
+                    })
                     .collect();
 
                 println!("{}", arguments.join(" "));
@@ -115,7 +119,7 @@ lazy_static! {
 
         m.insert(
             String::from("pow"),
-            Box::new(|arguments| {
+            Box::new(|arguments, _| {
                 let a = match arguments.get(0).unwrap() {
                     ValueHolder::Float(f) => Ok(f),
                     _ => Err(RuntimeError::InvalidType(
@@ -135,7 +139,7 @@ lazy_static! {
 
         m.insert(
             String::from("now"),
-            Box::new(|_| {
+            Box::new(|_, _| {
                 let start = SystemTime::now();
                 let since_the_epoch = start
                     .duration_since(UNIX_EPOCH)
@@ -146,7 +150,7 @@ lazy_static! {
 
         m.insert(
             String::from("assert"),
-            Box::new(|arguments| {
+            Box::new(|arguments, _| {
                 let a = match arguments.get(0).unwrap() {
                     ValueHolder::Bool(f) => f,
                     _ => panic!("Expected bool value"),
@@ -164,7 +168,7 @@ lazy_static! {
     };
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProgramContext {
     pub modules: HashMap<String, RefCell<Module>>,
 }
@@ -302,6 +306,30 @@ impl ObjectRef {
         };
 
         context.store.insert(self.object_id, object);
+    }
+
+    pub fn fetch(&self, context: &mut ModuleContext) -> HashMap<String, ValueHolder> {
+        let object = context
+            .store
+            .get(&self.object_id)
+            .expect("Object not found");
+
+        let schema = context
+            .schemas
+            .iter()
+            .find(|schema| schema.id == object.schema_id)
+            .expect("Schema not found");
+
+        let mut map = HashMap::new();
+
+        for i in 0..schema.keys.len() {
+            let key = schema.keys[i].clone(); 
+            let value = object.values[i].clone();
+
+            map.insert(key, value);
+        }
+
+        map
     }
 }
 
@@ -803,7 +831,7 @@ fn eval_expr(expr: Expression, context: &mut ModuleContext) -> RuntimeResult {
 
 fn eval_binary(
     left: Box<Expression>,
-    operator: Token,
+    operator: TokenKind,
     right: Box<Expression>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
@@ -812,10 +840,10 @@ fn eval_binary(
     let left_proto = left.get_prototype();
 
     match operator {
-        Token::Plus => left_proto.operate(Operation::Addition, left, right),
-        Token::Minus => left_proto.operate(Operation::Substraction, left, right),
-        Token::Asterisk => left_proto.operate(Operation::Multiplication, left, right),
-        Token::Slash => left_proto.operate(Operation::Division, left, right),
+        TokenKind::Plus => left_proto.operate(Operation::Addition, left, right),
+        TokenKind::Minus => left_proto.operate(Operation::Substraction, left, right),
+        TokenKind::Asterisk => left_proto.operate(Operation::Multiplication, left, right),
+        TokenKind::Slash => left_proto.operate(Operation::Division, left, right),
         _ => panic!("Invalid binary operator"),
     }
 }
@@ -838,7 +866,7 @@ fn eval_call(
                 .map(|arg| eval_expr(arg, context))
                 .collect::<Result<Vec<_>, RuntimeError>>()?;
 
-            return func(arguments);
+            return func(arguments, context);
         };
     }
 
@@ -897,7 +925,7 @@ fn eval_call(
 
 fn eval_equality(
     left: Box<Expression>,
-    operator: Token,
+    operator: TokenKind,
     right: Box<Expression>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
@@ -905,8 +933,8 @@ fn eval_equality(
     let right = eval_expr(*right, context)?;
 
     match operator {
-        Token::EQ => Ok(ValueHolder::Bool(left == right)),
-        Token::NE => Ok(ValueHolder::Bool(left != right)),
+        TokenKind::EQ => Ok(ValueHolder::Bool(left == right)),
+        TokenKind::NE => Ok(ValueHolder::Bool(left != right)),
         _ => Err(RuntimeError::Custom(
             "Invalid equality operator".to_string(),
         )),
@@ -915,7 +943,7 @@ fn eval_equality(
 
 fn eval_relational(
     left: Box<Expression>,
-    operator: Token,
+    operator: TokenKind,
     right: Box<Expression>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
@@ -923,17 +951,17 @@ fn eval_relational(
     let right = eval_expr(*right, context)?;
 
     Ok(ValueHolder::Bool(match operator {
-        Token::GT => left > right,
-        Token::GTE => left >= right,
-        Token::LT => left < right,
-        Token::LTE => left <= right,
+        TokenKind::GT => left > right,
+        TokenKind::GTE => left >= right,
+        TokenKind::LT => left < right,
+        TokenKind::LTE => left <= right,
         _ => unreachable!(),
     }))
 }
 
 fn eval_logical(
     left: Box<Expression>,
-    operator: Token,
+    operator: TokenKind,
     right: Box<Expression>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
@@ -941,8 +969,8 @@ fn eval_logical(
     let right = eval_expr(*right, context)?;
 
     match operator {
-        Token::And => Ok(ValueHolder::Bool(left.into() && right.into())),
-        Token::Or => Ok(ValueHolder::Bool(left.into() || right.into())),
+        TokenKind::And => Ok(ValueHolder::Bool(left.into() && right.into())),
+        TokenKind::Or => Ok(ValueHolder::Bool(left.into() || right.into())),
         _ => Err(RuntimeError::Custom(
             "Invalid relational operator".to_string(),
         )),

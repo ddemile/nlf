@@ -3,9 +3,17 @@ use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(PartialEq)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")] // "type" field will contain the variant name
 #[derive(PartialEq)]
-pub enum Token {
+pub enum TokenKind {
     Keyword(KeywordKind),
     Identifier { value: String },
     NumericLiteral { value: f64 },
@@ -88,10 +96,10 @@ pub fn lex(code: String) -> Vec<Token> {
                 }
 
                 if longest_match.len() > 0 {
-                    let token = map.get(longest_match).unwrap().clone();
+                    let kind = map.get(longest_match).unwrap().clone();
 
-                    if !matches!(token, Token::Keyword(_)) || (matches!(token, Token::Keyword(_)) && matches!(char_at(cursor + longest_match.len() - 1).map(|char| char.is_ascii_alphabetic() || char == '_'), Some(false))) {
-                        tokens.push(token);
+                    if !matches!(kind, TokenKind::Keyword(_)) || (matches!(kind, TokenKind::Keyword(_)) && matches!(char_at(cursor + longest_match.len() - 1).map(|char| char.is_ascii_alphabetic() || char == '_'), Some(false))) {
+                        tokens.push(Token { kind, start: cursor, end: cursor + longest_match.len() - 1 });
                         cursor += longest_match.len() - 1;
                         continue;
                     }
@@ -118,59 +126,59 @@ pub fn lex(code: String) -> Vec<Token> {
     return tokens;
 }
 
-fn match_table() -> HashMap<&'static str, Token> {
-    let mut map: HashMap<&'static str, Token> = HashMap::new();
+fn match_table() -> HashMap<&'static str, TokenKind> {
+    let mut map: HashMap<&'static str, TokenKind> = HashMap::new();
 
     // Punctuation
-    map.insert("(", Token::OpeningParenthesis);
-    map.insert(")", Token::ClosingParenthesis);
-    map.insert("{", Token::OpeningBracket);
-    map.insert("}", Token::ClosingBracket);
-    map.insert(",", Token::Comma);
-    map.insert("..", Token::Range);
-    map.insert(".", Token::Period);
-    map.insert(":", Token::Colon);
+    map.insert("(", TokenKind::OpeningParenthesis);
+    map.insert(")", TokenKind::ClosingParenthesis);
+    map.insert("{", TokenKind::OpeningBracket);
+    map.insert("}", TokenKind::ClosingBracket);
+    map.insert(",", TokenKind::Comma);
+    map.insert("..", TokenKind::Range);
+    map.insert(".", TokenKind::Period);
+    map.insert(":", TokenKind::Colon);
 
     // Keywords
-    map.insert("if", Token::Keyword(KeywordKind::If));
-    map.insert("else", Token::Keyword(KeywordKind::Else));
-    map.insert("for", Token::Keyword(KeywordKind::For));
-    map.insert("while", Token::Keyword(KeywordKind::While));
-    map.insert("in", Token::Keyword(KeywordKind::In));
-    map.insert("fn", Token::Keyword(KeywordKind::Fn));
-    map.insert("return", Token::Keyword(KeywordKind::Return));
-    map.insert("break", Token::Keyword(KeywordKind::Break));
-    map.insert("throw", Token::Keyword(KeywordKind::Throw));
-    map.insert("try", Token::Keyword(KeywordKind::Try));
-    map.insert("catch", Token::Keyword(KeywordKind::Catch));
-    map.insert("let", Token::Keyword(KeywordKind::Let));
-    map.insert("export", Token::Keyword(KeywordKind::Export));
-    map.insert("import", Token::Keyword(KeywordKind::Import));
-    map.insert("from", Token::Keyword(KeywordKind::From));
+    map.insert("if", TokenKind::Keyword(KeywordKind::If));
+    map.insert("else", TokenKind::Keyword(KeywordKind::Else));
+    map.insert("for", TokenKind::Keyword(KeywordKind::For));
+    map.insert("while", TokenKind::Keyword(KeywordKind::While));
+    map.insert("in", TokenKind::Keyword(KeywordKind::In));
+    map.insert("fn", TokenKind::Keyword(KeywordKind::Fn));
+    map.insert("return", TokenKind::Keyword(KeywordKind::Return));
+    map.insert("break", TokenKind::Keyword(KeywordKind::Break));
+    map.insert("throw", TokenKind::Keyword(KeywordKind::Throw));
+    map.insert("try", TokenKind::Keyword(KeywordKind::Try));
+    map.insert("catch", TokenKind::Keyword(KeywordKind::Catch));
+    map.insert("let", TokenKind::Keyword(KeywordKind::Let));
+    map.insert("export", TokenKind::Keyword(KeywordKind::Export));
+    map.insert("import", TokenKind::Keyword(KeywordKind::Import));
+    map.insert("from", TokenKind::Keyword(KeywordKind::From));
 
     // Booleans
-    map.insert("true", Token::BooleanLiteral { value: true });
-    map.insert("false", Token::BooleanLiteral { value: false });
+    map.insert("true", TokenKind::BooleanLiteral { value: true });
+    map.insert("false", TokenKind::BooleanLiteral { value: false });
 
     // Operators
-    map.insert("==", Token::EQ);
-    map.insert("!=", Token::NE);
-    map.insert("<=", Token::LTE);
-    map.insert("<", Token::LT);
-    map.insert(">=", Token::GTE);
-    map.insert(">", Token::GT);
+    map.insert("==", TokenKind::EQ);
+    map.insert("!=", TokenKind::NE);
+    map.insert("<=", TokenKind::LTE);
+    map.insert("<", TokenKind::LT);
+    map.insert(">=", TokenKind::GTE);
+    map.insert(">", TokenKind::GT);
     
-    map.insert("=", Token::Assign);
+    map.insert("=", TokenKind::Assign);
 
-    map.insert("+", Token::Plus);
-    map.insert("-", Token::Minus);
-    map.insert("*", Token::Asterisk);
-    map.insert("/", Token::Slash);
+    map.insert("+", TokenKind::Plus);
+    map.insert("-", TokenKind::Minus);
+    map.insert("*", TokenKind::Asterisk);
+    map.insert("/", TokenKind::Slash);
 
-    map.insert("&&", Token::And);
-    map.insert("||", Token::Or);
+    map.insert("&&", TokenKind::And);
+    map.insert("||", TokenKind::Or);
 
-    map.insert("->", Token::Arrow);
+    map.insert("->", TokenKind::Arrow);
     
     return map;
 }
@@ -189,7 +197,7 @@ fn number(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
         }
     }
 
-    tokens.push(Token::NumericLiteral { value: code[start..*cursor].parse().unwrap() });
+    tokens.push(Token { kind: TokenKind::NumericLiteral { value: code[start..*cursor].parse().unwrap() }, start, end: *cursor });
 }
 
 fn alpha(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
@@ -199,7 +207,7 @@ fn alpha(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
         *cursor += 1;
     }
 
-    tokens.push(Token::Identifier { value: code[start..*cursor].to_string() });
+    tokens.push(Token { kind: TokenKind::Identifier { value: code[start..*cursor].to_string() }, start, end: *cursor });
 }
 
 fn string(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
@@ -213,5 +221,5 @@ fn string(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
 
     *cursor += 1;
 
-    tokens.push(Token::StringLiteral { value: code[start..(*cursor - 1)].to_string() });
+    tokens.push(Token { kind: TokenKind::StringLiteral { value: code[start..(*cursor - 1)].to_string() }, start, end: *cursor });
 }

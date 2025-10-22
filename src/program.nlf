@@ -3,9 +3,14 @@ import {fib, increment} from "./src/mod.nlf"
 print("Lazy import has not runned yet")
 
 let obj = {
-    "value": 10
+    value: 10,
+    jean_true: 145
 }
 
+print(obj)
+
 increment(obj)
+
+print(obj)
 
 print(obj.value)
