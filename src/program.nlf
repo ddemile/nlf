@@ -1,5 +1,11 @@
-import {fib} from "./src/mod.nlf"
+import {fib, increment} from "./src/mod.nlf"
 
 print("Lazy import has not runned yet")
 
-print(fib(10))
+let obj = {
+    "value": 10
+}
+
+increment(obj)
+
+print(obj.value)

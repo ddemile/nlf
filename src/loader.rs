@@ -118,8 +118,6 @@ impl Module {
             serde_json::to_string_pretty(&self.statements).unwrap(),
         );
 
-        println!("Importing mdo");
-
         Ok(())
     }
 
@@ -137,7 +135,6 @@ impl Module {
 
         for import in self.imports.clone() {
             for specifier in import.specifiers {
-                println!("{:?}", specifier);
                 let name = specifier.clone().name.unwrap();
                 let program = self.program.borrow();
                 let module = program.modules.get(&import.source).unwrap().borrow();

@@ -732,8 +732,6 @@ fn eval_expr(expr: Expression, context: &mut ModuleContext) -> RuntimeResult {
                     let context = context.as_ref().unwrap();
 
                     let value = context.environment.get(VariableRef { name: None, slot, depth: 0 }).unwrap();
-
-                    println!("{}", value);
                     
                     Ok(value.clone())
                 }

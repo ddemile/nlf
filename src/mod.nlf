@@ -8,3 +8,7 @@ export fn fib(n) {
     }
     return b
 }
+
+export fn increment(obj) {
+    obj.value = obj.value + 1
+}
