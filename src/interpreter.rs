@@ -1,13 +1,21 @@
 use core::panic;
-use std::{collections::HashMap, fmt::{self, format}, fs, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, rc::Rc, time::{SystemTime, UNIX_EPOCH}
+};
 
 use indexmap::IndexSet;
 use lazy_static::lazy_static;
 
 use crate::{
-    interpreter::prototypes::{Operation, Prototype, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, STRING_PROTOTYPE}, lexer::{self, Token}, parser::{
-        self, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
-    }, translator
+    interpreter::prototypes::{
+        FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE,
+    },
+    lexer::{Token},
+    loader::Module,
+    parser::{
+        Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef,
+        Program, RuntimeFunction, Statement, ValueHolder, VariableRef,
+    }
 };
 
 use inline_colorization::*;
@@ -21,7 +29,7 @@ pub enum RuntimeError {
     VariableNotFound(String),
     VariableAlreadyDeclared(String),
     NoSuchProperty(String),
-    OperationNotSupported(String)
+    OperationNotSupported(String),
 }
 
 impl fmt::Display for RuntimeError {
@@ -50,7 +58,7 @@ impl ValueHolder {
             ValueHolder::Int(_) => &*INT_PROTOTYPE,
             ValueHolder::Float(_) => &*FLOAT_PROTOTYPE,
             ValueHolder::Object(_) => &*OBJECT_PROTOTYPE,
-            _ => todo!()
+            _ => todo!(),
         }
     }
 
@@ -63,6 +71,7 @@ impl ValueHolder {
             ValueHolder::Fn(FunctionKind::Runtime(_)) => format!("fn() {{ TODO }}"),
             ValueHolder::Fn(FunctionKind::BuiltIn(_)) => format!("fn() {{ native code }}"),
             ValueHolder::Object(_) => format!("ObjectRef"),
+            ValueHolder::LazyRef { .. } => format!("LazyRef"),
             ValueHolder::Void => format!("Void"),
         }
     }
@@ -77,6 +86,7 @@ impl fmt::Display for ValueHolder {
             ValueHolder::Bool(_) => write!(f, "{color_blue}{}{color_reset}", self.to_string()),
             ValueHolder::Fn(_) => write!(f, "{color_black}{}{color_reset}", self.to_string()),
             ValueHolder::Object(_) => write!(f, "{}", self.to_string()),
+            ValueHolder::LazyRef { .. } => write!(f, "{}", self.to_string()),
             ValueHolder::Void => write!(f, "{}", self.to_string()),
         }
     }
@@ -94,9 +104,7 @@ lazy_static! {
             Box::new(|arguments| {
                 let arguments: Vec<String> = arguments
                     .iter()
-                    .map(|argument| -> String {
-                        format!("{argument}")
-                    })
+                    .map(|argument| -> String { format!("{argument}") })
                     .collect();
 
                 println!("{}", arguments.join(" "));
@@ -110,11 +118,15 @@ lazy_static! {
             Box::new(|arguments| {
                 let a = match arguments.get(0).unwrap() {
                     ValueHolder::Float(f) => Ok(f),
-                    _ => Err(RuntimeError::InvalidType("Expected float value".to_string())),
+                    _ => Err(RuntimeError::InvalidType(
+                        "Expected float value".to_string(),
+                    )),
                 }?;
                 let b = match arguments.get(1).unwrap() {
                     ValueHolder::Float(f) => Ok(f),
-                    _ => Err(RuntimeError::InvalidType("Expected float value".to_string())),
+                    _ => Err(RuntimeError::InvalidType(
+                        "Expected float value".to_string(),
+                    )),
                 }?;
 
                 Ok(ValueHolder::Float(a.powf(*b)))
@@ -141,7 +153,7 @@ lazy_static! {
                 };
 
                 if !a {
-                    return Err(RuntimeError::Custom("Assertion failed".to_string()))
+                    return Err(RuntimeError::Custom("Assertion failed".to_string()));
                 }
 
                 Ok(ValueHolder::Void)
@@ -152,44 +164,57 @@ lazy_static! {
     };
 }
 
-struct ProgramContext {
+#[derive(Debug, Clone)]
+pub struct ProgramContext {
+    pub modules: HashMap<String, RefCell<Module>>,
+}
+
+impl ProgramContext {
+    pub fn new() -> Self {
+        Self {
+            modules: HashMap::new()
+        }
+    }
+
+    pub fn get_module(&self, source: &str) -> Option<RefMut<'_, Module>> {
+        self.modules.get(source).map(|value| value.borrow_mut())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleContext {
     pub environment: Environment,
     pub schemas: Vec<Schema>,
     pub store: HashMap<usize, Object>,
-    pub modules: ModulesContext
+    pub program: Rc<RefCell<ProgramContext>>,
+}
+
+impl ModuleContext {
+    pub fn new(program: Rc<RefCell<ProgramContext>>) -> Self {
+        let environment: Environment = Environment::new();
+
+        Self {
+            environment,
+            schemas: vec![],
+            store: HashMap::new(),
+            program,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
-struct Schema {
+pub struct Schema {
     id: usize,
     keys: IndexSet<String>,
 }
 
-struct Object {
+#[derive(Debug, Clone)]
+pub struct Object {
     schema_id: usize,
     values: Vec<ValueHolder>,
 }
 
-struct Module {
-    exports: HashMap<String, ValueHolder>
-}
-
-struct ModulesContext {
-    _cache: HashMap<String, Module>
-}
-
-impl ModulesContext {
-    fn new() -> Self {
-        Self { _cache: HashMap::new() }
-    }
-    
-
-    fn cache() {
-
-    }
-}
-
-fn get_schema(keys: IndexSet<String>, context: &mut ProgramContext) -> Schema {
+fn get_schema(keys: IndexSet<String>, context: &mut ModuleContext) -> Schema {
     context
         .schemas
         .iter()
@@ -206,7 +231,7 @@ fn get_schema(keys: IndexSet<String>, context: &mut ProgramContext) -> Schema {
 }
 
 impl ObjectRef {
-    pub(self) fn new(entries: HashMap<String, ValueHolder>, context: &mut ProgramContext) -> Self {
+    pub(self) fn new(entries: HashMap<String, ValueHolder>, context: &mut ModuleContext) -> Self {
         let keys: IndexSet<String> = entries.keys().cloned().collect();
 
         let schema = get_schema(keys, context);
@@ -223,7 +248,7 @@ impl ObjectRef {
         ObjectRef { object_id }
     }
 
-    pub(self) fn get(self, property: String, context: &ProgramContext) -> RuntimeResult {
+    pub(self) fn get(self, property: String, context: &ModuleContext) -> RuntimeResult {
         let object = context
             .store
             .get(&self.object_id)
@@ -244,7 +269,7 @@ impl ObjectRef {
         Err(RuntimeError::NoSuchProperty(property))
     }
 
-    pub(self) fn set(&self, property: String, value: ValueHolder, context: &mut ProgramContext) {
+    pub(self) fn set(&self, property: String, value: ValueHolder, context: &mut ModuleContext) {
         let object = context
             .store
             .get(&self.object_id)
@@ -281,44 +306,45 @@ impl ObjectRef {
 }
 
 #[derive(Debug, Clone)]
-enum ScopeKind {
+pub enum ScopeKind {
     Program,
-    Call(i32),
+    Call(Rc<RefCell<Scope>>),
     Loop,
     Regular,
 }
 
 #[derive(Debug, Clone)]
-struct Scope {
+pub struct Scope {
     kind: ScopeKind,
     slots: Vec<ValueHolder>,
     interrupted: Option<ValueHolder>,
-    parent: Option<usize>
+    parent: Option<Rc<RefCell<Scope>>>,
 }
 
-struct Environment {
-    scopes: Vec<Scope>,
+#[derive(Debug, Clone)]
+pub struct Environment {
+    pub scopes: Vec<Rc<RefCell<Scope>>>,
 }
 
 impl Environment {
     pub fn new() -> Self {
         Self {
-            scopes: vec![Scope {
+            scopes: vec![Rc::new(RefCell::new(Scope {
                 kind: ScopeKind::Program,
                 slots: vec![],
                 interrupted: None,
-                parent: None
-            }],
+                parent: None,
+            }))],
         }
     }
 
     pub fn enter_scope(&mut self, kind: ScopeKind) {
-        self.scopes.push(Scope {
+        self.scopes.push(Rc::new(RefCell::new(Scope {
             kind,
             slots: vec![],
             interrupted: None,
-            parent: Some(self.scopes.len() - 1)
-        });
+            parent: self.scopes.last().cloned(),
+        })));
     }
 
     pub fn exit_scope(&mut self) {
@@ -333,20 +359,22 @@ impl Environment {
     ) -> Result<(), RuntimeError> {
         if !define {
             // Traverse up the parent chain to find the correct scope
-            let mut scope_idx = self.scopes.len() - 1;
+            let mut current_scope = self.scopes.last().unwrap().clone();
             for _ in 0..var_ref.depth {
-                let scope = &self.scopes[scope_idx];
+                let next_scope = {
+                    let scope = current_scope.borrow();
+                    match &scope.kind {
+                        ScopeKind::Call(inner_scope) => inner_scope.clone(),
+                        _ => scope.parent.clone().ok_or(RuntimeError::VariableNotFound(format!(
+                            "Parent scope not found for slot {} at depth {}",
+                            var_ref.slot, var_ref.depth
+                        )))?
+                    }
+                };
 
-                if let Scope { kind: ScopeKind::Call(idx), .. } = scope {
-                    scope_idx = *idx as usize;
-                } else {
-                    scope_idx = scope.parent.ok_or(RuntimeError::VariableNotFound(format!(
-                        "Parent scope not found for slot {} at depth {}",
-                        var_ref.slot, var_ref.depth
-                    )))?;
-                }
+                current_scope = next_scope;
             }
-            self.scopes[scope_idx]
+            current_scope.borrow_mut()
                 .slots
                 .get_mut(var_ref.slot)
                 .map(|v| *v = value)
@@ -355,7 +383,7 @@ impl Environment {
                     var_ref.slot, var_ref.depth
                 )))?;
             return Ok(());
-        } else if let Some(scope) = self.scopes.last_mut() {
+        } else if let Some(mut scope) = self.scopes.last_mut().map(|scope| scope.borrow_mut()) {
             if scope.slots.len() <= var_ref.slot {
                 scope.slots.resize(var_ref.slot + 1, ValueHolder::Void);
             }
@@ -365,69 +393,57 @@ impl Environment {
         unreachable!()
     }
 
-    pub fn get(&self, var_ref: VariableRef) -> Option<&ValueHolder> {
+    pub fn get(&self, var_ref: VariableRef) -> Option<ValueHolder> {
         // Traverse up the parent chain to find the correct scope
-        let mut scope_idx = self.scopes.len() - 1;
+        let mut current_scope = self.scopes.last().unwrap().clone();
         for _ in 0..var_ref.depth {
-            let scope = &self.scopes[scope_idx];
+            let next_scope = {
+                let scope = current_scope.borrow();
+                match &scope.kind {
+                    ScopeKind::Call(inner_scope) => inner_scope.clone(),
+                    _ => scope.parent.clone()?
+                }
+            };
 
-            if let Scope { kind: ScopeKind::Call(idx), .. } = scope {
-                scope_idx = *idx as usize;
-            } else {
-                scope_idx = scope.parent?;
-            }
+            current_scope = next_scope;
         }
-        self.scopes[scope_idx].slots.get(var_ref.slot)
+        current_scope.borrow().slots.get(var_ref.slot).cloned()
     }
 }
 
-pub fn interpret(program: Program) -> Result<(), RuntimeError> {
-    let environment = Environment::new();
-
-    let mut context = ProgramContext {
-        environment,
-        schemas: vec![],
-        store: HashMap::new(),
-        modules: ModulesContext::new()
-    };
-
-    let imports_count = eval_imports(&program.body, &mut context)?;
-
-    let statements = &program.body[imports_count..].to_vec();
-
-    eval_body(statements, &mut context)?;
+pub fn interpret(
+    program: Program,
+    context: &mut ModuleContext,
+) -> Result<(), RuntimeError> {
+    eval_body(&program.body, context)?;
 
     Ok(())
 }
 
 fn define_functions(
     statements: &Vec<Statement>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> Result<(), RuntimeError> {
     for statement in statements
         .iter()
         .filter(|statement| matches!(*statement, Statement::FunctionIR { .. } | Statement::Export { declaration: box Statement::FunctionIR { .. } }))
     {
-        let (var_ref, arguments, statements) = match statement {
-            Statement::FunctionIR {
-                var_ref,
-                arguments,
-                statements,
-            } => (var_ref, arguments, statements),
-            Statement::Export { declaration: box Statement::FunctionIR {
-                var_ref,
-                arguments,
-                statements,
-            } } => (var_ref, arguments, statements),
-            _ => panic!("Expected function declaration")
+        let Statement::FunctionIR {
+            var_ref,
+            arguments,
+            statements,
+        } = statement else {
+            panic!("Expected function declaration")
         };
 
+        let scope = context.environment.scopes.last_mut().cloned().unwrap();
+        
         context.environment.set(
             var_ref.clone(),
             ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                 arguments: arguments.to_vec(),
                 statements: statements.to_vec(),
-                scope_position: context.environment.scopes.len() - 1
+                scope
             })),
             true,
         )?
@@ -436,16 +452,16 @@ fn define_functions(
     Ok(())
 }
 
-fn eval_body(statements: &Vec<Statement>, context: &mut ProgramContext) -> RuntimeResult {
+fn eval_body(statements: &Vec<Statement>, context: &mut ModuleContext) -> RuntimeResult {
     define_functions(statements, context)?;
 
     for statement in statements {
         let value = eval_statement(statement.clone(), context)?;
-        if let Some(value) = &context.environment.scopes.last().unwrap().interrupted {
+        if let Some(value) = &context.environment.scopes.last().unwrap().borrow().interrupted {
             return Ok(value.clone());
         }
 
-        for scope in context.environment.scopes.iter_mut().rev() {
+        for mut scope in context.environment.scopes.iter().rev().map(|scope| scope.borrow_mut()) {
             match (statement.clone(), scope.kind.clone()) {
                 (Statement::Return { .. }, ScopeKind::Call(_)) => {
                     scope.interrupted = Some(value.clone());
@@ -468,7 +484,7 @@ fn eval_body(statements: &Vec<Statement>, context: &mut ProgramContext) -> Runti
     Ok(ValueHolder::Void)
 }
 
-fn eval_statement(statement: Statement, context: &mut ProgramContext) -> RuntimeResult {
+fn eval_statement(statement: Statement, context: &mut ModuleContext) -> RuntimeResult {
     match statement {
         Statement::Expression { expression } => eval_expr(expression, context),
         Statement::If {
@@ -482,7 +498,10 @@ fn eval_statement(statement: Statement, context: &mut ProgramContext) -> Runtime
             right,
             statements,
         } => eval_for(variable, left, right, statements, context),
-        Statement::While { condition, statements } => eval_while(condition, statements, context),
+        Statement::While {
+            condition,
+            statements,
+        } => eval_while(condition, statements, context),
         Statement::FunctionIR {
             var_ref,
             arguments,
@@ -491,10 +510,10 @@ fn eval_statement(statement: Statement, context: &mut ProgramContext) -> Runtime
         Statement::Return { expression } => eval_expr(expression, context),
         Statement::Break => Ok(ValueHolder::Void),
         Statement::Block(_) => Ok(ValueHolder::Void),
-        Statement::ImportIR { .. } => Err(RuntimeError::Custom("Import declarations can only be at the top of modules".into())),
-        Statement::Export { declaration } => {
-            eval_statement(*declaration, context)
-        },
+        Statement::ImportIR { .. } => Err(RuntimeError::Custom(
+            "Import declarations can only be at the top of modules".into(),
+        )),
+        Statement::Export { declaration } => eval_statement(*declaration, context),
         _ => panic!("Invalid statement : {:?}", statement),
     }
 }
@@ -512,7 +531,7 @@ fn eval_for(
     left: Option<Expression>,
     right: Option<Expression>,
     statements: Vec<Statement>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> RuntimeResult {
     let mut iter: Box<dyn Iterator<Item = i32>> = Box::new(0..);
 
@@ -546,14 +565,16 @@ fn eval_for(
         .set(variable.clone(), ValueHolder::Int(0), true)?;
 
     for i in iter {
-        // Faster than environment.set in this context
-        let scope = context.environment.scopes.last_mut().unwrap();
+        {
+            // Faster than environment.set in this context
+            let mut scope = context.environment.scopes.last().unwrap().borrow_mut();
 
-        for v in &mut scope.slots {
-            *v = ValueHolder::Void;
+            for v in &mut scope.slots {
+                *v = ValueHolder::Void;
+            }
+
+            scope.slots[variable.slot] = ValueHolder::Int(i);
         }
-
-        scope.slots[variable.slot] = ValueHolder::Int(i);
 
         eval_body(&statements, context)?;
         let broken = context
@@ -561,6 +582,7 @@ fn eval_for(
             .scopes
             .last()
             .unwrap()
+            .borrow()
             .interrupted
             .is_some();
 
@@ -573,13 +595,19 @@ fn eval_for(
     Ok(ValueHolder::Void)
 }
 
-fn eval_while(condition: Expression, statements: Vec<Statement>, context: &mut ProgramContext) -> RuntimeResult {
+fn eval_while(
+    condition: Expression,
+    statements: Vec<Statement>,
+    context: &mut ModuleContext,
+) -> RuntimeResult {
     while eval_expr(condition.clone(), context)?.into() {
         context.environment.enter_scope(ScopeKind::Loop);
-        let scope = context.environment.scopes.last_mut().unwrap();
+        {
+            let scope = &mut context.environment.scopes.last_mut().unwrap().borrow_mut();
 
-        for v in &mut scope.slots {
-            *v = ValueHolder::Void;
+            for v in &mut scope.slots {
+                *v = ValueHolder::Void;
+            }
         }
 
         eval_body(&statements, context)?;
@@ -588,6 +616,7 @@ fn eval_while(condition: Expression, statements: Vec<Statement>, context: &mut P
             .scopes
             .last()
             .unwrap()
+            .borrow()
             .interrupted
             .is_some();
 
@@ -598,14 +627,13 @@ fn eval_while(condition: Expression, statements: Vec<Statement>, context: &mut P
     }
 
     Ok(ValueHolder::Void)
-
 }
 
 fn eval_if(
     condition: Expression,
     block: Block,
     alternate: Option<Box<Statement>>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> RuntimeResult {
     let cond: bool = eval_expr(condition, context)?.into();
     context.environment.enter_scope(ScopeKind::Regular);
@@ -625,7 +653,7 @@ fn eval_if(
     Ok(ValueHolder::Void)
 }
 
-fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
+fn eval_expr(expr: Expression, context: &mut ModuleContext) -> RuntimeResult {
     return match expr {
         Expression::Binary {
             left,
@@ -646,19 +674,27 @@ fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
             if let ValueHolder::Object(object) = &value {
                 match object.clone().get(property.clone(), context) {
                     Ok(object) => return Ok(object),
-                    Err(_) => () 
+                    Err(_) => (),
                 };
             };
 
             let prototype = value.get_prototype();
 
-            let method = Rc::new(prototype.get_method(&property).ok_or(RuntimeError::NoSuchProperty(property))?.clone());
+            let method = Rc::new(
+                prototype
+                    .get_method(&property)
+                    .ok_or(RuntimeError::NoSuchProperty(property))?
+                    .clone(),
+            );
 
-            Ok(ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func: method, instance: Rc::new(value) })))
+            Ok(ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
+                func: method,
+                instance: Rc::new(value),
+            })))
         }
         Expression::Literal { r#type, value } => {
             if let LiteralExpressionKind::Literal = r#type {
-                return Ok(value);
+                Ok(value)
             } else if let LiteralExpressionKind::Object(entries) = r#type {
                 let entries: HashMap<String, ValueHolder> = entries
                     .iter()
@@ -673,13 +709,36 @@ fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
             }
         }
         Expression::Variable(variable) => {
-            context.environment
-                .get(variable.clone())
-                .cloned()
-                .ok_or(RuntimeError::VariableNotFound(format!(
+            let value = context.environment.get(variable.clone()).ok_or(
+                RuntimeError::VariableNotFound(format!(
                     "Slot {} at depth {} not found",
                     variable.slot, variable.depth
-                )))
+                )),
+            )?;
+
+            match value {
+                ValueHolder::LazyRef { slot, module } => {
+                    // TODO: check lazy ref and load module if not initialized
+                    let program = context.program.borrow();
+                    let Some(mut module) = program.get_module(&module) else {
+                        unreachable!()
+                    };
+
+                    if !module.is_loaded() {
+                        module.execute()?
+                    }
+                                                
+                    let context = module.context.borrow();
+                    let context = context.as_ref().unwrap();
+
+                    let value = context.environment.get(VariableRef { name: None, slot, depth: 0 }).unwrap();
+
+                    println!("{}", value);
+                    
+                    Ok(value.clone())
+                }
+                value => Ok(value),
+            }
         }
         Expression::Assignment {
             left,
@@ -694,9 +753,9 @@ fn eval_expr(expr: Expression, context: &mut ProgramContext) -> RuntimeResult {
                 return Ok(ValueHolder::Void);
             } else if let Expression::Member { object, property } = *left {
                 let value = eval_expr(*object, context)?;
-                
+
                 if let ValueHolder::Object(ObjectRef { object_id }) = value {
-                    let value =  match *property {
+                    let value = match *property {
                         Expression::Literal { r#type: _, value } => value,
                         _ => {
                             return Err(RuntimeError::InvalidType(
@@ -748,7 +807,7 @@ fn eval_binary(
     left: Box<Expression>,
     operator: Token,
     right: Box<Expression>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> RuntimeResult {
     let left = &eval_expr(*left, context)?;
     let right = &eval_expr(*right, context)?;
@@ -766,7 +825,7 @@ fn eval_binary(
 fn eval_call(
     callee: Box<Expression>,
     call_arguments: Vec<Expression>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> RuntimeResult {
     if let Expression::Literal {
         value: ValueHolder::String(name),
@@ -784,13 +843,13 @@ fn eval_call(
             return func(arguments);
         };
     }
-    
+
     let expr = eval_expr(*callee.clone(), context)?;
 
     if let ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
         arguments,
         statements,
-        scope_position
+        scope
     })) = expr
     {
         if arguments.len() != call_arguments.len() {
@@ -805,11 +864,21 @@ fn eval_call(
 
         context
             .environment
-            .enter_scope(ScopeKind::Call(scope_position as i32));
-        
-        context
-            .environment
-            .set(VariableRef { name: None, slot: 0, depth: 0 }, ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction { arguments: arguments.clone(), statements: statements.clone(), scope_position })), true)?;
+            .enter_scope(ScopeKind::Call(scope.clone()));
+
+        context.environment.set(
+            VariableRef {
+                name: None,
+                slot: 0,
+                depth: 0,
+            },
+            ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
+                arguments: arguments.clone(),
+                statements: statements.clone(),
+                scope,
+            })),
+            true,
+        )?;
 
         for (argument, value) in arguments.iter().zip(evaluated_args.iter()) {
             context
@@ -821,7 +890,7 @@ fn eval_call(
         return return_value;
     }
 
-    if let ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func, instance  })) = expr {
+    if let ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func, instance })) = expr {
         return func(&instance, call_arguments);
     }
 
@@ -832,7 +901,7 @@ fn eval_equality(
     left: Box<Expression>,
     operator: Token,
     right: Box<Expression>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> RuntimeResult {
     let left = eval_expr(*left, context)?;
     let right = eval_expr(*right, context)?;
@@ -850,7 +919,7 @@ fn eval_relational(
     left: Box<Expression>,
     operator: Token,
     right: Box<Expression>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> RuntimeResult {
     let left = eval_expr(*left, context)?;
     let right = eval_expr(*right, context)?;
@@ -868,7 +937,7 @@ fn eval_logical(
     left: Box<Expression>,
     operator: Token,
     right: Box<Expression>,
-    context: &mut ProgramContext,
+    context: &mut ModuleContext,
 ) -> RuntimeResult {
     let left = eval_expr(*left, context)?;
     let right = eval_expr(*right, context)?;
@@ -882,45 +951,74 @@ fn eval_logical(
     }
 }
 
-fn eval_imports(statements: &Vec<Statement>, context: &mut ProgramContext) -> Result<usize, RuntimeError> {
-    let mut imports_count = 0;
-    for statement in statements {
-        let Statement::ImportIR { specifiers, source } = statement else {
-            break;
-        };
+// fn eval_imports(
+//     statements: &Vec<Statement>,
+//     context: &mut ModuleContext,
+// ) -> Result<Vec<Statement>, RuntimeError> {
+//     let mut imports_count = 0;
 
-        imports_count += 1;
+//     for statement in statements {
+//         let Statement::ImportIR { specifiers, source } = statement else {
+//             break;
+//         };
 
-        let contents = fs::read_to_string(source).map_err(|_| RuntimeError::Custom("Module not found".into()))?;
-        
-        let tokens = lexer::lex(contents);
+//         if !context.pg_context.borrow().modules.contains_key(source) {
+//             let mut module = Module::new(&source);
 
-        let ast = parser::parse(tokens);
+//             let contents = fs::read_to_string(source)
+//                 .map_err(|_| RuntimeError::Custom("Module not found".into()))?;
 
-        let ir = translator::translate(ast);
+//             let tokens = lexer::lex(contents);
 
-        let mut module = Module {
-            exports: HashMap::new()
-        };
+//             let ast = parser::parse(tokens);
 
-        for statement in ir.body {
-            let Statement::Export{ declaration: box Statement::FunctionIR { var_ref, arguments, statements }} = &statement else {
-                continue;
-            };
+//             let ir = translator::translate(ast);
 
-            module.exports.insert(var_ref.name.clone().unwrap(), ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction { arguments: arguments.to_vec(), scope_position: 0, statements: statements.to_vec() })));
-        }
+//             for statement in ir.body {
+//                 let Statement::Export {
+//                     declaration: box Statement::FunctionIR { var_ref, .. },
+//                 } = &statement
+//                 else {
+//                     continue;
+//                 };
 
-        // TODO: function def is accessible from outside the module
+//                 module.exports.insert(
+//                     var_ref.name.clone().unwrap(),
+//                     ValueHolder::LazyRef {
+//                         slot: var_ref.slot,
+//                         module: source.into(),
+//                     },
+//                 );
+//             }
 
-        for specifier in specifiers {
-            println!("{:?}", specifier);
-            let name = specifier.clone().name.unwrap();
-            let value = module.exports.get(&name).ok_or(RuntimeError::VariableNotFound(format!("Module has no such property: {}", name)))?;
-            
-            context.environment.set(specifier.clone(), value.clone(), true)?;
-        }
-    }
+//             context
+//                 .pg_context
+//                 .borrow_mut()
+//                 .modules
+//                 .insert(source.into(), RefCell::new(module));
+//         }
 
-    Ok(imports_count)
-}
+//         let program_context = context.pg_context.borrow();
+//         let module = program_context.modules.get(source).unwrap();
+
+//         imports_count += 1;
+
+//         for specifier in specifiers {
+//             println!("{:?}", specifier);
+//             let name = specifier.clone().name.unwrap();
+//             let value = module
+//                 .exports
+//                 .get(&name)
+//                 .ok_or(RuntimeError::VariableNotFound(format!(
+//                     "Module has no such property: {}",
+//                     name
+//                 )))?;
+
+//             context
+//                 .environment
+//                 .set(specifier.clone(), value.clone(), true)?;
+//         }
+//     }
+
+//     Ok(statements[imports_count..].to_vec())
+// }

@@ -1,9 +1,9 @@
 #![feature(box_patterns)]
 #![feature(duration_millis_float)]
-use std::{fs, path::Path};
+use std::path::Path;
 use inline_colorization::*;
 
-use crate::{parser::parse};
+use crate::loader::run_main;
 use clap::Parser;
 
 mod lexer;
@@ -11,6 +11,7 @@ mod parser;
 mod translator;
 mod interpreter;
 mod tests;
+mod loader;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -30,23 +31,7 @@ fn main() {
 
     let file = if let Some(value) = args.file { value } else { String::from("src/program.nlf") };
 
-    let contents = fs::read_to_string(file)
-        .expect("Should have been able to read the file");
-
-    let tokens = lexer::lex(contents);
-
-    let json = serde_json::to_string_pretty(&tokens).unwrap();
-    let _ = fs::write("debug/tokens.json", json);
-
-    let ast = parse(tokens);
-
-    let _ = fs::write("debug/ast.json", serde_json::to_string_pretty(&ast).unwrap());
-
-    let ir  = translator::translate(ast);
-
-    let _ = fs::write("debug/ir.json", serde_json::to_string_pretty(&ir).unwrap());
-
-    match interpreter::interpret(ir) {
+    match run_main(&file) {
         Ok(_) => (),
         Err(e) => println!("{color_red}Runtime error{color_reset}: {}", e)
     }

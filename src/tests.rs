@@ -1,12 +1,9 @@
 use inline_colorization::*;
 use std::{
-    fs,
-    panic::{self, catch_unwind},
-    path::{Path},
-    time::Instant,
+    cell::RefCell, fs, panic::{self, catch_unwind}, path::Path, rc::Rc, time::Instant
 };
 
-use crate::{interpreter, lexer, parser, translator};
+use crate::{interpreter::{self, ModuleContext, ProgramContext}, lexer, parser, translator};
 
 pub fn run_tests(base_dir: &Path) {
     let paths = fs::read_dir(base_dir).unwrap();
@@ -45,7 +42,12 @@ pub fn run_tests(base_dir: &Path) {
                 let ir = translator::translate(ast);
 
                 let now = Instant::now();
-                let result = interpreter::interpret(ir);
+
+                let program = Rc::new(RefCell::new(ProgramContext::new()));
+
+                let mut context = ModuleContext::new(program);
+
+                let result = interpreter::interpret(ir, &mut context);
 
                 let elapsed = now.elapsed();
 

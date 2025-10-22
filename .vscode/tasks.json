@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Fix Rust imports",
+      "type": "shell",
+      "command": "cargo fix --allow-dirty",
+      "problemMatcher": []
+    }
+  ]
+}

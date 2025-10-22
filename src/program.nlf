@@ -1,5 +1,5 @@
-import {} from "./src/mod.nlf"
+import {fib} from "./src/mod.nlf"
 
-let var = 2
-// Should not be possible
-print(pow(var, 0 - 1))
+print("Lazy import has not runned yet")
+
+print(fib(10))

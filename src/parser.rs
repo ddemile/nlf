@@ -1,15 +1,11 @@
 use std::{
-    collections::HashMap,
-    fmt::{self, Debug},
-    rc::Rc,
+    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc
 };
 
-use clap::builder::StyledStr;
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::{
-    interpreter::{prototypes::MethodFunc, RuntimeError},
+    interpreter::{prototypes::MethodFunc, Scope},
     lexer::{KeywordKind, Token},
 };
 
@@ -27,7 +23,8 @@ pub struct ObjectRef {
 pub struct RuntimeFunction {
     pub arguments: Vec<VariableRef>,
     pub statements: Vec<Statement>,
-    pub scope_position: usize,
+    #[serde(skip)]
+    pub scope: Rc<RefCell<Scope>>,
 }
 
 #[derive(Serialize, Clone)]
@@ -59,6 +56,8 @@ pub enum ValueHolder {
     Bool(bool),
     Fn(FunctionKind),
     Object(ObjectRef),
+    #[serde(skip)]
+    LazyRef { slot: usize, module: String },
     Void,
 }
 

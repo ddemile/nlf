@@ -1,13 +1,10 @@
-
-
-export fn pow(a, b) {
-    if b == 0 {
-        return 1
+export fn fib(n) {
+    let a = 1
+    let b = 1
+    for i in 3..(n + 1) {
+        let c = a + b
+        a = b
+        b = c
     }
-
-    let result = a
-    for _ in ..(b - 1) {
-        result = result * a
-    }
-    return result
+    return b
 }
