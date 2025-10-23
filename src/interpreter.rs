@@ -170,7 +170,7 @@ lazy_static! {
 
 #[derive(Debug)]
 pub struct ProgramContext {
-    pub modules: HashMap<String, RefCell<Module>>,
+    pub modules: HashMap<String, Rc<RefCell<Module>>>,
 }
 
 impl ProgramContext {
@@ -745,16 +745,19 @@ fn eval_expr(expr: Expression, context: &mut ModuleContext) -> RuntimeResult {
             )?;
 
             match value {
-                ValueHolder::LazyRef { slot, module } => {
+                ValueHolder::LazyRef { slot, module: source } => {
                     // TODO: check lazy ref and load module if not initialized
                     let program = context.program.borrow();
-                    let Some(mut module) = program.get_module(&module) else {
+
+                    let is_loaded = program.modules.get(&source).unwrap().borrow().is_loaded();
+
+                    if !is_loaded {
+                        Module::execute(program.modules.get(&source).unwrap().clone())?
+                    }
+
+                    let Some(module) = program.modules.get(&source).map(|module| module.borrow()) else {
                         unreachable!()
                     };
-
-                    if !module.is_loaded() {
-                        module.execute()?
-                    }
                                                 
                     let context = module.context.borrow();
                     let context = context.as_ref().unwrap();

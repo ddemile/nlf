@@ -36,13 +36,15 @@ impl Module {
         return self.context.borrow().is_some();
     }
 
-    fn scan(&mut self) -> Result<(), RuntimeError> {
-        let contents = fs::read_to_string(&self.source)
+    fn scan(module: Rc<RefCell<Module>>) -> Result<(), RuntimeError> {
+        let source = module.borrow().source.clone();
+
+        let contents = fs::read_to_string(&source)
             .map_err(|_| RuntimeError::Custom("Module not found".into()))?;
 
         let tokens = lexer::lex(contents);
 
-        let name = Path::new(&self.source)
+        let name = Path::new(&source)
             .file_name()
             .unwrap()
             .to_str()
@@ -70,17 +72,7 @@ impl Module {
             .iter()
             .map(|statement| match statement {
                 Statement::ImportIR { specifiers, source } => {
-                    let module_ref = resolve_module(source, self.program.clone())?;
-                    let imported_mod = module_ref.borrow();
-                    for specifier in specifiers {
-                        let name = &specifier.name.clone().unwrap();
-                        if !imported_mod.exports.contains_key(name) {
-                            return Err(RuntimeError::NoSuchProperty(format!(
-                                "{source} does not expose {name}"
-                            )));
-                        }
-                    }
-                    self.imports.push(Import {
+                    module.borrow_mut().imports.push(Import {
                         specifiers: specifiers.clone(),
                         source: source.into(),
                     });
@@ -93,11 +85,11 @@ impl Module {
                         _ => panic!(),
                     };
 
-                    self.exports.insert(
+                    module.borrow_mut().exports.insert(
                         var_ref.name.clone().unwrap(),
                         ValueHolder::LazyRef {
                             slot: var_ref.slot,
-                            module: self.source.clone(),
+                            module: source.clone(),
                         },
                     );
 
@@ -111,32 +103,52 @@ impl Module {
             .collect::<Result<Vec<_>, _>>() // Collect Vec<Option<Statement>>
             .map(|v| v.into_iter().flatten().collect())?;
 
-        self.statements = statements;
+        {
+            let imports = module.borrow().imports.clone();
+            for import in imports {
+                let program = module.borrow().program.clone();
+                let module_ref = resolve_module(&import.source, program)?;
+                let imported_mod = module_ref.borrow();
+                for specifier in import.specifiers {
+                    let name = &specifier.name.clone().unwrap();
+                    if !imported_mod.exports.contains_key(name) {
+                        return Err(RuntimeError::NoSuchProperty(format!(
+                            "{} does not expose {name}", import.source
+                        )));
+                    }
+                }
+            }
+        }
+
+        module.borrow_mut().statements = statements;
 
         let _ = fs::write(
             format!("debug/{}-statements.json", name),
-            serde_json::to_string_pretty(&self.statements).unwrap(),
+            serde_json::to_string_pretty(&module.borrow().statements).unwrap(),
         );
 
         Ok(())
     }
 
-    pub fn execute(&mut self) -> Result<(), RuntimeError> {
-        if self.is_loaded() {
+    pub fn execute(module: Rc<RefCell<Module>>) -> Result<(), RuntimeError> {
+        if module.borrow().is_loaded() {
             panic!("Module is already loaded")
         }
 
-        let context = ModuleContext::new(self.program.clone());
+        let context = ModuleContext::new(module.borrow().program.clone());
 
-        self.context = RefCell::new(Some(context));
+        module.borrow_mut().context = RefCell::new(Some(context));
 
-        let mut context_ref = self.context.borrow_mut();
+        let borrowed_module = module.borrow();
+        let mut context_ref = borrowed_module.context.borrow_mut();
         let mut context = context_ref.as_mut().unwrap();
 
-        for import in self.imports.clone() {
+        let imports = module.borrow().imports.clone();
+        for import in imports {
             for specifier in import.specifiers {
                 let name = specifier.clone().name.unwrap();
-                let program = self.program.borrow();
+                let module = module.borrow();
+                let program = module.program.borrow();
                 let module = program.modules.get(&import.source).unwrap().borrow();
                 let value = module
                     .exports
@@ -154,7 +166,7 @@ impl Module {
 
         interpret(
             Program {
-                body: self.statements.clone(),
+                body: module.borrow().statements.clone(),
             },
             &mut context,
         )?;
@@ -165,12 +177,18 @@ impl Module {
 
 pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> Result<Rc<RefCell<Module>>, RuntimeError> {
     if !pg_context.borrow().modules.contains_key(path) {
-        let mut module = Module::new(path, pg_context.clone());
-        module.scan()?;
-        pg_context.borrow_mut().modules.insert(path.into(), module.into());
+        let module = Rc::new(RefCell::new(Module::new(path, pg_context.clone())));
+
+        // Borrow only to insert, then drop it immediately.
+        {
+            let modules = &mut pg_context.borrow_mut().modules;
+            modules.insert(path.into(), module.clone());
+        }
+
+        Module::scan(module)?;
     }
 
-    let module = Rc::new(pg_context.borrow().modules.get(path).unwrap().clone());
+    let module = pg_context.borrow().modules.get(path).unwrap().clone();
 
     Ok(module)
 }
@@ -180,7 +198,7 @@ pub fn run_main(path: &str) -> Result<(), RuntimeError> {
 
     let module = loader::resolve_module(path, pg_context.clone())?;
 
-    module.borrow_mut().execute()?;
+    Module::execute(module)?;
 
     Ok(())
 }

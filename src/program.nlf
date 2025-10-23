@@ -1,16 +1,8 @@
 import {fib, increment} from "./src/mod.nlf"
 
-print("Lazy import has not runned yet")
+print(fib(3))
 
-let obj = {
-    value: 10,
-    jean_true: 145
+export fn add(a, b) {
+    print("called")
+    return a + b
 }
-
-print(obj)
-
-increment(obj)
-
-print(obj)
-
-print(obj.value)

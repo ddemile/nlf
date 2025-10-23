@@ -1,8 +1,11 @@
+import {add} from "src/program.nlf"
+
 export fn fib(n) {
+    print("fibb")
     let a = 1
     let b = 1
     for i in 3..(n + 1) {
-        let c = a + b
+        let c = add(a, b)
         a = b
         b = c
     }
