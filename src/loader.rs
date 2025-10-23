@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, env, fmt::format, fs, path::{self, Path, PathBuf}, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc};
 
 use crate::{
     interpreter::{interpret, ModuleContext, ProgramContext, RuntimeError}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, translator
@@ -253,7 +253,9 @@ pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> Re
 pub fn run_main(path: &str) -> Result<(), RuntimeError> {
     let pg_context = Rc::new(RefCell::new(ProgramContext::new()));
 
-    let module = loader::resolve_module(path, pg_context.clone())?;
+    let path = Module::resolve_path(path)?;
+
+    let module = loader::resolve_module(&path, pg_context.clone())?;
 
     Module::execute(module)?;
 

@@ -1,5 +1,21 @@
-import {add} from "./program.nlf"
+import {concat} from "./program.nlf"
+
+let store = {
+    key: "value"
+}
+
+export fn get_key() {
+    return store.key
+}
+
+export fn increment_key() {
+    store.key = store.key + 1
+}
+
+export fn set_key(value) {
+    store.key = value
+}
 
 export fn greet(name) {
-    print(add(1, 2))
+    return concat("Hello", name)
 }

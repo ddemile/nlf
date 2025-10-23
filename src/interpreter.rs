@@ -1,6 +1,5 @@
 use core::panic;
-use std::{cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, io::SeekFrom, rc::Rc, task::Context, time::{SystemTime, UNIX_EPOCH}
-};
+use std::{cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
 
 use indexmap::IndexSet;
 use lazy_static::lazy_static;
@@ -770,14 +769,14 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
 
             match value {
                 ValueHolder::LazyRef { slot, module: source } => {
-                    // TODO: check lazy ref and load module if not initialized
-                    let context = context_ref.borrow();
-                    let program = context.program.borrow();
+                    let program_ref = context_ref.borrow().program.clone();
+                    let program = program_ref.borrow();
 
                     let is_loaded = program.modules.get(&source).unwrap().borrow().is_loaded();
 
                     if !is_loaded {
-                        Module::execute(program.modules.get(&source).unwrap().clone())?
+                        let module = program.modules.get(&source).unwrap().clone();
+                        Module::execute(module)?
                     }
 
                     let Some(module) = program.modules.get(&source).map(|module| module.borrow()) else {
@@ -912,13 +911,13 @@ fn eval_call(
             return Err(RuntimeError::Custom("Invalid number of args".to_string()));
         }
 
-        let context = scope.borrow().context.clone();
-
         // Evaluate all arguments before entering the scope to avoid multiple mutable borrows
         let evaluated_args: Vec<ValueHolder> = call_arguments
             .into_iter()
             .map(|arg| eval_expr(arg, context.clone()))
             .collect::<Result<Vec<_>, RuntimeError>>()?;
+
+        let context = scope.borrow().context.clone();
 
         context
             .borrow_mut()

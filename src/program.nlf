@@ -1,7 +1,13 @@
-import {greet} from "./mod.nlf"
+import {greet, get_key, set_key, increment_key} from "./mod.nlf"
 
-export fn add(a, b) {
-    return a + b
+let mark = "!"
+
+increment_key()
+
+print(get_key())
+
+export fn concat(a, b) {
+    return a + " " + b + mark
 }
 
 print(greet("ddemile"))
