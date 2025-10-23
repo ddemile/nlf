@@ -1,4 +1,4 @@
-use std::{cell::{RefCell}, collections::HashMap, fs, path::Path, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, env, fmt::format, fs, path::{self, Path, PathBuf}, rc::Rc};
 
 use crate::{
     interpreter::{interpret, ModuleContext, ProgramContext, RuntimeError}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, translator
@@ -14,10 +14,38 @@ pub struct Import {
 pub struct Module {
     pub source: String,
     pub exports: HashMap<String, ValueHolder>,
-    pub context: RefCell<Option<ModuleContext>>,
+    pub context: Option<Rc<RefCell<ModuleContext>>>,
     pub statements: Vec<Statement>,
     pub imports: Vec<Import>,
     pub program: Rc<RefCell<ProgramContext>>
+}
+
+struct PathResovler {
+    process_path: PathBuf,
+    current_path: PathBuf
+}
+
+impl PathResovler {
+    pub fn resolve(&self, path: PathBuf) -> Result<PathBuf, RuntimeError> {
+        let base_path = {
+            if path.starts_with("./") || path.starts_with(".\\") {
+                &self.current_path
+            } else {
+                &self.process_path
+            }
+        };
+
+        let process_path = self.process_path.canonicalize().map_err(|_| RuntimeError::Custom(format!("Invalid path: {:?}", self.process_path)))?;
+
+        let full_path = base_path.join(path);
+        let full_path = full_path.canonicalize().map_err(|_| RuntimeError::Custom(format!("Invalid path: {:?}", full_path)))?;
+
+        if !full_path.starts_with(process_path) {
+            return Err(RuntimeError::Custom("Tried to access file outside program scope".into()))
+        }
+
+        Ok(full_path)
+    }
 }
 
 impl Module {
@@ -25,22 +53,38 @@ impl Module {
         Self {
             source: source.into(),
             exports: HashMap::new(),
-            context: RefCell::new(None),
+            context: None,
             statements: vec![],
             imports: vec![],
             program
         }
     }
 
+    pub fn resolve_path(path: &str) -> Result<String, RuntimeError> {
+        Self::resolve_path_internal(path.into(), None)
+    }
+
+    fn resolve_path_internal(path: PathBuf, current_path: Option<PathBuf>) -> Result<String, RuntimeError> {
+        let current_dir = env::current_dir().unwrap();
+
+        let resolver = PathResovler {
+            process_path: current_dir.clone(),
+            current_path: if current_path.is_some() { current_path.unwrap() } else { current_dir },
+        };
+
+        resolver.resolve(PathBuf::from(path)).map(|buf| buf.to_str().unwrap().to_string())
+    }
+
     pub fn is_loaded(&self) -> bool {
-        return self.context.borrow().is_some();
+        return self.context.is_some();
     }
 
     fn scan(module: Rc<RefCell<Module>>) -> Result<(), RuntimeError> {
         let source = module.borrow().source.clone();
+        
 
         let contents = fs::read_to_string(&source)
-            .map_err(|_| RuntimeError::Custom("Module not found".into()))?;
+            .map_err(|_| RuntimeError::Custom(format!("Module not found : {}", source)))?;
 
         let tokens = lexer::lex(contents);
 
@@ -107,7 +151,10 @@ impl Module {
             let imports = module.borrow().imports.clone();
             for import in imports {
                 let program = module.borrow().program.clone();
-                let module_ref = resolve_module(&import.source, program)?;
+
+                let source = Module::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.borrow().source.clone()).parent().unwrap().to_path_buf()))?;
+
+                let module_ref = resolve_module(&source, program)?;
                 let imported_mod = module_ref.borrow();
                 for specifier in import.specifiers {
                     let name = &specifier.name.clone().unwrap();
@@ -130,45 +177,55 @@ impl Module {
         Ok(())
     }
 
-    pub fn execute(module: Rc<RefCell<Module>>) -> Result<(), RuntimeError> {
-        if module.borrow().is_loaded() {
+    pub fn execute(module_ref: Rc<RefCell<Module>>) -> Result<(), RuntimeError> {
+        if module_ref.borrow().is_loaded() {
             panic!("Module is already loaded")
         }
 
-        let context = ModuleContext::new(module.borrow().program.clone());
+        let context = ModuleContext::new(module_ref.borrow().program.clone());
 
-        module.borrow_mut().context = RefCell::new(Some(context));
+        let context_ref = Rc::new(RefCell::new(context));
 
-        let borrowed_module = module.borrow();
-        let mut context_ref = borrowed_module.context.borrow_mut();
-        let mut context = context_ref.as_mut().unwrap();
+        context_ref.borrow_mut().environment.init(context_ref.clone());
 
-        let imports = module.borrow().imports.clone();
-        for import in imports {
-            for specifier in import.specifiers {
-                let name = specifier.clone().name.unwrap();
-                let module = module.borrow();
-                let program = module.program.borrow();
-                let module = program.modules.get(&import.source).unwrap().borrow();
-                let value = module
-                    .exports
-                    .get(&name)
-                    .ok_or(RuntimeError::VariableNotFound(format!(
-                        "Module has no such property: {}",
-                        name
-                    )))?;
+        module_ref.borrow_mut().context = Some(context_ref);
 
-                context
-                    .environment
-                    .set(specifier.clone(), value.clone(), true)?;
+        {
+            let context = module_ref.borrow().context.clone().unwrap();
+            let mut context = context.borrow_mut();
+
+            let imports = module_ref.borrow().imports.clone();
+            for import in imports {
+                for specifier in import.specifiers {
+                    let name = specifier.clone().name.unwrap();
+                    let module = module_ref.borrow();
+                    let program = module.program.borrow();
+
+                    let source = Module::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.source.clone()).parent().unwrap().to_path_buf()))?;
+                    
+                    let module = program.modules.get(&source).unwrap().borrow();
+                    let value = module
+                        .exports
+                        .get(&name)
+                        .ok_or(RuntimeError::VariableNotFound(format!(
+                            "Module has no such property: {}",
+                            name
+                        )))?;
+
+                    context
+                        .environment
+                        .set(specifier.clone(), value.clone(), true)?;
+                }
             }
         }
 
+        let statements = module_ref.borrow().statements.clone();
+
         interpret(
             Program {
-                body: module.borrow().statements.clone(),
+                body: statements,
             },
-            &mut context,
+            module_ref.borrow().context.clone().unwrap(),
         )?;
 
         Ok(())

@@ -45,9 +45,13 @@ pub fn run_tests(base_dir: &Path) {
 
                 let program = Rc::new(RefCell::new(ProgramContext::new()));
 
-                let mut context = ModuleContext::new(program);
+                let context = ModuleContext::new(program);
 
-                let result = interpreter::interpret(ir, &mut context);
+                let context_ref = Rc::new(RefCell::new(context));
+
+                context_ref.borrow_mut().environment.init(context_ref.clone());
+
+                let result = interpreter::interpret(ir, context_ref);
 
                 let elapsed = now.elapsed();
 

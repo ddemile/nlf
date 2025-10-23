@@ -1,8 +1,7 @@
-import {fib, increment} from "./src/mod.nlf"
-
-print(fib(3))
+import {greet} from "./mod.nlf"
 
 export fn add(a, b) {
-    print("called")
     return a + b
 }
+
+print(greet("ddemile"))
