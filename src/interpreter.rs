@@ -169,12 +169,16 @@ lazy_static! {
 #[derive(Debug)]
 pub struct ProgramContext {
     pub modules: HashMap<String, Rc<RefCell<Module>>>,
+    pub schemas: Vec<Schema>,
+    pub store: HashMap<usize, Object>
 }
 
 impl ProgramContext {
     pub fn new() -> Self {
         Self {
-            modules: HashMap::new()
+            modules: HashMap::new(),
+            schemas: vec![],
+            store: HashMap::new()
         }
     }
 
@@ -186,8 +190,6 @@ impl ProgramContext {
 #[derive(Debug, Clone)]
 pub struct ModuleContext {
     pub environment: Environment,
-    pub schemas: Vec<Schema>,
-    pub store: HashMap<usize, Object>,
     pub program: Rc<RefCell<ProgramContext>>,
 }
 
@@ -197,8 +199,6 @@ impl ModuleContext {
 
         Self {
             environment,
-            schemas: vec![],
-            store: HashMap::new(),
             program,
         }
     }
@@ -219,6 +219,8 @@ pub struct Object {
 fn get_schema(keys: IndexSet<String>, context: Rc<RefCell<ModuleContext>>) -> Schema {
     let schema =  context
         .borrow()
+        .program
+        .borrow()
         .schemas
         .iter()
         .find(|s| s.keys == keys)
@@ -226,10 +228,10 @@ fn get_schema(keys: IndexSet<String>, context: Rc<RefCell<ModuleContext>>) -> Sc
     
     schema.unwrap_or_else(|| {
         let schema: Schema = Schema {
-            id: context.borrow().schemas.len(),
+            id: context.borrow().program.borrow().schemas.len(),
             keys,
         };
-        context.borrow_mut().schemas.push(schema.clone());
+        context.borrow().program.borrow_mut().schemas.push(schema.clone());
         schema
     })
 }
@@ -245,21 +247,26 @@ impl ObjectRef {
             values: entries.values().cloned().collect(),
         };
 
-        let object_id = context.borrow().store.len() + 1;
+        let context = context.borrow();
+        let program = &mut context.program.borrow_mut();
 
-        context.borrow_mut().store.insert(object_id, object);
+        let object_id = program.store.len() + 1;
+
+        program.store.insert(object_id, object);
 
         ObjectRef { object_id }
     }
 
     pub(self) fn get(self, property: String, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
         let context = context_ref.borrow();
-        let object = context
+        let program = context.program.borrow();
+
+        let object = program
             .store
             .get(&self.object_id)
             .expect("Object not found");
 
-        let schema = context
+        let schema = program
             .schemas
             .iter()
             .find(|schema| schema.id == object.schema_id)
@@ -276,12 +283,14 @@ impl ObjectRef {
 
     pub(self) fn set(&self, property: String, value: ValueHolder, context_ref: Rc<RefCell<ModuleContext>>) {
         let context = context_ref.borrow();
-        let object = context
+        let program = context.program.borrow();
+
+        let object = program
             .store
             .get(&self.object_id)
             .expect("Object not found");
 
-        let schema = context
+        let schema = program
             .schemas
             .iter()
             .find(|schema| schema.id == object.schema_id)
@@ -300,6 +309,8 @@ impl ObjectRef {
             }
         }
 
+        drop(program);
+        
         let schema = get_schema(keys, context_ref.clone());
 
         let object = Object {
@@ -307,17 +318,21 @@ impl ObjectRef {
             values,
         };
 
-        context_ref.borrow_mut().store.insert(self.object_id, object);
+        let program = &mut context.program.borrow_mut();
+
+        program.store.insert(self.object_id, object);
     }
 
     pub fn fetch(&self, context_ref: Rc<RefCell<ModuleContext>>) -> HashMap<String, ValueHolder> {
         let context = context_ref.borrow();
-        let object = context
+        let program = context.program.borrow();
+
+        let object = program
             .store
             .get(&self.object_id)
             .expect("Object not found");
 
-        let schema = context
+        let schema = program
             .schemas
             .iter()
             .find(|schema| schema.id == object.schema_id)
@@ -776,8 +791,11 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
 
                     if !is_loaded {
                         let module = program.modules.get(&source).unwrap().clone();
+                        drop(program);
                         Module::execute(module)?
                     }
+
+                    let program = program_ref.borrow();
 
                     let Some(module) = program.modules.get(&source).map(|module| module.borrow()) else {
                         unreachable!()

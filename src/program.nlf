@@ -2,12 +2,20 @@ import {greet, get_key, set_key, increment_key} from "./mod.nlf"
 
 let mark = "!"
 
+print(get_key())
+
+set_key(0)
+
 increment_key()
 
 print(get_key())
 
 export fn concat(a, b) {
     return a + " " + b + mark
+}
+
+export fn mutate_key(obj, value) {
+    obj.key = value
 }
 
 print(greet("ddemile"))

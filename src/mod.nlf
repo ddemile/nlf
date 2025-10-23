@@ -1,7 +1,7 @@
-import {concat} from "./program.nlf"
+import {mutate_key, concat} from "./program.nlf"
 
 let store = {
-    key: "value"
+    key: "Default value"
 }
 
 export fn get_key() {
@@ -9,7 +9,7 @@ export fn get_key() {
 }
 
 export fn increment_key() {
-    store.key = store.key + 1
+    mutate_key(store, store.key + 1)
 }
 
 export fn set_key(value) {
