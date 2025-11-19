@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc};
 
 use crate::{
-    interpreter::{interpret, ModuleContext, ProgramContext, RuntimeError}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, translator
+    errors::{provide_source, ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{interpret, ModuleContext, ProgramContext, RuntimeError}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, translator
 };
 
 #[derive(Debug, Clone)]
@@ -17,7 +17,8 @@ pub struct Module {
     pub context: Option<Rc<RefCell<ModuleContext>>>,
     pub statements: Vec<Statement>,
     pub imports: Vec<Import>,
-    pub program: Rc<RefCell<ProgramContext>>
+    pub program: Rc<RefCell<ProgramContext>>,
+    pub contents: Option<Rc<RefCell<String>>>
 }
 
 struct PathResovler {
@@ -25,8 +26,18 @@ struct PathResovler {
     current_path: PathBuf
 }
 
+#[derive(Debug)]
+enum LoaderError {
+    ModuleNotFound(String),
+    ImportNotFound(String),
+    BoundsViolation(String),
+    TODO
+}
+
+impl LanguageErrorTrait for LoaderError {}
+
 impl PathResovler {
-    pub fn resolve(&self, path: PathBuf) -> Result<PathBuf, RuntimeError> {
+    pub fn resolve(&self, path: PathBuf) -> LanguageResult<PathBuf> {
         let base_path = {
             if path.starts_with("./") || path.starts_with(".\\") {
                 &self.current_path
@@ -35,13 +46,13 @@ impl PathResovler {
             }
         };
 
-        let process_path = self.process_path.canonicalize().map_err(|_| RuntimeError::Custom(format!("Invalid path: {:?}", self.process_path)))?;
+        let process_path = self.process_path.canonicalize().map_err(|_| LanguageError::from(LoaderError::ModuleNotFound(self.process_path.to_str().unwrap().to_string())))?;
 
         let full_path = base_path.join(path);
-        let full_path = full_path.canonicalize().map_err(|_| RuntimeError::Custom(format!("Invalid path: {:?}", full_path)))?;
+        let full_path = full_path.canonicalize().map_err(|_| LanguageError::from(LoaderError::ModuleNotFound(full_path.to_str().unwrap().to_string())))?;
 
         if !full_path.starts_with(process_path) {
-            return Err(RuntimeError::Custom("Tried to access file outside program scope".into()))
+            return Err(LanguageError::from(LoaderError::BoundsViolation(full_path.to_str().unwrap().to_string())))
         }
 
         Ok(full_path)
@@ -56,15 +67,16 @@ impl Module {
             context: None,
             statements: vec![],
             imports: vec![],
-            program
+            program,
+            contents: None
         }
     }
 
-    pub fn resolve_path(path: &str) -> Result<String, RuntimeError> {
+    pub fn resolve_path(path: &str) -> LanguageResult<String> {
         Self::resolve_path_internal(path.into(), None)
     }
 
-    fn resolve_path_internal(path: PathBuf, current_path: Option<PathBuf>) -> Result<String, RuntimeError> {
+    fn resolve_path_internal(path: PathBuf, current_path: Option<PathBuf>) -> LanguageResult<String> {
         let current_dir = env::current_dir().unwrap();
 
         let resolver = PathResovler {
@@ -79,15 +91,11 @@ impl Module {
         return self.context.is_some();
     }
 
-    fn scan(module: Rc<RefCell<Module>>) -> Result<(), RuntimeError> {
+    fn _scan(module: Rc<RefCell<Module>>, contents: &String) -> LanguageResult<()> {
         let source = module.borrow().source.clone();
+
+        let tokens = lexer::lex(contents.clone())?;
         
-
-        let contents = fs::read_to_string(&source)
-            .map_err(|_| RuntimeError::Custom(format!("Module not found : {}", source)))?;
-
-        let tokens = lexer::lex(contents);
-
         let name = Path::new(&source)
             .file_name()
             .unwrap()
@@ -99,7 +107,8 @@ impl Module {
             serde_json::to_string_pretty(&tokens).unwrap(),
         );
 
-        let ast = parser::parse(tokens);
+        let ast = parser::parse(tokens)?;
+
         let _ = fs::write(
             format!("debug/{}-ast.json", name),
             serde_json::to_string_pretty(&ast).unwrap(),
@@ -152,22 +161,25 @@ impl Module {
             for import in imports {
                 let program = module.borrow().program.clone();
 
-                let source = Module::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.borrow().source.clone()).parent().unwrap().to_path_buf()))?;
+                let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.borrow().source.clone()).parent().unwrap().to_path_buf()))?;
 
                 let module_ref = resolve_module(&source, program)?;
                 let imported_mod = module_ref.borrow();
                 for specifier in import.specifiers {
                     let name = &specifier.name.clone().unwrap();
-                    if !imported_mod.exports.contains_key(name) {
-                        return Err(RuntimeError::NoSuchProperty(format!(
-                            "{} does not expose {name}", import.source
-                        )));
+                    if !imported_mod.exports.contains_key(name) { 
+                        // TODO: Correct source bindings
+                        // RuntimeError::NoSuchProperty(format!(
+                        //     "{} does not expose {name}", import.source
+                        // ))
+                        return Err(LanguageError::with_source(LoaderError::ImportNotFound(import.source), 0, 0));
                     }
                 }
             }
         }
 
         module.borrow_mut().statements = statements;
+        module.borrow_mut().contents = Some(Rc::new(RefCell::new(contents.clone())));
 
         let _ = fs::write(
             format!("debug/{}-statements.json", name),
@@ -177,7 +189,24 @@ impl Module {
         Ok(())
     }
 
-    pub fn execute(module_ref: Rc<RefCell<Module>>) -> Result<(), RuntimeError> {
+    fn scan(module: Rc<RefCell<Module>>) -> LanguageResult<()> {
+        let source = module.borrow().source.clone();
+        
+        let contents = fs::read_to_string(&source)
+            // TODO: proper start / and
+            .map_err(|_| LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?;
+
+        let mut result = Self::_scan(module, &contents);
+
+        provide_source(&mut result, ErrorSource {
+            path: source,
+            contents: Rc::new(RefCell::new(contents))
+        });
+
+        result
+    }
+
+    fn _execute(module_ref: Rc<RefCell<Module>>) -> LanguageResult<()> {
         if module_ref.borrow().is_loaded() {
             panic!("Module is already loaded")
         }
@@ -201,20 +230,17 @@ impl Module {
                     let module = module_ref.borrow();
                     let program = module.program.borrow();
 
-                    let source = Module::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.source.clone()).parent().unwrap().to_path_buf()))?;
+                    let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.source.clone()).parent().unwrap().to_path_buf()))?;
                     
                     let module = program.modules.get(&source).unwrap().borrow();
                     let value = module
                         .exports
                         .get(&name)
-                        .ok_or(RuntimeError::VariableNotFound(format!(
-                            "Module has no such property: {}",
-                            name
-                        )))?;
+                        .ok_or(LanguageError::with_source(LoaderError::ImportNotFound(name), 0, 0))?;
 
                     context
                         .environment
-                        .set(specifier.clone(), value.clone(), true)?;
+                        .set(specifier.clone(), value.clone(), true).map_err(|_| LanguageError::with_source(LoaderError::TODO, 0, 0))?;
                 }
             }
         }
@@ -230,9 +256,24 @@ impl Module {
 
         Ok(())
     }
+
+    pub fn execute(module_ref: Rc<RefCell<Module>>) -> LanguageResult<()> {
+        let mut result = Self::_execute(module_ref.clone());
+
+        let module = module_ref.borrow();
+
+        if let Some(contents) = &module.contents {
+            provide_source(&mut result, ErrorSource {
+                path: module.source.clone(),
+                contents: contents.clone()
+            });
+        }
+
+        result
+    }
 }
 
-pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> Result<Rc<RefCell<Module>>, RuntimeError> {
+pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> LanguageResult<Rc<RefCell<Module>>> {
     if !pg_context.borrow().modules.contains_key(path) {
         let module = Rc::new(RefCell::new(Module::new(path, pg_context.clone())));
 
@@ -250,7 +291,7 @@ pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> Re
     Ok(module)
 }
 
-pub fn run_main(path: &str) -> Result<(), RuntimeError> {
+pub fn run_main(path: &str) -> LanguageResult<()> {
     let pg_context = Rc::new(RefCell::new(ProgramContext::new()));
 
     let path = Module::resolve_path(path)?;

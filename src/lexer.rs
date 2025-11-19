@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Serialize, Deserialize};
 
+use crate::errors::{LanguageError, LanguageResult, LexerError};
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[derive(PartialEq)]
 pub struct Token {
@@ -34,13 +36,15 @@ pub enum TokenKind {
     ClosingParenthesis,
     OpeningBracket,
     ClosingBracket,
+    OpeningSquareBracket,
+    ClosingSquareBracket,
     Comma,
     Range,
     And,
     Or,
     Period,
     Colon,
-    Arrow
+    Arrow,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -64,7 +68,7 @@ pub enum KeywordKind {
     From
 }
 
-pub fn lex(code: String) -> Vec<Token> {
+pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
     let mut cursor = 0;
 
     let mut tokens: Vec<Token> = vec![];
@@ -99,7 +103,7 @@ pub fn lex(code: String) -> Vec<Token> {
                     let kind = map.get(longest_match).unwrap().clone();
 
                     if !matches!(kind, TokenKind::Keyword(_)) || (matches!(kind, TokenKind::Keyword(_)) && matches!(char_at(cursor + longest_match.len() - 1).map(|char| char.is_ascii_alphabetic() || char == '_'), Some(false))) {
-                        tokens.push(Token { kind, start: cursor, end: cursor + longest_match.len() - 1 });
+                        tokens.push(Token { kind, start: cursor - 1, end: cursor + longest_match.len() - 1 });
                         cursor += longest_match.len() - 1;
                         continue;
                     }
@@ -116,14 +120,14 @@ pub fn lex(code: String) -> Vec<Token> {
                 }
 
                 if char == '"' {
-                    string(&code, &mut cursor, &mut tokens);
+                    string(&code, &mut cursor, &mut tokens)?;
                     continue;
                 }
             }
         };
     }
 
-    return tokens;
+    Ok(tokens)
 }
 
 fn match_table() -> HashMap<&'static str, TokenKind> {
@@ -134,6 +138,8 @@ fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert(")", TokenKind::ClosingParenthesis);
     map.insert("{", TokenKind::OpeningBracket);
     map.insert("}", TokenKind::ClosingBracket);
+    map.insert("[", TokenKind::OpeningSquareBracket);
+    map.insert("]", TokenKind::ClosingSquareBracket);
     map.insert(",", TokenKind::Comma);
     map.insert("..", TokenKind::Range);
     map.insert(".", TokenKind::Period);
@@ -210,16 +216,16 @@ fn alpha(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
     tokens.push(Token { kind: TokenKind::Identifier { value: code[start..*cursor].to_string() }, start, end: *cursor });
 }
 
-fn string(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
+fn string(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<()> {
     let start = *cursor;
 
-    *cursor += 1;
-
-    while code.chars().nth(*cursor).map_or_else(|| panic!("Unterminated string"), |c| c != '"') {
+    while code.chars().nth(*cursor).map(|c| c != '"').ok_or(LanguageError::with_source(LexerError::UnterminatedString, start, *cursor))? {
         *cursor += 1;
     }
 
     *cursor += 1;
 
-    tokens.push(Token { kind: TokenKind::StringLiteral { value: code[start..(*cursor - 1)].to_string() }, start, end: *cursor });
+    tokens.push(Token { kind: TokenKind::StringLiteral { value: code[start..(*cursor - 1)].to_string() }, start: start - 1, end: *cursor });
+
+    Ok(())
 }

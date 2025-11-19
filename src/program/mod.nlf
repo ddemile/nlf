@@ -1,0 +1,21 @@
+import {mutate_key, concat} from "./main.nlf"
+
+let store = {
+    value: 10
+}
+
+export fn get_key(key) {
+    return store[key]
+}
+
+export fn increment_key(key) {
+    mutate_key(store, key, store[key] + 1)
+}
+
+export fn set_key(key, value) {
+    store[key] = value
+}
+
+export fn greet(name) {
+    return concat("Hello", name)
+}

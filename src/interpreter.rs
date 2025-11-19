@@ -5,14 +5,10 @@ use indexmap::IndexSet;
 use lazy_static::lazy_static;
 
 use crate::{
-    interpreter::prototypes::{
-        Operation, Prototype, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, STRING_PROTOTYPE
-    },
-    lexer::{TokenKind},
-    loader::Module,
-    parser::{
-        Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef,
-        Program, RuntimeFunction, Statement, ValueHolder, VariableRef,
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
+        ARRAY_PROTOTYPE, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
+    }, lexer::TokenKind, loader::Module, parser::{
+        ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
     }
 };
 
@@ -28,6 +24,8 @@ pub enum RuntimeError {
     NoSuchProperty(String),
     OperationNotSupported(String),
 }
+
+impl LanguageErrorTrait for RuntimeError {}
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -52,6 +50,7 @@ impl ValueHolder {
             ValueHolder::Int(_) => &*INT_PROTOTYPE,
             ValueHolder::Float(_) => &*FLOAT_PROTOTYPE,
             ValueHolder::Object(_) => &*OBJECT_PROTOTYPE,
+            ValueHolder::Array(_) => &*ARRAY_PROTOTYPE,
             _ => todo!(),
         }
     }
@@ -65,6 +64,7 @@ impl ValueHolder {
             ValueHolder::Fn(FunctionKind::Runtime(_)) => format!("fn() {{ TODO }}"),
             ValueHolder::Fn(FunctionKind::BuiltIn(_)) => format!("fn() {{ native code }}"),
             ValueHolder::Object(_) => format!("ObjectRef"),
+            ValueHolder::Array(_) => format!("ArrayRef"),
             ValueHolder::LazyRef { .. } => format!("LazyRef"),
             ValueHolder::Void => format!("Void"),
         }
@@ -80,13 +80,14 @@ impl fmt::Display for ValueHolder {
             ValueHolder::Bool(_) => write!(f, "{color_blue}{}{color_reset}", self.to_string()),
             ValueHolder::Fn(_) => write!(f, "{color_black}{}{color_reset}", self.to_string()),
             ValueHolder::Object(_) => write!(f, "{}", self.to_string()),
+            ValueHolder::Array(_) => write!(f, "{}", self.to_string()),
             ValueHolder::LazyRef { .. } => write!(f, "{}", self.to_string()),
             ValueHolder::Void => write!(f, "{}", self.to_string()),
         }
     }
 }
 
-pub type RuntimeResult = Result<ValueHolder, RuntimeError>;
+pub type RuntimeResult = LanguageResult<ValueHolder>;
 
 type BuiltInFunctionMethod = HashMap<String, Box<dyn Fn(Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>>;
 
@@ -120,15 +121,15 @@ lazy_static! {
             Box::new(|arguments, _| {
                 let a = match arguments.get(0).unwrap() {
                     ValueHolder::Float(f) => Ok(f),
-                    _ => Err(RuntimeError::InvalidType(
+                    _ => Err(LanguageError::with_source(RuntimeError::InvalidType(
                         "Expected float value".to_string(),
-                    )),
+                    ), 0 ,0))
                 }?;
                 let b = match arguments.get(1).unwrap() {
                     ValueHolder::Float(f) => Ok(f),
-                    _ => Err(RuntimeError::InvalidType(
+                    _ => Err(LanguageError::with_source(RuntimeError::InvalidType(
                         "Expected float value".to_string(),
-                    )),
+                    ), 0 ,0))
                 }?;
 
                 Ok(ValueHolder::Float(a.powf(*b)))
@@ -155,10 +156,22 @@ lazy_static! {
                 };
 
                 if !a {
-                    return Err(RuntimeError::Custom("Assertion failed".to_string()));
+                    return Err(LanguageError::with_source(RuntimeError::Custom("Assertion failed".to_string()), 0, 0));
                 }
 
                 Ok(ValueHolder::Void)
+            }),
+        );
+
+        m.insert(
+            String::from("panic"),
+            Box::new(|arguments, _| {
+                let message = match arguments.get(0).unwrap() {
+                    ValueHolder::String(f) => f,
+                    _ => panic!("Expected messsage"),
+                };
+
+                Err(LanguageError::with_source(RuntimeError::Custom(message.clone()), 0, 0))
             }),
         );
 
@@ -278,7 +291,7 @@ impl ObjectRef {
             return Ok(object.values[index].clone());
         }
 
-        Err(RuntimeError::NoSuchProperty(property))
+        Err(LanguageError::from(RuntimeError::NoSuchProperty(property)))
     }
 
     pub(self) fn set(&self, property: String, value: ValueHolder, context_ref: Rc<RefCell<ModuleContext>>) {
@@ -351,6 +364,78 @@ impl ObjectRef {
     }
 }
 
+impl ArrayRef {
+    pub(self) fn new(items: Vec<ValueHolder>, context: Rc<RefCell<ModuleContext>>) -> Self {
+        let context = context.borrow();
+        let program = &mut context.program.borrow_mut();
+
+        let array_id = program.store.len() + 1;
+
+        // Placeholder implementation
+        program.store.insert(array_id, Object { schema_id: 0, values: items });
+
+        ArrayRef { array_id }
+    }
+
+    pub fn get(&self, index: usize, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+        let context = context_ref.borrow();
+        let program = context.program.borrow();
+
+        let object = program
+            .store
+            .get(&self.array_id)
+            .expect("Array not found");
+
+        let value = object.values.get(index).cloned().ok_or(LanguageError::from(RuntimeError::Custom(format!(
+            "Index {} out of bounds",
+            index
+        ))))?;
+
+        Ok(value)
+    }
+
+    pub fn set(&self, index: usize, value: ValueHolder, context_ref: Rc<RefCell<ModuleContext>>) {
+        let context = context_ref.borrow();
+        let program = context.program.borrow();
+
+        let object = program
+            .store
+            .get(&self.array_id)
+            .expect("Array not found");
+
+        let mut values = object.values.clone();
+
+        if index >= values.len() {
+            values.push(value);
+        } else {
+            values[index] = value;
+        }
+
+        drop(program);
+
+        let object = Object {
+            schema_id: 0,
+            values,
+        };
+
+        let program = &mut context.program.borrow_mut();
+
+        program.store.insert(self.array_id, object);
+    }
+
+    pub fn fetch(&self, context_ref: Rc<RefCell<ModuleContext>>) -> Vec<ValueHolder> {
+        let context = context_ref.borrow();
+        let program = context.program.borrow();
+
+        let object = program
+            .store
+            .get(&self.array_id)
+            .expect("Array not found");
+
+        object.values.clone()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ScopeKind {
     Program,
@@ -413,7 +498,7 @@ impl Environment {
         var_ref: VariableRef,
         value: ValueHolder,
         define: bool,
-    ) -> Result<(), RuntimeError> {
+    ) -> LanguageResult<()> {
         if !define {
             // Traverse up the parent chain to find the correct scope
             let mut current_scope = self.scopes.last().unwrap().clone();
@@ -422,10 +507,10 @@ impl Environment {
                     let scope = current_scope.borrow();
                     match &scope.kind {
                         ScopeKind::Call(inner_scope) => inner_scope.clone(),
-                        _ => scope.parent.clone().ok_or(RuntimeError::VariableNotFound(format!(
+                        _ => scope.parent.clone().ok_or(LanguageError::from(RuntimeError::VariableNotFound(format!(
                             "Parent scope not found for slot {} at depth {}",
                             var_ref.slot, var_ref.depth
-                        )))?
+                        ))))?
                     }
                 };
 
@@ -435,10 +520,10 @@ impl Environment {
                 .slots
                 .get_mut(var_ref.slot)
                 .map(|v| *v = value)
-                .ok_or(RuntimeError::VariableNotFound(format!(
+                .ok_or(LanguageError::from(RuntimeError::VariableNotFound(format!(
                     "Slot {} at depth {} not found",
                     var_ref.slot, var_ref.depth
-                )))?;
+                ))))?;
             return Ok(());
         } else if let Some(mut scope) = self.scopes.last_mut().map(|scope| scope.borrow_mut()) {
             if scope.slots.len() <= var_ref.slot {
@@ -471,7 +556,7 @@ impl Environment {
 pub fn interpret(
     program: Program,
     context: Rc<RefCell<ModuleContext>>,
-) -> Result<(), RuntimeError> {
+) -> LanguageResult<()> {
     eval_body(&program.body, context)?;
 
     Ok(())
@@ -480,7 +565,7 @@ pub fn interpret(
 fn define_functions(
     statements: &Vec<Statement>,
     context_ref: Rc<RefCell<ModuleContext>>,
-) -> Result<(), RuntimeError> {
+) -> LanguageResult<()> {
     for statement in statements
         .iter()
         .filter(|statement| matches!(*statement, Statement::FunctionIR { .. } | Statement::Export { declaration: box Statement::FunctionIR { .. } }))
@@ -569,9 +654,9 @@ fn eval_statement(statement: Statement, context: Rc<RefCell<ModuleContext>>) -> 
         Statement::Return { expression } => eval_expr(expression, context),
         Statement::Break => Ok(ValueHolder::Void),
         Statement::Block(_) => Ok(ValueHolder::Void),
-        Statement::ImportIR { .. } => Err(RuntimeError::Custom(
+        Statement::ImportIR { .. } => Err(LanguageError::with_source(RuntimeError::Custom(
             "Import declarations can only be at the top of modules".into(),
-        )),
+        ), 0, 0)),
         Statement::Export { declaration } => eval_statement(*declaration, context),
         _ => panic!("Invalid statement : {:?}", statement),
     }
@@ -729,12 +814,32 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
         Expression::Member { object, property } => {
             let value = eval_expr(*object, context_ref.clone())?;
 
-            let Expression::Literal {
-                r#type: LiteralExpressionKind::Variable,
-                value: ValueHolder::String(property),
-            } = *property
-            else {
-                unreachable!();
+            let property = match *property.clone() {
+                Expression::Literal { r#type: LiteralExpressionKind::Literal, value } => value,
+                Expression::Variable(_) => eval_expr(*property, context_ref.clone())?,
+                _ => unreachable!()
+            };
+
+            if matches!(&property, ValueHolder::Int(_) | ValueHolder::Float(_)) {
+                let index = match &property {
+                    ValueHolder::Int(i) => *i as usize,
+                    ValueHolder::Float(f) => *f as usize,
+                    _ => unreachable!()
+                };
+
+                if let ValueHolder::Array(array_ref) = &value {
+                    return array_ref.get(index, context_ref.clone());
+                } else {
+                    return Err(LanguageError::with_source(RuntimeError::InvalidType(
+                        "Cannot access index on type other than Array".to_string(),
+                    ), 0, 0));
+                }
+            }
+
+            let ValueHolder::String(property) = property else {
+                return Err(LanguageError::with_source(RuntimeError::InvalidType(
+                    "Property should be a string".to_string(),
+                ), 0, 0));
             };
 
             if let ValueHolder::Object(object) = &value {
@@ -749,7 +854,7 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
             let method = Rc::new(
                 prototype
                     .get_method(&property)
-                    .ok_or(RuntimeError::NoSuchProperty(property))?
+                    .ok_or(LanguageError::with_source(RuntimeError::NoSuchProperty(property), 0, 0))?
                     .clone(),
             );
 
@@ -768,18 +873,25 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
                     .collect();
                 let object_ref = ObjectRef::new(entries, context_ref.clone());
                 return Ok(ValueHolder::Object(object_ref));
+            } else if let LiteralExpressionKind::Array(items) = r#type {
+                let items: Vec<ValueHolder> = items
+                    .iter()
+                    .map(|v| eval_expr(v.clone(), context_ref.clone()).unwrap())
+                    .collect();
+                // ArrayRef creation to be implemented
+                return Ok(ValueHolder::Array(ArrayRef::new(items, context_ref.clone()))); // Placeholder
             } else if let LiteralExpressionKind::Variable = r#type {
-                return Err(RuntimeError::VariableNotFound(value.to_string()));
+                return Err(LanguageError::with_source(RuntimeError::VariableNotFound(value.to_string()), 0, 0));
             } else {
                 unreachable!();
             }
         }
         Expression::Variable(variable) => {
             let value = context_ref.borrow().environment.get(variable.clone()).ok_or(
-                RuntimeError::VariableNotFound(format!(
+                LanguageError::with_source(RuntimeError::VariableNotFound(format!(
                     "Slot {} at depth {} not found",
                     variable.slot, variable.depth
-                )),
+                )), 0, 0),
             )?;
 
             match value {
@@ -830,17 +942,18 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
                 if let ValueHolder::Object(ObjectRef { object_id }) = value {
                     let value = match *property {
                         Expression::Literal { r#type: _, value } => value,
+                        Expression::Variable(_) => eval_expr(*property, context_ref.clone())?,
                         _ => {
-                            return Err(RuntimeError::InvalidType(
+                            return Err(LanguageError::with_source(RuntimeError::InvalidType(
                                 "Property should be a variable".to_string(),
-                            ));
+                            ), 0, 0));
                         }
                     };
 
                     let ValueHolder::String(property) = value else {
-                        return Err(RuntimeError::InvalidType(
+                        return Err(LanguageError::with_source(RuntimeError::InvalidType(
                             "Property should be a variable".to_string(),
-                        ));
+                        ), 0, 0));
                     };
 
                     let object_ref = ObjectRef { object_id };
@@ -848,10 +961,35 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
                     object_ref.set(property, expr, context_ref.clone());
 
                     return Ok(ValueHolder::Void);
+                } else if let ValueHolder::Array(array_ref) = value {
+                    let index = match *property {
+                        Expression::Literal { r#type: _, value } => value,
+                        Expression::Variable(_) => eval_expr(*property, context_ref.clone())?,
+                        _ => {
+                            return Err(LanguageError::with_source(RuntimeError::InvalidType(
+                                "Index should be a variable".to_string(),
+                            ), 0, 0));
+                        }
+                    };
+
+                    let index = match index {
+                        ValueHolder::Int(i) => i as usize,
+                        ValueHolder::Float(f) => f as usize,
+                        _ => {
+                            return Err(LanguageError::with_source(RuntimeError::InvalidType(
+                                "Index should be an integer".to_string(),
+                            ), 0, 0));
+                        }
+                    };
+
+                    let expr = eval_expr(*right, context_ref.clone())?;
+                    array_ref.set(index, expr, context_ref.clone());
+
+                    return Ok(ValueHolder::Void);
                 } else {
-                    return Err(RuntimeError::InvalidType(
+                    return Err(LanguageError::with_source(RuntimeError::InvalidType(
                         "Cannot access property on type other than Object".to_string(),
-                    ));
+                    ), 0, 0));
                 }
             }
 
@@ -911,7 +1049,7 @@ fn eval_call(
             let arguments: Vec<ValueHolder> = call_arguments
                 .into_iter()
                 .map(|arg| eval_expr(arg, context.clone()))
-                .collect::<Result<Vec<_>, RuntimeError>>()?;
+                .collect::<LanguageResult<Vec<_>>>()?;
 
             return func(arguments, context.clone());
         };
@@ -926,14 +1064,14 @@ fn eval_call(
     })) = expr
     {
         if arguments.len() != call_arguments.len() {
-            return Err(RuntimeError::Custom("Invalid number of args".to_string()));
+            return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
         }
 
         // Evaluate all arguments before entering the scope to avoid multiple mutable borrows
         let evaluated_args: Vec<ValueHolder> = call_arguments
             .into_iter()
             .map(|arg| eval_expr(arg, context.clone()))
-            .collect::<Result<Vec<_>, RuntimeError>>()?;
+            .collect::<LanguageResult<Vec<_>>>()?;
 
         let context = scope.borrow().context.clone();
 
@@ -968,7 +1106,7 @@ fn eval_call(
     }
 
     if let ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func, instance })) = expr {
-        return func(&instance, call_arguments);
+        return func(&instance, call_arguments, context.clone());
     }
 
     panic!("Tried to call invalid function expression: {:?}", *callee);
@@ -986,9 +1124,9 @@ fn eval_equality(
     match operator {
         TokenKind::EQ => Ok(ValueHolder::Bool(left == right)),
         TokenKind::NE => Ok(ValueHolder::Bool(left != right)),
-        _ => Err(RuntimeError::Custom(
+        _ => Err(LanguageError::with_source(RuntimeError::Custom(
             "Invalid equality operator".to_string(),
-        )),
+        ), 0 ,0)),
     }
 }
 
@@ -1022,9 +1160,9 @@ fn eval_logical(
     match operator {
         TokenKind::And => Ok(ValueHolder::Bool(left.into() && right.into())),
         TokenKind::Or => Ok(ValueHolder::Bool(left.into() || right.into())),
-        _ => Err(RuntimeError::Custom(
+        _ => Err(LanguageError::with_source(RuntimeError::Custom(
             "Invalid relational operator".to_string(),
-        )),
+        ), 0 ,0)),
     }
 }
 

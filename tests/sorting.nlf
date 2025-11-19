@@ -1,0 +1,33 @@
+// Name: Selection sort algorithm
+let t = [10, 4, 8, 5, 2]
+let expected = [2, 4, 5, 8, 10]
+
+fn swap(t, a, b) {
+    let tmp = t[a]
+    t[a] = t[b]
+    t[b] = tmp
+}
+
+fn sort(t) {
+    for i in ..t.len() {
+        let m = i
+        for j in i..t.len() {
+            if t[j] < t[m] {
+                m = j
+            }
+        }
+        swap(t, i, m)
+    }
+}
+
+sort(t)
+
+if t.len() != expected.len() {
+    panic("Array length does not match")
+}
+
+for i in ..t.len() {
+    if t[i] != expected[i] {
+        panic("The array was not sorted correctly")
+    }
+}

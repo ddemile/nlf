@@ -12,6 +12,7 @@ mod translator;
 mod interpreter;
 mod tests;
 mod loader;
+mod errors;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -29,10 +30,10 @@ fn main() {
         return;
     }
 
-    let file = if let Some(value) = args.file { value } else { String::from("src/program.nlf") };
+    let file = if let Some(value) = args.file { value } else { String::from("src/program/main.nlf") };
 
     match run_main(&file) {
         Ok(_) => (),
-        Err(e) => println!("{color_red}Runtime error{color_reset}: {}", e)
+        Err(e) => println!("{}", e.format(None))
     }
 }

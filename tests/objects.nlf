@@ -1,0 +1,25 @@
+// Name: Mutate object using dot notation
+let obj = {
+    "number": 10,
+    "simple_key": "some value"
+}
+
+obj.number = obj.number + 15 
+
+let value = obj.simple_key + ": " + obj.number
+
+assert(value == "some value: 25")
+
+// Name: Mutate object using bracket notation
+let obj = {
+    "number": 10,
+    "simple_key": "some value"
+}
+
+let key = "simple_key"
+
+obj["number"] = obj["number"] + 15 
+
+let value = obj[key] + ": " + obj["number"]
+
+assert(value == "some value: 25")

@@ -216,10 +216,11 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
         }
         Expression::Member { object, property } => {
             let object = translate_expression(*object.clone(), context)?;
+            let property = translate_expression(*property.clone(), context)?;
 
             Ok(Expression::Member {
                 object: Box::new(object),
-                property: property.clone(),
+                property: Box::new(property),
             })
         }
         Expression::Literal { r#type, value: ValueHolder::String(value) } => {
@@ -273,10 +274,10 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
         }
         Expression::Call { callee, arguments } => {
             let callee = match translate_expression(*callee.clone(), context) {
-                Ok(Expression::Variable(v)) => Expression::Variable(v),
-                Ok(_) => *callee.clone(),
+                Ok(expr) => expr,
                 Err(_) => *callee.clone(),
             };
+            
             let mut inner_arguments: Vec<Expression> = vec![];
 
             for arg in arguments {
