@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc};
 
 use crate::{
-    errors::{provide_source, ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{interpret, ModuleContext, ProgramContext, RuntimeError}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, translator
+    errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, RuntimeError, interpret}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, stdlib::CoreModules, translator
 };
 
 #[derive(Debug, Clone)]
@@ -18,7 +18,8 @@ pub struct Module {
     pub statements: Vec<Statement>,
     pub imports: Vec<Import>,
     pub program: Rc<RefCell<ProgramContext>>,
-    pub contents: Option<Rc<RefCell<String>>>
+    pub contents: Option<Rc<RefCell<String>>>,
+    pub kind: ModuleKind
 }
 
 struct PathResovler {
@@ -59,8 +60,15 @@ impl PathResovler {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum ModuleKind {
+    Standard,
+    Core,
+    Library
+}
+
 impl Module {
-    pub fn new(source: &str, program: Rc<RefCell<ProgramContext>>) -> Self {
+    pub fn new(source: &str, kind: ModuleKind, program: Rc<RefCell<ProgramContext>>) -> Self {
         Self {
             source: source.into(),
             exports: HashMap::new(),
@@ -68,7 +76,8 @@ impl Module {
             statements: vec![],
             imports: vec![],
             program,
-            contents: None
+            contents: None,
+            kind
         }
     }
 
@@ -84,7 +93,10 @@ impl Module {
             current_path: if current_path.is_some() { current_path.unwrap() } else { current_dir },
         };
 
-        resolver.resolve(PathBuf::from(path)).map(|buf| buf.to_str().unwrap().to_string())
+        match resolver.resolve(PathBuf::from(path.clone())).map(|buf| buf.to_str().unwrap().to_string()) {
+            Ok(resolved) => Ok(resolved),
+            Err(_) => Ok(path.to_str().unwrap().to_string())
+        }
     }
 
     pub fn is_loaded(&self) -> bool {
@@ -191,11 +203,24 @@ impl Module {
 
     fn scan(module: Rc<RefCell<Module>>) -> LanguageResult<()> {
         let source = module.borrow().source.clone();
-        
-        let contents = fs::read_to_string(&source)
-            // TODO: proper start / and
-            .map_err(|_| LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?;
 
+        let contents = match module.borrow().kind {
+            ModuleKind::Core => {
+                let embedded_file = CoreModules::get(&format!("{}.nlf", source.strip_prefix("core:").unwrap()))
+                    .ok_or(LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?;
+
+                String::from_utf8(embedded_file.data.into_owned()).map_err(|_| LanguageError::from(LoaderError::TODO))?
+            }
+            ModuleKind::Standard => {
+                fs::read_to_string(&source)
+                    // TODO: proper start / and
+                    .map_err(|_| LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?
+            }
+            ModuleKind::Library => {
+                todo!()
+            }
+        };
+        
         let mut result = Self::_scan(module, &contents);
 
         provide_source(&mut result, ErrorSource {
@@ -274,8 +299,16 @@ impl Module {
 }
 
 pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> LanguageResult<Rc<RefCell<Module>>> {
+    let kind = if PathBuf::from(path).exists() {
+        ModuleKind::Standard
+    } else if path.starts_with("core:") {
+        ModuleKind::Core
+    } else {
+        return Err(LanguageError::from(LoaderError::ModuleNotFound(path.to_string())))
+    };
+
     if !pg_context.borrow().modules.contains_key(path) {
-        let module = Rc::new(RefCell::new(Module::new(path, pg_context.clone())));
+        let module = Rc::new(RefCell::new(Module::new(&path, kind, pg_context.clone())));
 
         // Borrow only to insert, then drop it immediately.
         {

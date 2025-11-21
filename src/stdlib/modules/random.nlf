@@ -1,0 +1,9 @@
+let random = binding("random")
+
+export fn rand() {
+    return random.rand()
+}
+
+export fn randint(min, max) {
+    return random.randint(min, max)
+}

@@ -9,7 +9,7 @@ use crate::{
         ARRAY_PROTOTYPE, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }, lexer::TokenKind, loader::Module, parser::{
         ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
-    }
+    }, stdlib::FUNCTION_TABLE
 };
 
 use inline_colorization::*;
@@ -91,94 +91,6 @@ pub type RuntimeResult = LanguageResult<ValueHolder>;
 
 type BuiltInFunctionMethod = HashMap<String, Box<dyn Fn(Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>>;
 
-lazy_static! {
-    static ref BUILT_IN_FUNCTIONS: BuiltInFunctionMethod = {
-        let mut m: BuiltInFunctionMethod =
-            HashMap::new();
-
-        m.insert(
-            String::from("print"),
-            Box::new(|arguments, context| {
-                let arguments: Vec<String> = arguments
-                    .iter()
-                    .map(|argument| -> String {
-                        if let ValueHolder::Object(object_ref) = argument {
-                            return serde_json::to_string(&object_ref.fetch(context.clone())).expect("Failed to parse object");
-                        }
-
-                        format!("{argument}")
-                    })
-                    .collect();
-
-                println!("{}", arguments.join(" "));
-
-                Ok(ValueHolder::Void)
-            }),
-        );
-
-        m.insert(
-            String::from("pow"),
-            Box::new(|arguments, _| {
-                let a = match arguments.get(0).unwrap() {
-                    ValueHolder::Float(f) => Ok(f),
-                    _ => Err(LanguageError::with_source(RuntimeError::InvalidType(
-                        "Expected float value".to_string(),
-                    ), 0 ,0))
-                }?;
-                let b = match arguments.get(1).unwrap() {
-                    ValueHolder::Float(f) => Ok(f),
-                    _ => Err(LanguageError::with_source(RuntimeError::InvalidType(
-                        "Expected float value".to_string(),
-                    ), 0 ,0))
-                }?;
-
-                Ok(ValueHolder::Float(a.powf(*b)))
-            }),
-        );
-
-        m.insert(
-            String::from("now"),
-            Box::new(|_, _| {
-                let start = SystemTime::now();
-                let since_the_epoch = start
-                    .duration_since(UNIX_EPOCH)
-                    .expect("time should go forward");
-                Ok(ValueHolder::Float(since_the_epoch.as_millis_f64()))
-            }),
-        );
-
-        m.insert(
-            String::from("assert"),
-            Box::new(|arguments, _| {
-                let a = match arguments.get(0).unwrap() {
-                    ValueHolder::Bool(f) => f,
-                    _ => panic!("Expected bool value"),
-                };
-
-                if !a {
-                    return Err(LanguageError::with_source(RuntimeError::Custom("Assertion failed".to_string()), 0, 0));
-                }
-
-                Ok(ValueHolder::Void)
-            }),
-        );
-
-        m.insert(
-            String::from("panic"),
-            Box::new(|arguments, _| {
-                let message = match arguments.get(0).unwrap() {
-                    ValueHolder::String(f) => f,
-                    _ => panic!("Expected messsage"),
-                };
-
-                Err(LanguageError::with_source(RuntimeError::Custom(message.clone()), 0, 0))
-            }),
-        );
-
-        m
-    };
-}
-
 #[derive(Debug)]
 pub struct ProgramContext {
     pub modules: HashMap<String, Rc<RefCell<Module>>>,
@@ -250,7 +162,7 @@ fn get_schema(keys: IndexSet<String>, context: Rc<RefCell<ModuleContext>>) -> Sc
 }
 
 impl ObjectRef {
-    pub(self) fn new(entries: HashMap<String, ValueHolder>, context: Rc<RefCell<ModuleContext>>) -> Self {
+    pub fn new(entries: HashMap<String, ValueHolder>, context: Rc<RefCell<ModuleContext>>) -> Self {
         let keys: IndexSet<String> = entries.keys().cloned().collect();
 
         let schema = get_schema(keys, context.clone());
@@ -814,11 +726,7 @@ fn eval_expr(expr: Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runti
         Expression::Member { object, property } => {
             let value = eval_expr(*object, context_ref.clone())?;
 
-            let property = match *property.clone() {
-                Expression::Literal { r#type: LiteralExpressionKind::Literal, value } => value,
-                Expression::Variable(_) => eval_expr(*property, context_ref.clone())?,
-                _ => unreachable!()
-            };
+            let property = eval_expr(*property, context_ref.clone())?;
 
             if matches!(&property, ValueHolder::Int(_) | ValueHolder::Float(_)) {
                 let index = match &property {
@@ -1038,20 +946,23 @@ fn eval_call(
     call_arguments: Vec<Expression>,
     context: Rc<RefCell<ModuleContext>>,
 ) -> RuntimeResult {
+    let evaluated_args: Vec<ValueHolder> = call_arguments
+        .into_iter()
+        .map(|arg| eval_expr(arg, context.clone()))
+        .collect::<LanguageResult<Vec<_>>>()?;
+    
     if let Expression::Literal {
         value: ValueHolder::String(name),
         ..
     } = *callee.clone()
     {
-        let func = BUILT_IN_FUNCTIONS.get(&name);
+        let table = FUNCTION_TABLE.lock().unwrap();
+        let func = table.get(name.as_str()).cloned();
+
+        drop(table);
 
         if let Some(func) = func {
-            let arguments: Vec<ValueHolder> = call_arguments
-                .into_iter()
-                .map(|arg| eval_expr(arg, context.clone()))
-                .collect::<LanguageResult<Vec<_>>>()?;
-
-            return func(arguments, context.clone());
+            return func(&evaluated_args, context.clone());
         };
     }
 
@@ -1063,15 +974,9 @@ fn eval_call(
         scope
     })) = expr
     {
-        if arguments.len() != call_arguments.len() {
+        if arguments.len() != evaluated_args.len() {
             return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
         }
-
-        // Evaluate all arguments before entering the scope to avoid multiple mutable borrows
-        let evaluated_args: Vec<ValueHolder> = call_arguments
-            .into_iter()
-            .map(|arg| eval_expr(arg, context.clone()))
-            .collect::<LanguageResult<Vec<_>>>()?;
 
         let context = scope.borrow().context.clone();
 
@@ -1100,13 +1005,14 @@ fn eval_call(
                 .environment
                 .set(argument.clone(), value.clone(), true)?;
         }
+
         let return_value = eval_body(&statements, context.clone());
         context.borrow_mut().environment.exit_scope();
         return return_value;
     }
 
     if let ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func, instance })) = expr {
-        return func(&instance, call_arguments, context.clone());
+        return func(&instance, evaluated_args, context.clone());
     }
 
     panic!("Tried to call invalid function expression: {:?}", *callee);

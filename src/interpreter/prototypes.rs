@@ -13,7 +13,7 @@ pub enum Operation {
 }
 
 pub type OperatorFunc = Box<dyn Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Send + Sync>;
-pub type MethodFunc = Arc<dyn Fn(&ValueHolder, Vec<Expression>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>;
+pub type MethodFunc = Arc<dyn Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>;
 
 pub struct Prototype {
     pub _name: String,

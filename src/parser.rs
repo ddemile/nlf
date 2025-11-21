@@ -6,7 +6,7 @@ use clap::Parser;
 use serde::Serialize;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{prototypes::MethodFunc, Scope}, lexer::{KeywordKind, Token, TokenKind}
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}, stdlib::NativeFunctionType
 };
 
 macro_rules! expect_token {
@@ -73,7 +73,7 @@ impl Debug for BuiltInFunction {
 #[derive(Serialize, Debug, Clone)]
 pub enum FunctionKind {
     Runtime(RuntimeFunction),
-    BuiltIn(BuiltInFunction),
+    BuiltIn(BuiltInFunction)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -136,7 +136,7 @@ impl Into<i32> for ValueHolder {
         match self {
             ValueHolder::Int(a) => a,
             ValueHolder::Float(a) => a.floor() as i32,
-            _ => panic!("Couldn't ValueHolder convert into i32"),
+            _ => panic!("Couldn't convert ValueHolder into i32"),
         }
     }
 }
@@ -844,15 +844,9 @@ fn member(
 
             expr = Expression::Member {
                 object: Box::new(expr),
-                property: Box::new(match tokens.get(*cursor).cloned().unwrap().kind {
-                    TokenKind::Identifier { value } => Expression::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value.to_string()) },
-                    TokenKind::StringLiteral { value } => Expression::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(value.to_string()) },
-                    TokenKind::NumericLiteral { value } => Expression::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::Int(value as i32) },
-                    _ => panic!()
-                })
+                property: Box::new(equality_expression(cursor, tokens)?),
             };
 
-            *cursor += 1;
             if !matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::ClosingSquareBracket)) {
                 panic!()
             }

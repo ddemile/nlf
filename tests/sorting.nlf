@@ -1,7 +1,4 @@
 // Name: Selection sort algorithm
-let t = [10, 4, 8, 5, 2]
-let expected = [2, 4, 5, 8, 10]
-
 fn swap(t, a, b) {
     let tmp = t[a]
     t[a] = t[b]
@@ -20,14 +17,50 @@ fn sort(t) {
     }
 }
 
-sort(t)
+fn test_sort(t, expected) {
+    sort(t)
 
-if t.len() != expected.len() {
-    panic("Array length does not match")
-}
+    if t.len() != expected.len() {
+        panic("Array length does not match")
+    }
 
-for i in ..t.len() {
-    if t[i] != expected[i] {
-        panic("The array was not sorted correctly")
+    for i in ..t.len() {
+        if t[i] != expected[i] {
+            panic("The array was not sorted correctly")
+        }
     }
 }
+
+test_sort([10, 4, 8, 5, 2], [2, 4, 5, 8, 10])
+
+// Name: Insertion sort algorithm
+fn sort(array) {
+    let n = array.len()
+
+    for i in 1..n {
+        let insertion_value = array[i]
+
+        let j = i
+        while j > 0 && insertion_value < array[j-1] {
+            array[j] = array[j - 1]
+            j = j - 1
+        }
+        array[j] = insertion_value
+    }
+}
+
+fn test_sort(t, expected) {
+    sort(t)
+
+    if t.len() != expected.len() {
+        panic("Array length does not match")
+    }
+
+    for i in ..t.len() {
+        if t[i] != expected[i] {
+            panic("The array was not sorted correctly")
+        }
+    }
+}
+
+test_sort([10, 4, 8, 5, 2], [2, 4, 5, 8, 10])
