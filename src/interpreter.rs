@@ -659,8 +659,8 @@ fn eval_while(
     statements: Vec<Statement>,
     context_ref: Rc<RefCell<ModuleContext>>,
 ) -> RuntimeResult {
+    context_ref.borrow_mut().environment.enter_scope(ScopeKind::Loop);
     while eval_expr(condition.clone(), context_ref.clone())?.into() {
-        context_ref.borrow_mut().environment.enter_scope(ScopeKind::Loop);
         {
             let context = context_ref.borrow();
             let scope = &mut context.environment.scopes.last().unwrap().borrow_mut();
@@ -681,11 +681,12 @@ fn eval_while(
             .interrupted
             .is_some();
 
-        context_ref.borrow_mut().environment.exit_scope();
         if broken {
             break;
         }
     }
+
+    context_ref.borrow_mut().environment.exit_scope();
 
     Ok(ValueHolder::Void)
 }

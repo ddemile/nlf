@@ -158,9 +158,9 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
             Ok(Statement::ForIR { variable: var_ref, left, right, statements })
         }
         Statement::While { condition, statements } => {
-            let condition = translate_expression(condition, context)?;
-
+            
             context.enter_scope(ScopeKind::Loop);
+            let condition = translate_expression(condition, context)?;
             let statements = translate_body(&statements, context)?;
             context.exit_scope();
 
