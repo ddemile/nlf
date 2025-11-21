@@ -1,5 +1,5 @@
 use core::panic;
-use std::{cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
+use std::{cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, ops::BitOrAssign, rc::Rc, time::{SystemTime, UNIX_EPOCH}};
 
 use indexmap::IndexSet;
 use lazy_static::lazy_static;
@@ -627,9 +627,7 @@ fn eval_for(
             // Faster than environment.set in this context
             let mut scope = context.environment.scopes.last().unwrap().borrow_mut();
 
-            for v in &mut scope.slots {
-                *v = ValueHolder::Void;
-            }
+            scope.slots.fill(ValueHolder::Void);
 
             scope.slots[variable.slot] = ValueHolder::Int(i);
         }
@@ -660,17 +658,19 @@ fn eval_while(
     context_ref: Rc<RefCell<ModuleContext>>,
 ) -> RuntimeResult {
     context_ref.borrow_mut().environment.enter_scope(ScopeKind::Loop);
-    while eval_expr(condition.clone(), context_ref.clone())?.into() {
+
+    fn execute_loop_body(
+        statements: &Vec<Statement>,
+        context_ref: &Rc<RefCell<ModuleContext>>
+    ) -> LanguageResult<bool> {
         {
             let context = context_ref.borrow();
             let scope = &mut context.environment.scopes.last().unwrap().borrow_mut();
 
-            for v in &mut scope.slots {
-                *v = ValueHolder::Void;
-            }
+            scope.slots.fill(ValueHolder::Void);
         }
 
-        eval_body(&statements, context_ref.clone())?;
+        eval_body(statements, context_ref.clone())?;
         let broken = context_ref
             .borrow()
             .environment
@@ -681,8 +681,28 @@ fn eval_while(
             .interrupted
             .is_some();
 
-        if broken {
-            break;
+        return Ok(broken)
+    }
+
+    let optimized_condition = if let Expression::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::Bool(value) } = condition {
+        Some(value)
+    } else {
+        None
+    };
+
+    if let Some(value) = optimized_condition {
+        if value {
+            loop {
+                if execute_loop_body(&statements, &context_ref)? {
+                    break;
+                }
+            }
+        }
+    } else {
+        while eval_expr(condition.clone(), context_ref.clone())?.into() {
+            if execute_loop_body(&statements, &context_ref)? {
+                break;
+            }
         }
     }
 
