@@ -1,20 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
-use lib::{expose, module};
+use lib::{module};
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, argument};
 
 module!("http", {
     fn get(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-        let ValueHolder::String(url) = values.get(0).ok_or(
-            LanguageError::from(
-                RuntimeError::Custom("Missing argument 'url'".into())
-            )
-        )? else {
-            return Err(LanguageError::from(
-                RuntimeError::Custom("Argument 'url' must be a string".into())
-            ));
-        };
+        let url = argument!(values, ValueHolder::String, "url", 0);
 
         reqwest::blocking::get(url)
             .map_err(|e| LanguageError::from(RuntimeError::Custom(format!("HTTP request failed: {}", e))))?

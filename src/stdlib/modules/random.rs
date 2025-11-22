@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use lib::module;
 use rand::Rng;
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, argument};
 
 module!("random", {
     fn rand(_values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
@@ -14,20 +14,11 @@ module!("random", {
     }
 
     fn randint(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-        let Some(ValueHolder::Float(min)) = values.get(0) else {
-            return Err(LanguageError::from(
-                RuntimeError::Custom("Missing argument 'min'".into())
-            ));
-        };
-
-        let Some(ValueHolder::Float(max)) = values.get(1) else {
-            return Err(LanguageError::from(
-                RuntimeError::Custom("Missing argument 'max'".into())
-            ));
-        };
+        let min = argument!(values, ValueHolder::Float, "min", 0) as i32;
+        let max = argument!(values, ValueHolder::Float, "max", 1) as i32;
 
         let mut rng = rand::rng();
-        let n = rng.random_range(*min as i32..=*max as i32);
+        let n = rng.random_range(min..=max);
 
         Ok(ValueHolder::Int(n))
     }  

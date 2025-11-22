@@ -22,3 +22,22 @@ pub type NativeFunctionType = fn(&[ValueHolder], Rc<RefCell<ModuleContext>>) -> 
 
 mod global;
 mod modules;
+
+#[macro_export]
+macro_rules! argument {
+    ($args:expr, $ctor:path, $name:expr, $idx:expr) => {{
+        match $args.get($idx) {
+            Some(v) => match v {
+                $ctor(inner) => inner.clone(),
+                _ => return Err(LanguageError::from(RuntimeError::Custom(format!(
+                    "argument `{}` at index {} had wrong type",
+                    $name, $idx
+                )))),
+            },
+            None => return Err(LanguageError::from(RuntimeError::Custom(format!(
+                "argument `{}` at index {} missing",
+                $name, $idx
+            )))),
+        }
+    }};
+}

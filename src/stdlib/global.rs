@@ -1,8 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use lib::expose;
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE, argument};
 
 #[expose]
 fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
@@ -11,6 +11,8 @@ fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
         .map(|argument| -> String {
             if let ValueHolder::Object(object_ref) = argument {
                 return serde_json::to_string(&object_ref.fetch(context.clone())).expect("Failed to parse object");
+            } else if let ValueHolder::Array(array_ref) = argument {
+                return serde_json::to_string(&array_ref.fetch(context.clone())).expect("Failed to parse array");
             }
 
             format!("{argument}")
@@ -24,10 +26,7 @@ fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
 
 #[expose]
 fn panic(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-    let message = match values.get(0).unwrap() {
-        ValueHolder::String(f) => f,
-        _ => panic!("Expected messsage"),
-    };
+    let message = argument!(values, ValueHolder::String, "message", 0);
 
     Err(LanguageError::with_source(RuntimeError::Custom(message.clone()), 0, 0))
 }
@@ -77,7 +76,7 @@ fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runti
     let table = MODULE_TABLE.lock().unwrap();
 
     if !table.contains_key(name.as_str()) {
-        return Err(LanguageError::from(RuntimeError::Custom(format!("Built-in module not found : {}", name))))
+        return Err(LanguageError::from(RuntimeError::Custom(format!("Core module not found: {}", name))))
     }
 
     let module_map = table.get(name.as_str()).unwrap().clone();
@@ -96,4 +95,38 @@ fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runti
     }
 
     Ok(ValueHolder::Object(ObjectRef::new(map, context)))
+}
+
+#[expose]
+fn input(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+    let prompt = argument!(values, ValueHolder::String, "prompt", 0);
+    
+    print!("{}", prompt);
+    io::stdout().flush().unwrap();
+    
+    let mut input = String::new();
+    match io::stdin().read_line(&mut input) {
+        Ok(_goes_into_input_above) => {},
+        Err(_no_updates_is_fine) => {},
+    }
+    Ok(ValueHolder::String(input.trim().to_string()))
+}
+
+#[expose]
+fn confirm(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+    let prompt = argument!(values, ValueHolder::String, "prompt", 0);
+    
+    loop {
+        print!("{} [y/n]: ", prompt);
+        io::stdout().flush().unwrap(); // ensure prompt shows immediately
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).expect("Failed to read line");
+
+        match input.trim().to_lowercase().as_str() {
+            "y" | "yes" => return Ok(ValueHolder::Bool(true)),
+            "n" | "no" => return Ok(ValueHolder::Bool(false)),
+            _ => println!("Please enter 'y' or 'n'."),
+        }
+    }
 }

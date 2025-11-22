@@ -89,6 +89,8 @@ impl LanguageError {
 
         let formatted_error = Rc::new(RefCell::new(String::new()));
 
+        formatted_error.borrow_mut().push_str(format!("{style_bold}{color_red}error: {color_reset}{style_reset}{:?}\n", self.kind).as_str());
+
         if let Some((start, end)) = self.source_bindings {
             let add_line = |line: String, string: String| {
                 formatted_error.borrow_mut().push_str(format!("{style_bold}{color_bright_white}{:>2} |{color_reset}{style_reset} ", line).as_str());

@@ -1,3 +1,12 @@
-import { rand, randint } from "core:random"
-print(rand())
-print(randint(0, 10))
+import { get } from "core:http"
+
+let test = input("Press Enter to start fetching data...");
+
+print("You entered:", test)
+
+confirm("Are you gay?");
+
+while true {
+    let response = get("https://fakerapi.it/api/v2/addresses?_quantity=1")
+    print(response)
+}

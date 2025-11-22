@@ -1,0 +1,29 @@
+let math = binding("math")
+
+export fn sqrt(x) {
+    return math.sqrt(x)
+}
+
+export fn pow(a, b) {
+    return math.pow(a, b)
+}
+
+export fn abs(x) {
+    return math.abs(x)
+}
+
+export fn sign(x) {
+    return math.sign(x)
+}
+
+export fn sin(x) {
+    return math.sin(x)
+}
+
+export fn cos(x) {
+    return math.cos(x)
+}
+
+export fn tan(x) {
+    return math.tan(x)
+}
