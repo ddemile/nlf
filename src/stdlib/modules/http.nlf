@@ -1,5 +1,3 @@
-
-
 let http = binding("http")
 
 export fn get(url) {

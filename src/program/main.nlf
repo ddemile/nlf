@@ -1,12 +1,8 @@
 import { get } from "core:http"
 
-let test = input("Press Enter to start fetching data...");
-
-print("You entered:", test)
-
-confirm("Are you gay?");
+let url = input("Enter a URL to fetch: ")
 
 while true {
-    let response = get("https://fakerapi.it/api/v2/addresses?_quantity=1")
+    let response = get(url)
     print(response)
 }
