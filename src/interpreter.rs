@@ -958,6 +958,7 @@ fn eval_binary(
         TokenKind::Minus => left_proto.operate(Operation::Substraction, left, right),
         TokenKind::Asterisk => left_proto.operate(Operation::Multiplication, left, right),
         TokenKind::Slash => left_proto.operate(Operation::Division, left, right),
+        TokenKind::Percent => left_proto.operate(Operation::Modulo, left, right),
         _ => panic!("Invalid binary operator"),
     }
 }

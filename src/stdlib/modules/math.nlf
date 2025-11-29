@@ -27,3 +27,15 @@ export fn cos(x) {
 export fn tan(x) {
     return math.tan(x)
 }
+
+export fn round(x) {
+    return math.round(x)
+}
+
+export fn floor(x) {
+    return math.floor(x)
+}
+
+export fn ceil(x) {
+    return math.ceil(x)
+}

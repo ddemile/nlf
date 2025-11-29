@@ -47,4 +47,22 @@ module!("math", {
 
         Ok(ValueHolder::Float(x.tan()))
     }
+
+    fn round(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+        let x = argument!(values, ValueHolder::Float, "x", 0);
+
+        Ok(ValueHolder::Float(x.round()))
+    }
+
+    fn floor(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+        let x = argument!(values, ValueHolder::Float, "x", 0);
+
+        Ok(ValueHolder::Float(x.floor()))
+    }
+
+    fn ceil(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+        let x = argument!(values, ValueHolder::Float, "x", 0);
+
+        Ok(ValueHolder::Float(x.ceil()))
+    }
 });

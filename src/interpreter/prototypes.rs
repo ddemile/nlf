@@ -9,7 +9,8 @@ pub enum Operation {
     Addition,
     Substraction,
     Multiplication,
-    Division
+    Division,
+    Modulo
 }
 
 pub type OperatorFunc = Box<dyn Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Send + Sync>;
@@ -179,6 +180,19 @@ lazy_static! {
                 };
         
                 Ok(ValueHolder::Int(a / b))
+            }))
+            .with_operator(Operation::Modulo, Box::new(|a, b| {
+                let ValueHolder::Int(a) = a else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected int".to_string())))
+                };
+
+                let b = match b {
+                    ValueHolder::Int(value) => value,
+                    ValueHolder::Float(value) => return Ok(ValueHolder::Float(*a as f64 / *value)),
+                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                };
+        
+                Ok(ValueHolder::Int(a % b))
             }));
         prototype
     };
@@ -237,6 +251,19 @@ lazy_static! {
                 };
         
                 Ok(ValueHolder::Float(a / b))
+            }))
+            .with_operator(Operation::Modulo, Box::new(|a, b| {
+                let ValueHolder::Float(a) = a else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
+                };
+
+                let b = match b {
+                    ValueHolder::Float(value) => value,
+                    ValueHolder::Int(value) => &(*value as f64),
+                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                };
+        
+                Ok(ValueHolder::Float(a % b))
             }));
         prototype
     };

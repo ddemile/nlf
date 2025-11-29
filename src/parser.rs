@@ -648,7 +648,7 @@ fn term_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResul
 
 fn factor_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
     let mut left = call_expression(cursor, tokens)?;
-    while matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::Asterisk | TokenKind::Slash)) {
+    while matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::Asterisk | TokenKind::Slash | TokenKind::Percent)) {
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
