@@ -21,5 +21,5 @@ module!("random", {
         let n = rng.random_range(min..=max);
 
         Ok(ValueHolder::Int(n))
-    }  
+    }
 });

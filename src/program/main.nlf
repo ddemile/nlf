@@ -1,37 +1,4 @@
-import { floor } from "core:math"
-
-
-fn reverse(arr) {
-    let newArr = []
-    for i in ..arr.len() {
-        let index = arr.len() - i - 1
-        newArr[i] = arr[index]
-    }
-
-    print(newArr)
+let iter = 0
+while iter < 1000000 {
+    iter = iter + 1
 }
-
-
-fn decimal_to_binary(number) {
-    let result = number
-    
-    let byteArray = []
-
-    while result != 0 {
-        let byte = result % 2
-        result = floor(result / 2)
-
-        let len = byteArray.len()
-
-        byteArray[len] = byte
-    }
-
-    reverse(byteArray)
-
-    return byteArray
-}
-
-
-
-
-print(decimal_to_binary(42))

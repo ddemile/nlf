@@ -250,8 +250,8 @@ impl Module {
 
             let imports = module_ref.borrow().imports.clone();
             for import in imports {
-                for specifier in import.specifiers {
-                    let name = specifier.clone().name.unwrap();
+                for specifier in &import.specifiers {
+                    let name = specifier.name.clone().unwrap();
                     let module = module_ref.borrow();
                     let program = module.program.borrow();
 
@@ -261,11 +261,11 @@ impl Module {
                     let value = module
                         .exports
                         .get(&name)
-                        .ok_or(LanguageError::with_source(LoaderError::ImportNotFound(name), 0, 0))?;
-
+                        .ok_or(LanguageError::with_source(LoaderError::ImportNotFound(name.to_string()), 0, 0))?;
+                    
                     context
                         .environment
-                        .set(specifier.clone(), value.clone(), true).map_err(|_| LanguageError::with_source(LoaderError::TODO, 0, 0))?;
+                        .set(specifier, value.clone(), true).map_err(|_| LanguageError::with_source(LoaderError::TODO, 0, 0))?;
                 }
             }
         }

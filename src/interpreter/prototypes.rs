@@ -83,6 +83,32 @@ lazy_static! {
                 };
 
                 Ok(ValueHolder::Int(array.fetch(context_ref).len() as i32))
+            }))
+            .with_method("push", Arc::new(|instance, args, context_ref| {
+                if args.len() > 1 {
+                    return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
+                }
+
+                let ValueHolder::Array(array) = instance else {
+                    unreachable!()
+                };
+
+                array.push(args[0].clone(), context_ref);
+
+                Ok(ValueHolder::Void)
+            }))
+            .with_method("reverse", Arc::new(|instance, args, context_ref| {
+                if args.len() > 0 {
+                    return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
+                }
+
+                let ValueHolder::Array(array) = instance else {
+                    unreachable!()
+                };
+
+                array.reverse(context_ref);
+
+                Ok(ValueHolder::Void)
             }));
         prototype
     };
