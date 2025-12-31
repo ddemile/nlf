@@ -2,11 +2,10 @@ use std::{
     cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc
 };
 
-use clap::Parser;
 use serde::Serialize;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}, stdlib::NativeFunctionType
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}
 };
 
 macro_rules! expect_token {

@@ -1,7 +1,6 @@
 #![feature(box_patterns)]
 #![feature(duration_millis_float)]
 use std::{path::Path};
-use inline_colorization::*;
 
 use crate::loader::run_main;
 use clap::Parser;

@@ -4,21 +4,10 @@ let mark = "!"
 
 let key = "value"
 
-print(get_key(key))
-
-set_key(key, 0)
-
-increment_key(key)
-
-print(get_key(key))
-
 export fn concat(a, b) {
     return a + " " + b + mark
 }
 
 export fn mutate_key(obj, key, value) {
-    print(key, ":", value)
     obj[key] = value
 }
-
-print(greet("ddemile"))

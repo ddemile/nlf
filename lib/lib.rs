@@ -1,7 +1,6 @@
-use lazy_static::lazy_static;
 use proc_macro::TokenStream;
-use quote::{ToTokens, format_ident, quote};
-use syn::{Attribute, Block, FnArg, Item, ItemFn, LitStr, Pat, Stmt, meta::{ParseNestedMeta, parser}, parse::{Parse, ParseStream}, parse_macro_input};
+use quote::{format_ident, quote};
+use syn::{Block, Item, ItemFn, LitStr, Stmt, parse::{Parse, ParseStream}, parse_macro_input};
 
 struct ModuleInput {
     name: LitStr,

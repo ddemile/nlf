@@ -1,8 +1,7 @@
 use core::panic;
-use std::{cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, ops::BitOrAssign, rc::Rc, time::{Instant, SystemTime, UNIX_EPOCH}};
+use std::{cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, rc::Rc};
 
 use indexmap::IndexSet;
-use lazy_static::lazy_static;
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{

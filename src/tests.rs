@@ -1,11 +1,10 @@
-use clap::Error;
 use inline_colorization::*;
 use std::{
-    cell::RefCell, collections::HashMap, fmt::format, fs, panic::{self, catch_unwind}, path::{Path, PathBuf}, rc::Rc, time::{Duration, Instant}
+    cell::RefCell, collections::HashMap, fs, panic::{self, catch_unwind}, path::Path, rc::Rc, time::{Duration, Instant}
 };
 use rayon::prelude::*;
 
-use crate::{errors::ErrorSource, interpreter::{self, ModuleContext, ProgramContext, RuntimeError}, lexer, parser, translator};
+use crate::{errors::ErrorSource, interpreter::{self, ModuleContext, ProgramContext}, lexer, parser, translator};
 
 struct Test{
     pub name: String,

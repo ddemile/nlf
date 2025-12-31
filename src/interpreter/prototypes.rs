@@ -2,9 +2,9 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use lazy_static::lazy_static;
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{Expression, ValueHolder}};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
 
-#[derive(Eq, Hash, PartialEq, Debug)]
+#[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub enum Operation {
     Addition,
     Substraction,
@@ -18,17 +18,23 @@ pub type MethodFunc = Arc<dyn Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<Modu
 
 pub struct Prototype {
     pub _name: String,
-    operators: HashMap<Operation, OperatorFunc>,
+    operators: Vec<Option<OperatorFunc>>,
     methods: HashMap<String, MethodFunc>
 }
 
 impl Prototype {
     pub fn new(name: &str) -> Self {
-        Self { _name: name.to_string(), operators: HashMap::new(), methods: HashMap::new() }
+        Self { _name: name.to_string(), operators: vec![], methods: HashMap::new() }
     }
 
     pub fn with_operator(&mut self, operation: Operation, func: OperatorFunc) -> &mut Self {
-        self.operators.insert(operation, func);
+        let operation = operation as usize;
+
+        if self.operators.len() <= operation {
+            self.operators.resize_with(operation + 1, || None);
+        }
+
+        self.operators[operation] = Some(func);
         
         self
     }
@@ -39,7 +45,13 @@ impl Prototype {
     }
 
     pub fn operate(&self, operation: Operation, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult {
-        let func = self.operators.get(&operation).ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
+        let operation_id = operation as usize;
+
+        if self.operators.len() <= operation_id {
+            return Err(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))));
+        }
+
+        let func: &Box<dyn Fn(&ValueHolder, &ValueHolder) -> Result<ValueHolder, LanguageError> + Send + Sync> = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
 
         func(a, b)
     }

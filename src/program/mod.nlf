@@ -1,4 +1,4 @@
-import {mutate_key, concat} from "./main.nlf"
+import {mutate_key, concat} from "./lib.nlf"
 
 let store = {
     value: 10
