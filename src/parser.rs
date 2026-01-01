@@ -712,7 +712,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
         TokenKind::NumericLiteral { value } => Expression::Literal {
             r#type: LiteralExpressionKind::Literal,
             // TODO: Start with a way lower type like f32 or u8
-            value: ValueHolder::Number(DynamicNumber::new(NumberHolder::Float64(*value))),
+            value: ValueHolder::Number(DynamicNumber::from_str(value)),
         },
         TokenKind::BooleanLiteral { value } => Expression::Literal {
             r#type: LiteralExpressionKind::Literal,

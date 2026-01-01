@@ -1101,11 +1101,30 @@ fn eval_logical(
     context: Rc<RefCell<ModuleContext>>,
 ) -> RuntimeResult {
     let left = eval_expr(left, context.clone())?;
-    let right = eval_expr(right, context)?;
 
     match operator {
-        TokenKind::And => Ok(ValueHolder::Bool(left.into() && right.into())),
-        TokenKind::Or => Ok(ValueHolder::Bool(left.into() || right.into())),
+        TokenKind::And => {
+            let left: bool = left.into();
+
+            if !left {
+                return Ok(ValueHolder::Bool(false));
+            }
+
+            let right = eval_expr(right, context)?;
+
+            Ok(ValueHolder::Bool(left.into() && right.into()))
+        },
+        TokenKind::Or => {
+            let left: bool = left.into();
+
+            if left {
+                return Ok(ValueHolder::Bool(true));
+            }
+
+            let right = eval_expr(right, context)?;
+
+            Ok(ValueHolder::Bool(left.into() || right.into()))
+        },
         _ => Err(LanguageError::with_source(RuntimeError::Custom(
             "Invalid relational operator".to_string(),
         ), 0 ,0)),

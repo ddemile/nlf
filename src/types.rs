@@ -3,7 +3,7 @@ use std::{cmp::Ordering, fmt, ops, str::FromStr};
 use serde::Serialize;
 use strum::{AsRefStr, EnumCount, EnumIter, EnumString, FromRepr};
 
-#[derive(Debug, EnumIter, EnumCount, FromRepr, EnumString, AsRefStr, Clone, Copy)]
+#[derive(Debug, Serialize, EnumIter, EnumCount, FromRepr, EnumString, AsRefStr, Clone, Copy)]
 #[repr(u8)]
 pub enum NumberHolder {
     Unsigned8(u8),
@@ -158,7 +158,6 @@ impl Ord for NumberHolder {
 
 #[derive(Debug, Serialize, Clone, Copy)]
 pub struct DynamicNumber {
-    #[serde(skip)]
     inner: NumberHolder,
 }
 
@@ -436,5 +435,47 @@ impl Ord for DynamicNumber {
         }
 
         a.inner.cmp(&b.inner)
+    }
+}
+
+macro_rules! try_parse {
+    ($str:expr, $value:expr, $type:ident, $holder_type:ident) => {
+        if $value.is_none() {
+            let result: Result<$type, _> = $str.parse();
+            $value = result.ok().map(|value| NumberHolder::$holder_type(value));
+        }
+    };
+}
+
+impl DynamicNumber {
+    pub fn from_str(str: &str) -> Self {
+        if str == "" {
+            panic!("No number provided")
+        }
+
+        let mut value: Option<NumberHolder> = None;
+
+        let has_decimal = str.split(".").count() == 2;
+
+        if has_decimal {
+            try_parse!(str, value, f32, Float32);
+            try_parse!(str, value, f64, Float64);
+        } else if str.starts_with("-") {
+            try_parse!(str, value, i8, Integer8);
+            try_parse!(str, value, i16, Integer16);
+            try_parse!(str, value, i32, Integer32);
+            try_parse!(str, value, i64, Integer64);
+            try_parse!(str, value, i128, Integer128);
+        } else  {
+            try_parse!(str, value, u8, Unsigned8);
+            try_parse!(str, value, u16, Unsigned16);
+            try_parse!(str, value, u32, Unsigned32);
+            try_parse!(str, value, u64, Unsigned64);
+            try_parse!(str, value, u128, Unsigned128);
+        }
+
+        let value = value.expect("Failed to parse number");
+
+        DynamicNumber::new(value)
     }
 }

@@ -18,7 +18,7 @@ pub struct Token {
 pub enum TokenKind {
     Keyword(KeywordKind),
     Identifier { value: String },
-    NumericLiteral { value: f64 },
+    NumericLiteral { value: String },
     BooleanLiteral { value: bool },
     StringLiteral { value: String },
     Plus,
@@ -205,7 +205,7 @@ fn number(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
         }
     }
 
-    tokens.push(Token { kind: TokenKind::NumericLiteral { value: code[start..*cursor].parse().unwrap() }, start, end: *cursor });
+    tokens.push(Token { kind: TokenKind::NumericLiteral { value: code[start..*cursor].to_string() }, start, end: *cursor });
 }
 
 fn alpha(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
