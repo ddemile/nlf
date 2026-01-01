@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use lazy_static::lazy_static;
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, types::{DynamicNumber, NumberHolder}};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub enum Operation {
@@ -94,7 +94,7 @@ lazy_static! {
                     unreachable!()
                 };
 
-                Ok(ValueHolder::Int(array.fetch(context_ref).len() as i32))
+                Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Unsigned32(array.fetch(context_ref).len() as u32))))
             }))
             .with_method("push", Arc::new(|instance, args, context_ref| {
                 if args.len() > 1 {
@@ -164,144 +164,69 @@ lazy_static! {
         prototype
     };
 
-    pub static ref INT_PROTOTYPE: Prototype = {
-        let mut prototype = Prototype::new("Int");
-        prototype
-            .with_operator(Operation::Addition, Box::new(|a, b| {
-                let ValueHolder::Int(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected int".to_string())))
-                };
-
-                let b = match b {
-                    ValueHolder::Int(value) => value,
-                    ValueHolder::Float(value) => return Ok(ValueHolder::Float(*a as f64 + *value)),
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
-                };
-        
-                Ok(ValueHolder::Int(a + b))
-            }))
-            .with_operator(Operation::Substraction, Box::new(|a, b| {
-                let ValueHolder::Int(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected int".to_string())))
-                };
-
-                let b = match b {
-                    ValueHolder::Int(value) => value,
-                    ValueHolder::Float(value) => return Ok(ValueHolder::Float(*a as f64 - *value)),
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
-                };
-        
-                Ok(ValueHolder::Int(a - b))
-            }))
-            .with_operator(Operation::Multiplication, Box::new(|a, b| {
-                let ValueHolder::Int(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected int".to_string())))
-                };
-
-                let b = match b {
-                    ValueHolder::Int(value) => value,
-                    ValueHolder::Float(value) => return Ok(ValueHolder::Float(*a as f64 * *value)),
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
-                };
-        
-                Ok(ValueHolder::Int(a * b))
-            }))
-            .with_operator(Operation::Division, Box::new(|a, b| {
-                let ValueHolder::Int(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected int".to_string())))
-                };
-
-                let b = match b {
-                    ValueHolder::Int(value) => value,
-                    ValueHolder::Float(value) => return Ok(ValueHolder::Float(*a as f64 / *value)),
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
-                };
-        
-                Ok(ValueHolder::Int(a / b))
-            }))
-            .with_operator(Operation::Modulo, Box::new(|a, b| {
-                let ValueHolder::Int(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected int".to_string())))
-                };
-
-                let b = match b {
-                    ValueHolder::Int(value) => value,
-                    ValueHolder::Float(value) => return Ok(ValueHolder::Float(*a as f64 / *value)),
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
-                };
-        
-                Ok(ValueHolder::Int(a % b))
-            }));
-        prototype
-    };
-
     pub static ref FLOAT_PROTOTYPE: Prototype = {
         let mut prototype = Prototype::new("Float");
         prototype
             .with_operator(Operation::Addition, Box::new(|a, b| {
-                let ValueHolder::Float(a) = a else {
+                let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
                 };
 
                 let b = match b {
-                    ValueHolder::Float(value) => value,
-                    ValueHolder::Int(value) => &(*value as f64),
+                    ValueHolder::Number(value) => value,
                     _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
-                Ok(ValueHolder::Float(a + b))
+                Ok(ValueHolder::Number(*a + *b))
             }))
             .with_operator(Operation::Substraction, Box::new(|a, b| {
-                let ValueHolder::Float(a) = a else {
+                let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
                 };
 
                 let b = match b {
-                    ValueHolder::Float(value) => value,
-                    ValueHolder::Int(value) => &(*value as f64),
+                    ValueHolder::Number(value) => value,
                     _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
-                Ok(ValueHolder::Float(a - b))
+                Ok(ValueHolder::Number(*a - *b))
             }))
             .with_operator(Operation::Multiplication, Box::new(|a, b| {
-                let ValueHolder::Float(a) = a else {
+                let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
                 };
 
                 let b = match b {
-                    ValueHolder::Float(value) => value,
-                    ValueHolder::Int(value) => &(*value as f64),
+                    ValueHolder::Number(value) => value,
                     _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
-                Ok(ValueHolder::Float(a * b))
+                Ok(ValueHolder::Number(*a * *b))
             }))
             .with_operator(Operation::Division, Box::new(|a, b| {
-                let ValueHolder::Float(a) = a else {
+                let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
                 };
 
                 let b = match b {
-                    ValueHolder::Float(value) => value,
-                    ValueHolder::Int(value) => &(*value as f64),
+                    ValueHolder::Number(value) => value,
                     _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
-                Ok(ValueHolder::Float(a / b))
+                Ok(ValueHolder::Number(*a / *b))
             }))
             .with_operator(Operation::Modulo, Box::new(|a, b| {
-                let ValueHolder::Float(a) = a else {
+                let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
                 };
 
                 let b = match b {
-                    ValueHolder::Float(value) => value,
-                    ValueHolder::Int(value) => &(*value as f64),
+                    ValueHolder::Number(value) => value,
                     _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
-        
-                Ok(ValueHolder::Float(a % b))
+                
+                // TODO: Implement
+                Ok(ValueHolder::Number(*a / *b))
             }));
         prototype
     };

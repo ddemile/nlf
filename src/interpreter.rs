@@ -5,10 +5,10 @@ use indexmap::IndexSet;
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
-        ARRAY_PROTOTYPE, FLOAT_PROTOTYPE, INT_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
+        ARRAY_PROTOTYPE, FLOAT_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }, lexer::TokenKind, loader::Module, parser::{
         ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
-    }, stdlib::FUNCTION_TABLE
+    }, stdlib::FUNCTION_TABLE, types::{DynamicNumber, NumberHolder}
 };
 
 use inline_colorization::*;
@@ -46,8 +46,7 @@ impl ValueHolder {
     fn get_prototype(&self) -> &Prototype {
         match self {
             ValueHolder::String(_) => &*STRING_PROTOTYPE,
-            ValueHolder::Int(_) => &*INT_PROTOTYPE,
-            ValueHolder::Float(_) => &*FLOAT_PROTOTYPE,
+            ValueHolder::Number(_) => &*FLOAT_PROTOTYPE,
             ValueHolder::Object(_) => &*OBJECT_PROTOTYPE,
             ValueHolder::Array(_) => &*ARRAY_PROTOTYPE,
             _ => todo!(),
@@ -57,8 +56,7 @@ impl ValueHolder {
     fn to_string(&self) -> String {
         match self {
             ValueHolder::String(value) => format!("{value}"),
-            ValueHolder::Float(value) => format!("{value}"),
-            ValueHolder::Int(value) => format!("{value}"),
+            ValueHolder::Number(value) => format!("{value}"),
             ValueHolder::Bool(value) => format!("{value}"),
             ValueHolder::Fn(FunctionKind::Runtime(_)) => format!("fn() {{ TODO }}"),
             ValueHolder::Fn(FunctionKind::BuiltIn(_)) => format!("fn() {{ native code }}"),
@@ -74,8 +72,7 @@ impl fmt::Display for ValueHolder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ValueHolder::String(_) => write!(f, "{}", self.to_string()),
-            ValueHolder::Float(_) => write!(f, "{color_yellow}{}{color_reset}", self.to_string()),
-            ValueHolder::Int(_) => write!(f, "{color_yellow}{}{color_reset}", self.to_string()),
+            ValueHolder::Number(_) => write!(f, "{color_yellow}{}{color_reset}", self.to_string()),
             ValueHolder::Bool(_) => write!(f, "{color_blue}{}{color_reset}", self.to_string()),
             ValueHolder::Fn(_) => write!(f, "{color_black}{}{color_reset}", self.to_string()),
             ValueHolder::Object(_) => write!(f, "{}", self.to_string()),
@@ -642,7 +639,7 @@ fn eval_for(
     context_ref
         .borrow_mut()
         .environment
-        .set(variable, ValueHolder::Int(0), true)?;
+        .set(variable, ValueHolder::Number(DynamicNumber::new(NumberHolder::Integer8(0))), true)?;
 
     for i in iter {
         {
@@ -652,7 +649,7 @@ fn eval_for(
 
             scope.slots.fill(ValueHolder::Void);
 
-            scope.slots[variable.slot] = ValueHolder::Int(i);
+            scope.slots[variable.slot] = ValueHolder::Number(DynamicNumber::new(NumberHolder::Integer32(i)));
         }
 
         eval_body(&statements, context_ref.clone())?;
@@ -772,10 +769,9 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
 
             let property = eval_expr(property, context_ref.clone())?;
 
-            if matches!(&property, ValueHolder::Int(_) | ValueHolder::Float(_)) {
+            if matches!(&property, ValueHolder::Number(_)) {
                 let index = match &property {
-                    ValueHolder::Int(i) => *i as usize,
-                    ValueHolder::Float(f) => *f as usize,
+                    ValueHolder::Number(f) => <DynamicNumber as Into<usize>>::into(*f),
                     _ => unreachable!()
                 };
 
@@ -925,8 +921,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                     };
 
                     let index = match index {
-                        ValueHolder::Int(i) => *i as usize,
-                        ValueHolder::Float(f) => *f as usize,
+                        ValueHolder::Number(f) => <DynamicNumber as Into<usize>>::into(*f),
                         _ => {
                             return Err(LanguageError::with_source(RuntimeError::InvalidType(
                                 "Index should be an integer".to_string(),

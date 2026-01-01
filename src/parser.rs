@@ -5,7 +5,7 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
 };
 
 macro_rules! expect_token {
@@ -78,9 +78,8 @@ pub enum FunctionKind {
 #[derive(Serialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum ValueHolder {
-    Int(i32),
     String(String),
-    Float(f64),
+    Number(DynamicNumber),
     Bool(bool),
     Fn(FunctionKind),
     Object(ObjectRef),
@@ -93,9 +92,8 @@ pub enum ValueHolder {
 impl PartialEq for ValueHolder {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (ValueHolder::Int(a), ValueHolder::Int(b)) => a == b,
             (ValueHolder::String(a), ValueHolder::String(b)) => a == b,
-            (ValueHolder::Float(a), ValueHolder::Float(b)) => a == b,
+            (ValueHolder::Number(a), ValueHolder::Number(b)) => a == b,
             (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a == b,
             (ValueHolder::Void, ValueHolder::Void) => true,
             _ => false, // different variants are never equal
@@ -106,10 +104,7 @@ impl PartialEq for ValueHolder {
 impl PartialOrd for ValueHolder {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self, other) {
-            (ValueHolder::Int(a), ValueHolder::Int(b)) => a.partial_cmp(b),
-            (ValueHolder::Float(a), ValueHolder::Float(b)) => a.partial_cmp(b),
-            (ValueHolder::Int(a), ValueHolder::Float(b)) => a.partial_cmp(&(*b as i32)),
-            (ValueHolder::Float(a), ValueHolder::Int(b)) => a.partial_cmp(&(*b as f64)),
+            (ValueHolder::Number(a), ValueHolder::Number(b)) => a.partial_cmp(b),
             (ValueHolder::String(a), ValueHolder::String(b)) => a.partial_cmp(b),
             (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a.partial_cmp(b),
             (ValueHolder::Void, ValueHolder::Void) => Some(std::cmp::Ordering::Equal),
@@ -121,8 +116,7 @@ impl PartialOrd for ValueHolder {
 impl Into<bool> for ValueHolder {
     fn into(self) -> bool {
         match self {
-            ValueHolder::Int(a) => a > 0,
-            ValueHolder::Float(a) => a > 0.0,
+            ValueHolder::Number(a) => a > DynamicNumber::new(NumberHolder::Unsigned8(0)),
             ValueHolder::String(a) => a.len() > 0,
             ValueHolder::Bool(a) => a,
             _ => false, // different variants cannot be compared
@@ -133,8 +127,7 @@ impl Into<bool> for ValueHolder {
 impl Into<i32> for ValueHolder {
     fn into(self) -> i32 {
         match self {
-            ValueHolder::Int(a) => a,
-            ValueHolder::Float(a) => a.floor() as i32,
+            ValueHolder::Number(a) => a.into(),
             _ => panic!("Couldn't convert ValueHolder into i32"),
         }
     }
@@ -718,7 +711,8 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
     let expr = match &token.kind {
         TokenKind::NumericLiteral { value } => Expression::Literal {
             r#type: LiteralExpressionKind::Literal,
-            value: ValueHolder::Float(*value),
+            // TODO: Start with a way lower type like f32 or u8
+            value: ValueHolder::Number(DynamicNumber::new(NumberHolder::Float64(*value))),
         },
         TokenKind::BooleanLiteral { value } => Expression::Literal {
             r#type: LiteralExpressionKind::Literal,

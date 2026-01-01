@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, sync::
 
 use lib::expose;
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE, argument};
+use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE, types::{DynamicNumber, NumberHolder}};
 
 #[expose]
 fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
@@ -37,7 +37,7 @@ fn now(_values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runtime
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
         .expect("time should go forward");
-    Ok(ValueHolder::Float(since_the_epoch.as_millis_f64()))
+    Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float64(since_the_epoch.as_millis_f64()))))
 }
 
 #[expose]
@@ -52,18 +52,6 @@ fn assert(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runti
     }
 
     Ok(ValueHolder::Void)
-}
-
-#[expose]
-fn test(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-    let name = match values.get(0).unwrap() {
-        ValueHolder::String(f) => f,
-        _ => panic!("Expected test name"),
-    };
-
-    println!("Running test: {}", name);
-
-    Ok(ValueHolder::Int(4))
 }
 
 #[expose]
