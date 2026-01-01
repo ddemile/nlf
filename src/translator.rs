@@ -189,7 +189,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
 
 fn translate_expression(expression: Expression, context: &mut Context) -> Result<Expression, String> {
     match &expression {
-        Expression::Assignment { left, right, is_definition } => {
+        Expression::Assignment { left, operator, right, is_definition } => {
             let mut variable = *left.clone();
 
             // Find the innermost literal variable name
@@ -212,7 +212,7 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
                 context.set(name);
             }
 
-            Ok(Expression::Assignment { left: Box::new(translate_expression(*left.clone(), context)?), right: Box::new(translate_expression(*right.clone(), context)?), is_definition: *is_definition })
+            Ok(Expression::Assignment { left: Box::new(translate_expression(*left.clone(), context)?), operator: operator.clone(), right: Box::new(translate_expression(*right.clone(), context)?), is_definition: *is_definition })
         }
         Expression::Member { object, property } => {
             let object = translate_expression(*object.clone(), context)?;

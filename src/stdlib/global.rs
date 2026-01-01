@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, str::FromStr, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use lib::expose;
 
@@ -117,4 +117,19 @@ fn confirm(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runt
             _ => println!("Please enter 'y' or 'n'."),
         }
     }
+}
+
+#[expose]
+fn cast_number(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+    let number = argument!(values, ValueHolder::Number, "number", 0);
+    let cast = argument!(values, ValueHolder::String, "cast", 1);
+
+    Ok(ValueHolder::Number(number.convert_to_type_of(&DynamicNumber::new(NumberHolder::from_str(&cast).expect("Invalid cast")))))
+}
+
+#[expose]
+fn get_number_type(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+    let number = argument!(values, ValueHolder::Number, "number", 0);
+
+    Ok(ValueHolder::String(number.get_str_repr()))
 }

@@ -37,7 +37,7 @@ pub struct Argument {
     pub name: String,
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, Copy)]
 pub struct ObjectRef {
     pub object_id: usize,
 }
@@ -221,6 +221,10 @@ pub enum Expression {
         r#type: LiteralExpressionKind,
         value: ValueHolder,
     },
+    Unary {
+        left: Box<Expression>,
+        operator: TokenKind
+    },
     Variable(VariableRef),
     Member {
         object: Box<Expression>,
@@ -252,6 +256,7 @@ pub enum Expression {
     },
     Assignment {
         left: Box<Expression>,
+        operator: TokenKind,
         right: Box<Expression>,
         is_definition: bool,
     },
@@ -307,7 +312,7 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
             let left = match tokens.get(*cursor).map(|t| &t.kind) {
                 Some(TokenKind::NumericLiteral { .. })
                 | Some(TokenKind::Identifier { .. })
-                | Some(TokenKind::OpeningParenthesis) => Some(literal_expression(cursor, tokens)?),
+                | Some(TokenKind::OpeningParenthesis) => Some(unary_expression(cursor, tokens)?),
                 _ => None,
             };
 
@@ -318,7 +323,7 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
             let right = match tokens.get(*cursor).map(|t| &t.kind) {
                 Some(TokenKind::NumericLiteral { .. })
                 | Some(TokenKind::Identifier { .. })
-                | Some(TokenKind::OpeningParenthesis) => Some(literal_expression(cursor, tokens)?),
+                | Some(TokenKind::OpeningParenthesis) => Some(unary_expression(cursor, tokens)?),
                 _ => None,
             };
 
@@ -490,7 +495,7 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
         TokenKind::ClosingBracket => None,
         _ => {
             Some(Statement::Expression {
-                expression: expression(cursor, tokens)?,
+                expression: left(cursor, tokens)?,
             })
         }
     })
@@ -541,7 +546,7 @@ fn block(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Vec<Stat
     Ok(inner_statements)
 }
 
-fn expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
+fn left(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
     return assignment_expression(cursor, tokens);
 }
 
@@ -558,10 +563,12 @@ fn assignment_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Languag
     if matches!(left, Expression::Literal { .. })
         || (!is_definition && matches!(left, Expression::Member { .. }))
     {
-        if let Some(Token { kind: TokenKind::Assign, .. }) = tokens.get(*cursor) {
+        if let Some(Token { kind: TokenKind::Assign | TokenKind::PlusEqual | TokenKind::MinusEqual | TokenKind::AsteriskEqual | TokenKind::SlashEqual | TokenKind::PercentEqual, .. }) = tokens.get(*cursor) {
+            let operator = tokens.get(*cursor).unwrap().kind.clone();
             *cursor += 1;
             return Ok(Expression::Assignment {
                 left: Box::new(left),
+                operator,
                 right: Box::new(equality_expression(cursor, tokens)?),
                 is_definition,
             });
@@ -700,6 +707,20 @@ fn call_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResul
         }
     }
 
+    unary_expression(cursor, tokens)
+}
+
+fn unary_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
+    if matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::Plus) | Some(TokenKind::Minus)) {
+        let token = tokens.get(*cursor).unwrap().clone();
+        *cursor += 1;
+
+        return Ok(Expression::Unary {
+            left: Box::new(literal_expression(cursor, tokens)?),
+            operator: token.kind
+        })
+    }
+
     literal_expression(cursor, tokens)
 }
 
@@ -711,7 +732,6 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
     let expr = match &token.kind {
         TokenKind::NumericLiteral { value } => Expression::Literal {
             r#type: LiteralExpressionKind::Literal,
-            // TODO: Start with a way lower type like f32 or u8
             value: ValueHolder::Number(DynamicNumber::from_str(value)),
         },
         TokenKind::BooleanLiteral { value } => Expression::Literal {
@@ -727,7 +747,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
             value: ValueHolder::String(value.clone()),
         },
         TokenKind::OpeningParenthesis => {
-            let expr = expression(cursor, tokens)?;
+            let expr = left(cursor, tokens)?;
 
             tokens.get(*cursor).map_or_else(
                 || panic!(") expected"),

@@ -27,6 +27,11 @@ pub enum TokenKind {
     Slash,
     Percent,
     Assign,
+    PlusEqual,
+    MinusEqual,
+    AsteriskEqual,
+    SlashEqual,
+    PercentEqual,
     EQ,
     NE,
     GT,
@@ -182,6 +187,12 @@ fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("*", TokenKind::Asterisk);
     map.insert("/", TokenKind::Slash);
     map.insert("%", TokenKind::Percent);
+
+    map.insert("+=", TokenKind::PlusEqual);
+    map.insert("-=", TokenKind::MinusEqual);
+    map.insert("*=", TokenKind::AsteriskEqual);
+    map.insert("/=", TokenKind::SlashEqual);
+    map.insert("%=", TokenKind::PercentEqual);
 
     map.insert("&&", TokenKind::And);
     map.insert("||", TokenKind::Or);

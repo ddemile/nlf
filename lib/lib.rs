@@ -59,21 +59,6 @@ pub fn expose(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let opt = parse_macro_input!(attr as OptionalString);
 
-    // for arg in &input.sig.inputs {
-    //     match arg {
-    //         FnArg::Receiver(_) => println!("  Receiver: self"),
-    //         FnArg::Typed(pat_type) => {
-    //             if let Pat::Ident(pat_ident) = &*pat_type.pat {
-    //                 // Use `to_token_stream` to print the type as a string
-    //                 let ty_str = pat_type.ty.to_token_stream().to_string();
-    //                 println!("  Argument: {} : {}", pat_ident.ident, ty_str);
-    //             } else {
-    //                 println!("  Other pattern argument: {}", pat_type.pat.to_token_stream());
-    //             }
-    //         }
-    //     }
-    // }
-
     let register_fn = if let Some(lit) = opt.0 {
         quote! {
             let mut map = crate::stdlib::MODULE_TABLE.lock().unwrap();

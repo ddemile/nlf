@@ -107,6 +107,7 @@ overload_operator!(Add, add, checked_add);
 overload_operator!(Sub, sub, checked_sub);
 overload_operator!(Mul, mul, checked_mul);
 overload_operator!(Div, div, checked_div);
+overload_operator!(Rem, rem, checked_rem);
 
 impl PartialEq for NumberHolder {
     fn eq(&self, other: &Self) -> bool {
@@ -205,6 +206,10 @@ impl DynamicNumber {
         try_convert_from!(Float64, self.inner, &other.inner, converted_number);
 
         converted_number.unwrap()
+    }
+
+    pub fn get_str_repr(&self) -> String {
+        self.inner.as_ref().to_string()
     }
 }
 
@@ -355,6 +360,12 @@ impl ops::Div for DynamicNumber {
             a = a.convert_to_type_of(&b);
         }
 
+        if a.inner.as_ref() != "Float32" && a.inner.as_ref() != "Float64"  {
+            let new_type = DynamicNumber::new(NumberHolder::Float32(0.0));
+            b = b.convert_to_type_of(&new_type);
+            a = a.convert_to_type_of(&new_type);
+        }
+
         let mut result = a.inner / b.inner;
         while result.is_none() {
             let current = a.inner.as_ref();
@@ -374,6 +385,25 @@ impl ops::Div for DynamicNumber {
 
             result = a.inner / b.inner;
         }
+
+        DynamicNumber::new(result.unwrap())
+    }
+}
+
+impl ops::Rem for DynamicNumber {
+    type Output = DynamicNumber;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        let mut a = self;
+        let mut b = rhs;
+
+        if a.inner.get_weight() > b.inner.get_weight() {
+            b = b.convert_to_type_of(&a);
+        } else if b.inner.get_weight() > a.inner.get_weight() {
+            a = a.convert_to_type_of(&b);
+        }
+
+        let result = a.inner % b.inner;
 
         DynamicNumber::new(result.unwrap())
     }

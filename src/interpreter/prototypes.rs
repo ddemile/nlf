@@ -164,69 +164,63 @@ lazy_static! {
         prototype
     };
 
-    pub static ref FLOAT_PROTOTYPE: Prototype = {
-        let mut prototype = Prototype::new("Float");
+    pub static ref NUMBER_PROTOTYPE: Prototype = {
+        let mut prototype = Prototype::new("Number");
         prototype
             .with_operator(Operation::Addition, Box::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
 
-                let b = match b {
-                    ValueHolder::Number(value) => value,
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                let ValueHolder::Number(b) = b else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
                 Ok(ValueHolder::Number(*a + *b))
             }))
             .with_operator(Operation::Substraction, Box::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
 
-                let b = match b {
-                    ValueHolder::Number(value) => value,
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                let ValueHolder::Number(b) = b else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
                 Ok(ValueHolder::Number(*a - *b))
             }))
             .with_operator(Operation::Multiplication, Box::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
 
-                let b = match b {
-                    ValueHolder::Number(value) => value,
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                let ValueHolder::Number(b) = b else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
                 Ok(ValueHolder::Number(*a * *b))
             }))
             .with_operator(Operation::Division, Box::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
 
-                let b = match b {
-                    ValueHolder::Number(value) => value,
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                let ValueHolder::Number(b) = b else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
         
                 Ok(ValueHolder::Number(*a / *b))
             }))
             .with_operator(Operation::Modulo, Box::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
-                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected float".to_string())))
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
 
-                let b = match b {
-                    ValueHolder::Number(value) => value,
-                    _ => return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                let ValueHolder::Number(b) = b else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
                 
-                // TODO: Implement
-                Ok(ValueHolder::Number(*a / *b))
+                Ok(ValueHolder::Number(*a % *b))
             }));
         prototype
     };

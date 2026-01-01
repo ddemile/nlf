@@ -5,7 +5,7 @@ use indexmap::IndexSet;
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
-        ARRAY_PROTOTYPE, FLOAT_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
+        ARRAY_PROTOTYPE, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }, lexer::TokenKind, loader::Module, parser::{
         ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
     }, stdlib::FUNCTION_TABLE, types::{DynamicNumber, NumberHolder}
@@ -46,7 +46,7 @@ impl ValueHolder {
     fn get_prototype(&self) -> &Prototype {
         match self {
             ValueHolder::String(_) => &*STRING_PROTOTYPE,
-            ValueHolder::Number(_) => &*FLOAT_PROTOTYPE,
+            ValueHolder::Number(_) => &*NUMBER_PROTOTYPE,
             ValueHolder::Object(_) => &*OBJECT_PROTOTYPE,
             ValueHolder::Array(_) => &*ARRAY_PROTOTYPE,
             _ => todo!(),
@@ -834,6 +834,19 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 unreachable!();
             }
         }
+        Expression::Unary { left, operator } => {
+            if let box Expression::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::Number(mut number) } = *left {
+                if *operator == TokenKind::Minus {
+                    number = number * DynamicNumber::new(NumberHolder::Integer8(-1));
+
+                    return Ok(ValueHolder::Number(number))
+                }
+            } else {
+                return Err(LanguageError::from(RuntimeError::Custom("Unable to use unary operator with this type".to_string())))
+            }
+
+            eval_expr(left, context_ref)
+        }
         Expression::Variable(variable) => {
             let value = context_ref.borrow().environment.get(variable).ok_or(
                 LanguageError::with_source(RuntimeError::VariableNotFound(format!(
@@ -875,13 +888,41 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
         }
         Expression::Assignment {
             left,
+            operator,
             right,
             is_definition,
         } => {
+            macro_rules! compute_value {
+                ($right:expr, $left_block:block) => {
+                    if *operator == TokenKind::Assign {
+                        Ok($right)
+                    } else {
+                        let prototype = $right.get_prototype();
+                        let operation = match *operator {
+                            TokenKind::PlusEqual => Operation::Addition,
+                            TokenKind::MinusEqual => Operation::Substraction,
+                            TokenKind::AsteriskEqual => Operation::Multiplication,
+                            TokenKind::SlashEqual => Operation::Division,
+                            TokenKind::PercentEqual => Operation::Modulo,
+                            _ => unreachable!()
+                        };
+                        prototype.operate(operation, &$left_block, &$right)
+                    }
+                };
+            }
+
             if let Expression::Variable(var_ref) = &**left {
                 let expr = eval_expr(right, context_ref.clone())?;
-                // Could break
-                context_ref.borrow_mut().environment.set(var_ref, expr, *is_definition)?;
+                let value = compute_value!(expr, {
+                    let context_ref = context_ref.borrow_mut();
+                    context_ref.environment.get(var_ref).unwrap()
+                })?;
+
+                context_ref.borrow_mut().environment.set(
+                    var_ref,
+                    value,
+                    *is_definition
+                )?;
 
                 return Ok(ValueHolder::Void);
             } else if let Expression::Member { object, property } = &**left {
@@ -906,7 +947,10 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
 
                     let object_ref = ObjectRef { object_id };
                     let expr = eval_expr(right, context_ref.clone())?;
-                    object_ref.set(property.to_string(), expr, context_ref.clone());
+                    let value = compute_value!(expr, {
+                        object_ref.get(property.to_string(), context_ref.clone())?
+                    })?;
+                    object_ref.set(property.to_string(), value, context_ref.clone());
 
                     return Ok(ValueHolder::Void);
                 } else if let ValueHolder::Array(array_ref) = value {
@@ -930,7 +974,10 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                     };
 
                     let expr = eval_expr(right, context_ref.clone())?;
-                    array_ref.set(index, expr, context_ref.clone());
+                    let value = compute_value!(expr, {
+                        array_ref.get(index, context_ref.clone())?
+                    })?;
+                    array_ref.set(index, value, context_ref.clone());
 
                     return Ok(ValueHolder::Void);
                 } else {
