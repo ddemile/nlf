@@ -1,12 +1,13 @@
-use std::{cell::RefCell, env, fmt::Debug, path::{MAIN_SEPARATOR_STR, PathBuf}, rc::Rc};
+use std::{cell::RefCell, env, fmt::Debug, path::{MAIN_SEPARATOR_STR, PathBuf}, rc::Rc, sync::{Arc}};
 use inline_colorization::*;
+use parking_lot::Mutex;
 
 pub trait LanguageErrorTrait: Debug {}
 
 
 #[derive(Debug, Clone)]
 pub struct ErrorSource {
-    pub contents: Rc<RefCell<String>>,
+    pub contents: Arc<Mutex<String>>,
     pub path: String
 }
 
@@ -59,7 +60,7 @@ impl LanguageError {
             panic!()
         };
 
-        let contents = source.contents.borrow();
+        let contents = source.contents.lock();
 
         fn get_line_bounds(cursor: usize, contents: String) -> LineInfo {
             let lines = contents.lines();

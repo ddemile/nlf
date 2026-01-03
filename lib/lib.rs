@@ -61,7 +61,7 @@ pub fn expose(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let register_fn = if let Some(lit) = opt.0 {
         quote! {
-            let mut map = crate::stdlib::MODULE_TABLE.lock().unwrap();
+            let mut map = crate::stdlib::MODULE_TABLE.lock();
             map.entry(#lit).or_insert_with(std::collections::HashMap::new).insert(
                 #name_str,
                 #name
@@ -69,7 +69,7 @@ pub fn expose(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
-            let mut map = crate::stdlib::FUNCTION_TABLE.lock().unwrap();
+            let mut map = crate::stdlib::FUNCTION_TABLE.lock();
             map.insert(#name_str, #name);
         }
     };

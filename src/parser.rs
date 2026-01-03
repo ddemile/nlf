@@ -1,11 +1,12 @@
 use std::{
-    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc
+    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, sync::{Arc}
 };
 
+use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{ClassDefinition, Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
 };
 
 macro_rules! expect_token {
@@ -52,15 +53,15 @@ pub struct RuntimeFunction {
     pub arguments: Vec<VariableRef>,
     pub statements: Vec<Statement>,
     #[serde(skip)]
-    pub scope: Rc<RefCell<Scope>>,
+    pub scope: Arc<Mutex<Scope>>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct BuiltInFunction {
     #[serde(skip)]
-    pub func: Rc<MethodFunc>,
+    pub func: Arc<MethodFunc>,
     #[serde(skip)]
-    pub instance: Rc<ValueHolder>,
+    pub instance: Arc<ValueHolder>,
 }
 
 impl Debug for BuiltInFunction {
@@ -86,6 +87,7 @@ pub enum ValueHolder {
     Array(ArrayRef),
     #[serde(skip)]
     LazyRef { slot: usize, module: String },
+    ClassDefinition(ClassDefinition),
     Void,
 }
 
@@ -197,6 +199,26 @@ pub enum Statement {
     Export {
         declaration: Box<Statement>,
     },
+    Class {
+        name: String,
+        methods: Vec<Statement>,
+        fields: Vec<Statement>
+    },
+    ClassIR {
+        var_ref: VariableRef,
+        methods: Vec<Statement>,
+        fields: Vec<Statement>
+    },
+    Field {
+        visibility: Visibility,
+        name: String,
+        value: Expression
+    },
+    Method {
+        name: String,
+        arguments: Vec<VariableRef>,
+        statements: Vec<Statement>,
+    }
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -260,6 +282,24 @@ pub enum Expression {
         right: Box<Expression>,
         is_definition: bool,
     },
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub enum Visibility {
+    Public,
+    Protected,
+    Private
+}
+
+impl Visibility {
+    pub fn from(kind: &TokenKind) -> Self {
+        match kind {
+            TokenKind::Keyword(KeywordKind::Public) => Visibility::Public,
+            TokenKind::Keyword(KeywordKind::Protected) => Visibility::Protected,
+            TokenKind::Keyword(KeywordKind::Private) => Visibility::Private,
+            _ => panic!("Expected a valid visibility keyword")
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -356,64 +396,7 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
         TokenKind::Keyword(KeywordKind::Fn) => {
             *cursor += 1;
 
-            let Some(Token { kind: TokenKind::Identifier { value }, .. }) = tokens.get(*cursor) else {
-                let token = tokens.get(*cursor).unwrap();
-                return Err(LanguageError::with_source(ParserError::InvalidType("identifier".into()), token.start, token.end))
-            };
-
-            let value = value.clone();
-
-            if matches!(tokens.get(*cursor + 1).map(|token| token.kind.clone()), Some(TokenKind::OpeningParenthesis)) {
-                *cursor += 2; // move to the first character after (
-
-                let mut args: Vec<Argument> = vec![];
-
-                while let Some(token) = tokens.get(*cursor) {
-                    match token.kind {
-                        TokenKind::ClosingParenthesis => {
-                            // End of argument list
-                            break;
-                        }
-                        _ => {
-                            // Parse the argument
-                            let expr = literal_expression(cursor, tokens)?;
-
-                            let Expression::Literal {
-                                r#type: LiteralExpressionKind::Variable,
-                                value: ValueHolder::String(name),
-                            } = expr
-                            else {
-                                panic!();
-                            };
-
-                            args.push(Argument { name });
-
-                            // After parsing argument, check if next token is a comma
-                            match tokens.get(*cursor).map(|token| token.kind.clone()) {
-                                Some(TokenKind::Comma) => *cursor += 1, // skip comma, continue loop
-                                Some(TokenKind::ClosingParenthesis) => break, // done
-                                _ => panic!("Expected ',' or ')' after argument"),
-                            }
-                        }
-                    }
-                }
-
-                if !matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::ClosingParenthesis)) {
-                    panic!("Expected ')'");
-                }
-
-                *cursor += 1; // move past ')'
-
-                let inner_statements = block(cursor, tokens)?;
-
-                return Ok(Some(Statement::Function {
-                    name: value.to_string(),
-                    arguments: args,
-                    statements: inner_statements,
-                }))
-            }
-
-            panic!("Expected '('");
+            Some(parse_function(cursor, tokens)?)
         }
         TokenKind::Keyword(KeywordKind::Return) => {
             *cursor += 1;
@@ -424,6 +407,11 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
         TokenKind::Keyword(KeywordKind::Break) => {
             *cursor += 1;
             Some(Statement::Break)
+        }
+        TokenKind::Keyword(KeywordKind::Class) => {
+            *cursor += 1;
+            
+            Some(parse_class(cursor, tokens)?)
         }
         TokenKind::Keyword(KeywordKind::Import) => {
             *cursor += 1;
@@ -499,6 +487,129 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
             })
         }
     })
+}
+
+fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Statement> {
+    let Some(Token { kind: TokenKind::Identifier { value }, .. }) = tokens.get(*cursor) else {
+        let token = tokens.get(*cursor).unwrap();
+        return Err(LanguageError::with_source(ParserError::InvalidType("identifier".into()), token.start, token.end))
+    };
+
+    let name = value.to_string();
+
+    *cursor += 1;
+    
+    let Some(Token { kind: TokenKind::OpeningBracket, .. }) = tokens.get(*cursor) else {
+        let token = tokens.get(*cursor).unwrap();
+        return Err(LanguageError::with_source(ParserError::UnexpectedToken("'{{'".into()), token.start, token.end))
+    };
+
+    *cursor += 1;
+
+    let mut methods: Vec<Statement> = vec![];
+    let mut fields: Vec<Statement> = vec![];
+    
+    while !matches!(tokens.get(*cursor), Some(Token { kind: TokenKind::ClosingBracket, .. })) {
+        let token = tokens.get(*cursor).unwrap();
+        *cursor += 1;
+
+        if token.kind == TokenKind::Keyword(KeywordKind::Fn) {
+            methods.push(parse_function(cursor, tokens)?);
+        } else if let TokenKind::Keyword(KeywordKind::Public | KeywordKind::Protected | KeywordKind::Private) = &token.kind {
+            let visibility = Visibility::from(&token.kind);
+
+            let Some(Token { kind: TokenKind::Identifier { value: field_name }, .. }) = tokens.get(*cursor).cloned() else {
+                let token = tokens.get(*cursor).unwrap();
+                return Err(LanguageError::with_source(ParserError::UnexpectedToken("'{{'".into()), token.start, token.end))
+            };
+
+            *cursor += 1;
+
+            let Some(Token { kind: TokenKind::Assign, .. }) = tokens.get(*cursor) else {
+                let token = tokens.get(*cursor).unwrap();
+                return Err(LanguageError::with_source(ParserError::UnexpectedToken("'{{'".into()), token.start, token.end))
+            };
+
+            *cursor += 1;
+
+            let value = equality_expression(cursor, tokens)?;
+
+            fields.push(Statement::Field {
+                visibility,
+                name: field_name,
+                value
+            });
+        }
+    }
+
+    *cursor += 1;
+
+    Ok(Statement::Class {
+        name,
+        methods,
+        fields
+    })
+}
+
+fn parse_function(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Statement> {
+    let Some(Token { kind: TokenKind::Identifier { value }, .. }) = tokens.get(*cursor) else {
+        let token = tokens.get(*cursor).unwrap();
+        return Err(LanguageError::with_source(ParserError::InvalidType("identifier".into()), token.start, token.end))
+    };
+
+    let value = value.clone();
+
+    if matches!(tokens.get(*cursor + 1).map(|token| token.kind.clone()), Some(TokenKind::OpeningParenthesis)) {
+        *cursor += 2; // move to the first character after (
+
+        let mut args: Vec<Argument> = vec![];
+
+        while let Some(token) = tokens.get(*cursor) {
+            match token.kind {
+                TokenKind::ClosingParenthesis => {
+                    // End of argument list
+                    break;
+                }
+                _ => {
+                    // Parse the argument
+                    let expr = literal_expression(cursor, tokens)?;
+
+                    let Expression::Literal {
+                        r#type: LiteralExpressionKind::Variable,
+                        value: ValueHolder::String(name),
+                    } = expr
+                    else {
+                        panic!();
+                    };
+
+                    args.push(Argument { name });
+
+                    // After parsing argument, check if next token is a comma
+                    match tokens.get(*cursor).map(|token| token.kind.clone()) {
+                        Some(TokenKind::Comma) => *cursor += 1, // skip comma, continue loop
+                        Some(TokenKind::ClosingParenthesis) => break, // done
+                        _ => panic!("Expected ',' or ')' after argument"),
+                    }
+                }
+            }
+        }
+
+        if !matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::ClosingParenthesis)) {
+            panic!("Expected ')'");
+        }
+
+        *cursor += 1; // move past ')'
+
+        let inner_statements = block(cursor, tokens)?;
+
+        return Ok(Statement::Function {
+            name: value.to_string(),
+            arguments: args,
+            statements: inner_statements,
+        })
+    }
+
+    panic!("Expected '('");
 }
 
 fn parse_if(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Statement> {

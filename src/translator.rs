@@ -183,6 +183,26 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
         Statement::Export { declaration } => {
             Ok(Statement::Export { declaration: Box::new(translate_statement(*declaration, context)?) })
         }
+        Statement::Class { name,  methods, fields } => {
+            let var_ref = context.set(&name);
+
+            let mut translated_methods = vec![];
+            for method in methods {
+                let Statement::Function { name, arguments, statements } = method.clone() else {
+                    unreachable!()
+                };
+
+                context.enter_scope(ScopeKind::Function);
+                context.set(&name);
+                let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
+                let statements = translate_body(&statements, context)?;
+                context.exit_scope();
+
+                translated_methods.push(Statement::Method { name, arguments: inner_arguements, statements });
+            }
+        
+            Ok(Statement::ClassIR { var_ref, methods: translated_methods, fields })
+        }
         _ => Ok(statement)
     }
 }

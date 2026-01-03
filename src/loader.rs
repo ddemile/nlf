@@ -1,4 +1,6 @@
-use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc, sync::{Arc}};
+
+use parking_lot::Mutex;
 
 use crate::{
     errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, interpret}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, stdlib::CoreModules, translator
@@ -14,11 +16,11 @@ pub struct Import {
 pub struct Module {
     pub source: String,
     pub exports: HashMap<String, ValueHolder>,
-    pub context: Option<Rc<RefCell<ModuleContext>>>,
+    pub context: Option<Arc<Mutex<ModuleContext>>>,
     pub statements: Vec<Statement>,
     pub imports: Vec<Import>,
-    pub program: Rc<RefCell<ProgramContext>>,
-    pub contents: Option<Rc<RefCell<String>>>,
+    pub program: Arc<Mutex<ProgramContext>>,
+    pub contents: Option<Arc<Mutex<String>>>,
     pub kind: ModuleKind
 }
 
@@ -68,7 +70,7 @@ pub enum ModuleKind {
 }
 
 impl Module {
-    pub fn new(source: &str, kind: ModuleKind, program: Rc<RefCell<ProgramContext>>) -> Self {
+    pub fn new(source: &str, kind: ModuleKind, program: Arc<Mutex<ProgramContext>>) -> Self {
         Self {
             source: source.into(),
             exports: HashMap::new(),
@@ -103,8 +105,8 @@ impl Module {
         return self.context.is_some();
     }
 
-    fn _scan(module: Rc<RefCell<Module>>, contents: &String) -> LanguageResult<()> {
-        let source = module.borrow().source.clone();
+    fn _scan(module: Arc<Mutex<Module>>, contents: &String) -> LanguageResult<()> {
+        let source = module.lock().source.clone();
 
         let tokens = lexer::lex(contents.clone())?;
         
@@ -137,7 +139,7 @@ impl Module {
             .iter()
             .map(|statement| match statement {
                 Statement::ImportIR { specifiers, source } => {
-                    module.borrow_mut().imports.push(Import {
+                    module.lock().imports.push(Import {
                         specifiers: specifiers.clone(),
                         source: source.into(),
                     });
@@ -150,7 +152,7 @@ impl Module {
                         _ => panic!(),
                     };
 
-                    module.borrow_mut().exports.insert(
+                    module.lock().exports.insert(
                         var_ref.name.clone().unwrap(),
                         ValueHolder::LazyRef {
                             slot: var_ref.slot,
@@ -169,14 +171,14 @@ impl Module {
             .map(|v| v.into_iter().flatten().collect())?;
 
         {
-            let imports = module.borrow().imports.clone();
+            let imports = module.lock().imports.clone();
             for import in imports {
-                let program = module.borrow().program.clone();
+                let program = module.lock().program.clone();
 
-                let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.borrow().source.clone()).parent().unwrap().to_path_buf()))?;
+                let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.lock().source.clone()).parent().unwrap().to_path_buf()))?;
 
                 let module_ref = resolve_module(&source, program)?;
-                let imported_mod = module_ref.borrow();
+                let imported_mod = module_ref.lock();
                 for specifier in import.specifiers {
                     let name = &specifier.name.clone().unwrap();
                     if !imported_mod.exports.contains_key(name) { 
@@ -190,21 +192,21 @@ impl Module {
             }
         }
 
-        module.borrow_mut().statements = statements;
-        module.borrow_mut().contents = Some(Rc::new(RefCell::new(contents.clone())));
+        module.lock().statements = statements;
+        module.lock().contents = Some(Arc::new(Mutex::new(contents.clone())));
 
         let _ = fs::write(
             format!("debug/{}-statements.json", name),
-            serde_json::to_string_pretty(&module.borrow().statements).unwrap(),
+            serde_json::to_string_pretty(&module.lock().statements).unwrap(),
         );
 
         Ok(())
     }
 
-    fn scan(module: Rc<RefCell<Module>>) -> LanguageResult<()> {
-        let source = module.borrow().source.clone();
+    fn scan(module: Arc<Mutex<Module>>) -> LanguageResult<()> {
+        let source = module.lock().source.clone();
 
-        let contents = match module.borrow().kind {
+        let contents = match module.lock().kind {
             ModuleKind::Core => {
                 let embedded_file = CoreModules::get(&format!("{}.nlf", source.strip_prefix("core:").unwrap()))
                     .ok_or(LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?;
@@ -225,39 +227,39 @@ impl Module {
 
         provide_source(&mut result, ErrorSource {
             path: source,
-            contents: Rc::new(RefCell::new(contents))
+            contents: Arc::new(Mutex::new(contents))
         });
 
         result
     }
 
-    fn _execute(module_ref: Rc<RefCell<Module>>) -> LanguageResult<()> {
-        if module_ref.borrow().is_loaded() {
+    fn _execute(module_ref: Arc<Mutex<Module>>) -> LanguageResult<()> {
+        if module_ref.lock().is_loaded() {
             panic!("Module is already loaded")
         }
 
-        let context = ModuleContext::new(module_ref.borrow().program.clone());
+        let context = ModuleContext::new(module_ref.lock().program.clone());
 
-        let context_ref = Rc::new(RefCell::new(context));
+        let context_ref = Arc::new(Mutex::new(context));
 
-        context_ref.borrow_mut().environment.init(context_ref.clone());
+        context_ref.lock().environment.init(context_ref.clone());
 
-        module_ref.borrow_mut().context = Some(context_ref);
+        module_ref.lock().context = Some(context_ref);
 
         {
-            let context = module_ref.borrow().context.clone().unwrap();
-            let mut context = context.borrow_mut();
+            let context = module_ref.lock().context.clone().unwrap();
+            let mut context = context.lock();
 
-            let imports = module_ref.borrow().imports.clone();
+            let imports = module_ref.lock().imports.clone();
             for import in imports {
                 for specifier in &import.specifiers {
                     let name = specifier.name.clone().unwrap();
-                    let module = module_ref.borrow();
-                    let program = module.program.borrow();
+                    let module = module_ref.lock();
+                    let program = module.program.lock();
 
                     let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.source.clone()).parent().unwrap().to_path_buf()))?;
                     
-                    let module = program.modules.get(&source).unwrap().borrow();
+                    let module = program.modules.get(&source).unwrap().lock();
                     let value = module
                         .exports
                         .get(&name)
@@ -270,22 +272,22 @@ impl Module {
             }
         }
 
-        let statements = module_ref.borrow().statements.clone();
+        let statements = module_ref.lock().statements.clone();
 
         interpret(
             Program {
                 body: statements,
             },
-            module_ref.borrow().context.clone().unwrap(),
+            module_ref.lock().context.clone().unwrap(),
         )?;
 
         Ok(())
     }
 
-    pub fn execute(module_ref: Rc<RefCell<Module>>) -> LanguageResult<()> {
+    pub fn execute(module_ref: Arc<Mutex<Module>>) -> LanguageResult<()> {
         let mut result = Self::_execute(module_ref.clone());
 
-        let module = module_ref.borrow();
+        let module = module_ref.lock();
 
         if let Some(contents) = &module.contents {
             provide_source(&mut result, ErrorSource {
@@ -298,7 +300,7 @@ impl Module {
     }
 }
 
-pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> LanguageResult<Rc<RefCell<Module>>> {
+pub fn resolve_module(path: &str, pg_context: Arc<Mutex<ProgramContext>>) -> LanguageResult<Arc<Mutex<Module>>> {
     let kind = if PathBuf::from(path).exists() {
         ModuleKind::Standard
     } else if path.starts_with("core:") {
@@ -307,25 +309,25 @@ pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> La
         return Err(LanguageError::from(LoaderError::ModuleNotFound(path.to_string())))
     };
 
-    if !pg_context.borrow().modules.contains_key(path) {
-        let module = Rc::new(RefCell::new(Module::new(&path, kind, pg_context.clone())));
+    if !pg_context.lock().modules.contains_key(path) {
+        let module = Arc::new(Mutex::new(Module::new(&path, kind, pg_context.clone())));
 
         // Borrow only to insert, then drop it immediately.
         {
-            let modules = &mut pg_context.borrow_mut().modules;
+            let modules = &mut pg_context.lock().modules;
             modules.insert(path.into(), module.clone());
         }
 
         Module::scan(module)?;
     }
 
-    let module = pg_context.borrow().modules.get(path).unwrap().clone();
+    let module = pg_context.lock().modules.get(path).unwrap().clone();
 
     Ok(module)
 }
 
 pub fn run_main(path: &str) -> LanguageResult<()> {
-    let pg_context = Rc::new(RefCell::new(ProgramContext::new()));
+    let pg_context = Arc::new(Mutex::new(ProgramContext::new()));
 
     let path = Module::resolve_path(path)?;
 

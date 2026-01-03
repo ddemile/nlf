@@ -1,6 +1,7 @@
 use inline_colorization::*;
+use parking_lot::Mutex;
 use std::{
-    cell::RefCell, collections::HashMap, fs, panic::{self, catch_unwind}, path::Path, rc::Rc, time::{Duration, Instant}
+    cell::RefCell, collections::HashMap, fs, panic::{self, catch_unwind}, path::Path, rc::Rc, sync::{Arc}, time::{Duration, Instant}
 };
 use rayon::prelude::*;
 
@@ -115,13 +116,13 @@ fn run_test(name: String, content: String) -> TestOutput {
 
         let now = Instant::now();
 
-        let program = Rc::new(RefCell::new(ProgramContext::new()));
+        let program = Arc::new(Mutex::new(ProgramContext::new()));
 
         let context = ModuleContext::new(program);
 
-        let context_ref = Rc::new(RefCell::new(context));
+        let context_ref = Arc::new(Mutex::new(context));
 
-        context_ref.borrow_mut().environment.init(context_ref.clone());
+        context_ref.lock().environment.init(context_ref.clone());
 
         let result = interpreter::interpret(ir, context_ref);
 
@@ -132,7 +133,7 @@ fn run_test(name: String, content: String) -> TestOutput {
             result: match result {
                 Ok(_) => Ok(elapsed),
                 Err(e) => Err(e.format(Some(ErrorSource {
-                    contents: Rc::new(RefCell::new(content)),
+                    contents: Arc::new(Mutex::new(content)),
                     path: name.clone()
                 }))),
             }

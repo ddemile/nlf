@@ -1,6 +1,7 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::{Arc}};
 
 use lazy_static::lazy_static;
+use parking_lot::Mutex;
 
 use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, types::{DynamicNumber, NumberHolder}};
 
@@ -13,13 +14,22 @@ pub enum Operation {
     Modulo
 }
 
-pub type OperatorFunc = Box<dyn Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Send + Sync>;
-pub type MethodFunc = Arc<dyn Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>;
+pub type OperatorFunc = Arc<dyn Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Send + Sync>;
+pub type MethodFunc = Arc<dyn Fn(&ValueHolder, Vec<ValueHolder>, Arc<Mutex<ModuleContext>>) -> RuntimeResult + Send + Sync>;
 
+#[derive(Clone)]
 pub struct Prototype {
     pub _name: String,
     operators: Vec<Option<OperatorFunc>>,
     methods: HashMap<String, MethodFunc>
+}
+
+impl std::fmt::Debug for Prototype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Prototype")
+            .field("_name", &self._name)
+            .finish()
+    }
 }
 
 impl Prototype {
@@ -51,7 +61,7 @@ impl Prototype {
             return Err(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))));
         }
 
-        let func: &Box<dyn Fn(&ValueHolder, &ValueHolder) -> Result<ValueHolder, LanguageError> + Send + Sync> = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
+        let func: &Arc<dyn Fn(&ValueHolder, &ValueHolder) -> Result<ValueHolder, LanguageError> + Send + Sync> = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
 
         func(a, b)
     }
@@ -128,7 +138,7 @@ lazy_static! {
     pub static ref STRING_PROTOTYPE: Prototype = {
         let mut prototype = Prototype::new("String");
         prototype
-            .with_operator(Operation::Addition, Box::new(|a, b| {
+            .with_operator(Operation::Addition, Arc::new(|a, b| {
                 let ValueHolder::String(value) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected string".to_string())))
                 };
@@ -167,7 +177,7 @@ lazy_static! {
     pub static ref NUMBER_PROTOTYPE: Prototype = {
         let mut prototype = Prototype::new("Number");
         prototype
-            .with_operator(Operation::Addition, Box::new(|a, b| {
+            .with_operator(Operation::Addition, Arc::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
@@ -178,7 +188,7 @@ lazy_static! {
         
                 Ok(ValueHolder::Number(*a + *b))
             }))
-            .with_operator(Operation::Substraction, Box::new(|a, b| {
+            .with_operator(Operation::Substraction, Arc::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
@@ -189,7 +199,7 @@ lazy_static! {
         
                 Ok(ValueHolder::Number(*a - *b))
             }))
-            .with_operator(Operation::Multiplication, Box::new(|a, b| {
+            .with_operator(Operation::Multiplication, Arc::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
@@ -200,7 +210,7 @@ lazy_static! {
         
                 Ok(ValueHolder::Number(*a * *b))
             }))
-            .with_operator(Operation::Division, Box::new(|a, b| {
+            .with_operator(Operation::Division, Arc::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };
@@ -211,7 +221,7 @@ lazy_static! {
         
                 Ok(ValueHolder::Number(*a / *b))
             }))
-            .with_operator(Operation::Modulo, Box::new(|a, b| {
+            .with_operator(Operation::Modulo, Arc::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
                 };

@@ -1,19 +1,37 @@
 use core::panic;
-use std::{cell::{RefCell, RefMut}, collections::HashMap, fmt::{self}, rc::Rc};
+use std::{cell::{RefCell, RefMut}, collections::HashMap, f32::NAN, fmt::{self}, rc::Rc, sync::{Arc}};
 
 use indexmap::IndexSet;
+use parking_lot::{Mutex, MutexGuard};
+use reqwest::Method;
+use serde::Serialize;
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
         ARRAY_PROTOTYPE, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }, lexer::TokenKind, loader::Module, parser::{
-        ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef
+        ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE, types::{DynamicNumber, NumberHolder}
 };
 
 use inline_colorization::*;
 
 pub mod prototypes;
+
+#[derive(Debug, Serialize, Clone)]
+pub struct Field {
+    visibility: Visibility,
+    name: String,
+    value: ValueHolder
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ClassDefinition {
+    methods: HashMap<String, FunctionKind>,
+    fields: Vec<Field>,
+    #[serde(skip)]
+    prototype: Prototype
+}
 
 #[derive(Debug)]
 pub enum RuntimeError {
@@ -49,6 +67,7 @@ impl ValueHolder {
             ValueHolder::Number(_) => &*NUMBER_PROTOTYPE,
             ValueHolder::Object(_) => &*OBJECT_PROTOTYPE,
             ValueHolder::Array(_) => &*ARRAY_PROTOTYPE,
+            ValueHolder::ClassDefinition(ClassDefinition { prototype, .. }) => &prototype,
             _ => todo!(),
         }
     }
@@ -63,6 +82,7 @@ impl ValueHolder {
             ValueHolder::Object(_) => format!("ObjectRef"),
             ValueHolder::Array(_) => format!("ArrayRef"),
             ValueHolder::LazyRef { .. } => format!("LazyRef"),
+            ValueHolder::ClassDefinition(_) => format!("ClassDefinition"),
             ValueHolder::Void => format!("Void"),
         }
     }
@@ -78,6 +98,7 @@ impl fmt::Display for ValueHolder {
             ValueHolder::Object(_) => write!(f, "{}", self.to_string()),
             ValueHolder::Array(_) => write!(f, "{}", self.to_string()),
             ValueHolder::LazyRef { .. } => write!(f, "{}", self.to_string()),
+            ValueHolder::ClassDefinition(_) => write!(f, "{}", self.to_string()),
             ValueHolder::Void => write!(f, "{}", self.to_string()),
         }
     }
@@ -85,11 +106,9 @@ impl fmt::Display for ValueHolder {
 
 pub type RuntimeResult = LanguageResult<ValueHolder>;
 
-type BuiltInFunctionMethod = HashMap<String, Box<dyn Fn(Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>>;
-
 #[derive(Debug)]
 pub struct ProgramContext {
-    pub modules: HashMap<String, Rc<RefCell<Module>>>,
+    pub modules: HashMap<String, Arc<Mutex<Module>>>,
     pub schemas: Vec<Schema>,
     pub store: HashMap<usize, Object>
 }
@@ -103,19 +122,19 @@ impl ProgramContext {
         }
     }
 
-    pub fn get_module(&self, source: &str) -> Option<RefMut<'_, Module>> {
-        self.modules.get(source).map(|value| value.borrow_mut())
+    pub fn get_module(&self, source: &str) -> Option<MutexGuard<'_, Module>> {
+        self.modules.get(source).map(|value| value.lock())
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ModuleContext {
     pub environment: Environment,
-    pub program: Rc<RefCell<ProgramContext>>,
+    pub program: Arc<Mutex<ProgramContext>>,
 }
 
 impl ModuleContext {
-    pub fn new(program: Rc<RefCell<ProgramContext>>) -> Self {
+    pub fn new(program: Arc<Mutex<ProgramContext>>) -> Self {
         let environment: Environment = Environment::new();
 
         Self {
@@ -137,11 +156,11 @@ pub struct Object {
     values: Vec<ValueHolder>,
 }
 
-fn get_schema(keys: IndexSet<String>, context: Rc<RefCell<ModuleContext>>) -> Schema {
+fn get_schema(keys: IndexSet<String>, context: Arc<Mutex<ModuleContext>>) -> Schema {
     let schema =  context
-        .borrow()
+        .lock()
         .program
-        .borrow()
+        .lock()
         .schemas
         .iter()
         .find(|s| s.keys == keys)
@@ -149,16 +168,16 @@ fn get_schema(keys: IndexSet<String>, context: Rc<RefCell<ModuleContext>>) -> Sc
     
     schema.unwrap_or_else(|| {
         let schema: Schema = Schema {
-            id: context.borrow().program.borrow().schemas.len(),
+            id: context.lock().program.lock().schemas.len(),
             keys,
         };
-        context.borrow().program.borrow_mut().schemas.push(schema.clone());
+        context.lock().program.lock().schemas.push(schema.clone());
         schema
     })
 }
 
 impl ObjectRef {
-    pub fn new(entries: HashMap<String, ValueHolder>, context: Rc<RefCell<ModuleContext>>) -> Self {
+    pub fn new(entries: HashMap<String, ValueHolder>, context: Arc<Mutex<ModuleContext>>) -> Self {
         let keys: IndexSet<String> = entries.keys().cloned().collect();
 
         let schema = get_schema(keys, context.clone());
@@ -168,8 +187,8 @@ impl ObjectRef {
             values: entries.values().cloned().collect(),
         };
 
-        let context = context.borrow();
-        let program = &mut context.program.borrow_mut();
+        let context = context.lock();
+        let mut program = context.program.lock();
 
         let object_id = program.store.len() + 1;
 
@@ -178,9 +197,9 @@ impl ObjectRef {
         ObjectRef { object_id }
     }
 
-    pub(self) fn get(self, property: String, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-        let context = context_ref.borrow();
-        let program = context.program.borrow();
+    pub(self) fn get(self, property: String, context_ref: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
+        let context = context_ref.lock();
+        let program = context.program.lock();
 
         let object = program
             .store
@@ -202,9 +221,9 @@ impl ObjectRef {
         Err(LanguageError::from(RuntimeError::NoSuchProperty(property)))
     }
 
-    pub(self) fn set(&self, property: String, value: ValueHolder, context_ref: Rc<RefCell<ModuleContext>>) {
-        let context = context_ref.borrow();
-        let program = context.program.borrow();
+    pub(self) fn set(&self, property: String, value: ValueHolder, context_ref: Arc<Mutex<ModuleContext>>) {
+        let context = context_ref.lock();
+        let program = context.program.lock();
 
         let object = program
             .store
@@ -231,6 +250,7 @@ impl ObjectRef {
         }
 
         drop(program);
+        drop(context);
         
         let schema = get_schema(keys, context_ref.clone());
 
@@ -239,14 +259,15 @@ impl ObjectRef {
             values,
         };
 
-        let program = &mut context.program.borrow_mut();
+        let context = context_ref.lock();
+        let mut program = context.program.lock();
 
         program.store.insert(self.object_id, object);
     }
 
-    pub fn fetch(&self, context_ref: Rc<RefCell<ModuleContext>>) -> HashMap<String, ValueHolder> {
-        let context = context_ref.borrow();
-        let program = context.program.borrow();
+    pub fn fetch(&self, context_ref: Arc<Mutex<ModuleContext>>) -> HashMap<String, ValueHolder> {
+        let context = context_ref.lock();
+        let program = context.program.lock();
 
         let object = program
             .store
@@ -273,9 +294,9 @@ impl ObjectRef {
 }
 
 impl ArrayRef {
-    pub(self) fn new(items: Vec<ValueHolder>, context: Rc<RefCell<ModuleContext>>) -> Self {
-        let context = context.borrow();
-        let program = &mut context.program.borrow_mut();
+    pub(self) fn new(items: Vec<ValueHolder>, context: Arc<Mutex<ModuleContext>>) -> Self {
+        let context = context.lock();
+        let mut program = context.program.lock();
 
         let array_id = program.store.len() + 1;
 
@@ -285,9 +306,9 @@ impl ArrayRef {
         ArrayRef { array_id }
     }
 
-    pub fn get(&self, index: usize, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-        let context = context_ref.borrow();
-        let program = context.program.borrow();
+    pub fn get(&self, index: usize, context_ref: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
+        let context = context_ref.lock();
+        let program = context.program.lock();
 
         let object = program
             .store
@@ -302,9 +323,9 @@ impl ArrayRef {
         Ok(value)
     }
 
-    pub fn set(&self, index: usize, value: ValueHolder, context_ref: Rc<RefCell<ModuleContext>>) {
-        let context = context_ref.borrow();
-        let program = context.program.borrow();
+    pub fn set(&self, index: usize, value: ValueHolder, context_ref: Arc<Mutex<ModuleContext>>) {
+        let context = context_ref.lock();
+        let program = context.program.lock();
 
         let object = program
             .store
@@ -326,14 +347,14 @@ impl ArrayRef {
             values,
         };
 
-        let program = &mut context.program.borrow_mut();
+        let mut program = context.program.lock();
 
         program.store.insert(self.array_id, object);
     }
 
-    pub fn fetch(&self, context_ref: Rc<RefCell<ModuleContext>>) -> Vec<ValueHolder> {
-        let context = context_ref.borrow();
-        let program = context.program.borrow();
+    pub fn fetch(&self, context_ref: Arc<Mutex<ModuleContext>>) -> Vec<ValueHolder> {
+        let context = context_ref.lock();
+        let program = context.program.lock();
 
         let object = program
             .store
@@ -343,9 +364,9 @@ impl ArrayRef {
         object.values.clone()
     }
 
-    pub fn push(&self, value: ValueHolder, context_ref: Rc<RefCell<ModuleContext>>) {
-        let context = context_ref.borrow();
-        let mut program = context.program.borrow_mut();
+    pub fn push(&self, value: ValueHolder, context_ref: Arc<Mutex<ModuleContext>>) {
+        let context = context_ref.lock();
+        let mut program = context.program.lock();
 
         let object = program
             .store
@@ -355,9 +376,9 @@ impl ArrayRef {
         object.values.push(value);
     }
 
-    pub fn reverse(&self, context_ref: Rc<RefCell<ModuleContext>>) {
-        let context = context_ref.borrow();
-        let mut program = context.program.borrow_mut();
+    pub fn reverse(&self, context_ref: Arc<Mutex<ModuleContext>>) {
+        let context = context_ref.lock();
+        let mut program = context.program.lock();
 
         let object = program
             .store
@@ -371,7 +392,7 @@ impl ArrayRef {
 #[derive(Debug, Clone)]
 pub enum ScopeKind {
     Program,
-    Call(Rc<RefCell<Scope>>),
+    Call(Arc<Mutex<Scope>>),
     Loop,
     Regular,
 }
@@ -381,14 +402,14 @@ pub struct Scope {
     kind: ScopeKind,
     slots: Vec<ValueHolder>,
     interrupted: Option<ValueHolder>,
-    parent: Option<Rc<RefCell<Scope>>>,
-    context: Rc<RefCell<ModuleContext>>
+    parent: Option<Arc<Mutex<Scope>>>,
+    context: Arc<Mutex<ModuleContext>>
 }
 
 #[derive(Debug, Clone)]
 pub struct Environment {
-    pub scopes: Vec<Rc<RefCell<Scope>>>,
-    pub context: Option<Rc<RefCell<ModuleContext>>>
+    pub scopes: Vec<Arc<Mutex<Scope>>>,
+    pub context: Option<Arc<Mutex<ModuleContext>>>
 }
 
 impl Environment {
@@ -399,10 +420,10 @@ impl Environment {
         }
     }
 
-    pub fn init(&mut self, context: Rc<RefCell<ModuleContext>>) {
+    pub fn init(&mut self, context: Arc<Mutex<ModuleContext>>) {
         self.context = Some(context.clone());
 
-        self.scopes.push(Rc::new(RefCell::new(Scope {
+        self.scopes.push(Arc::new(Mutex::new(Scope {
             kind: ScopeKind::Program,
             slots: vec![],
             interrupted: None,
@@ -412,7 +433,7 @@ impl Environment {
     }
 
     pub fn enter_scope(&mut self, kind: ScopeKind) {
-        self.scopes.push(Rc::new(RefCell::new(Scope {
+        self.scopes.push(Arc::new(Mutex::new(Scope {
             kind,
             slots: vec![],
             interrupted: None,
@@ -436,7 +457,7 @@ impl Environment {
             let mut current_scope = self.scopes.last().unwrap().clone();
             for _ in 0..var_ref.depth {
                 let next_scope = {
-                    let scope = current_scope.borrow();
+                    let scope = current_scope.lock();
                     match &scope.kind {
                         ScopeKind::Call(inner_scope) => inner_scope.clone(),
                         _ => scope.parent.clone().ok_or(LanguageError::from(RuntimeError::VariableNotFound(format!(
@@ -448,7 +469,7 @@ impl Environment {
 
                 current_scope = next_scope;
             }
-            current_scope.borrow_mut()
+            current_scope.lock()
                 .slots
                 .get_mut(var_ref.slot)
                 .map(|v| *v = value)
@@ -457,7 +478,7 @@ impl Environment {
                     var_ref.slot, var_ref.depth
                 ))))?;
             return Ok(());
-        } else if let Some(mut scope) = self.scopes.last_mut().map(|scope| scope.borrow_mut()) {
+        } else if let Some(mut scope) = self.scopes.last_mut().map(|scope| scope.lock()) {
             if scope.slots.len() <= var_ref.slot {
                 scope.slots.resize(var_ref.slot + 1, ValueHolder::Void);
             }
@@ -472,7 +493,7 @@ impl Environment {
         let mut current_scope = self.scopes.last().unwrap().clone();
         for _ in 0..var_ref.depth {
             let next_scope = {
-                let scope = current_scope.borrow();
+                let scope = current_scope.lock();
                 match &scope.kind {
                     ScopeKind::Call(inner_scope) => inner_scope.clone(),
                     _ => scope.parent.clone()?
@@ -481,63 +502,140 @@ impl Environment {
 
             current_scope = next_scope;
         }
-        current_scope.borrow().slots.get(var_ref.slot).cloned()
+        current_scope.lock().slots.get(var_ref.slot).cloned()
     }
 }
 
 pub fn interpret(
     program: Program,
-    context: Rc<RefCell<ModuleContext>>,
+    context: Arc<Mutex<ModuleContext>>,
 ) -> LanguageResult<()> {
     eval_body(&program.body, context)?;
 
     Ok(())
 }
 
-fn define_functions(
+fn hoist_declarations(
     statements: &Vec<Statement>,
-    context_ref: Rc<RefCell<ModuleContext>>,
+    context_ref: Arc<Mutex<ModuleContext>>,
 ) -> LanguageResult<()> {
     for statement in statements
         .iter()
-        .filter(|statement| matches!(*statement, Statement::FunctionIR { .. } | Statement::Export { declaration: box Statement::FunctionIR { .. } }))
+        .filter(|statement| matches!(*statement, Statement::FunctionIR { .. } | Statement::ClassIR { .. }))
     {
-        let Statement::FunctionIR {
-            var_ref,
-            arguments,
-            statements,
-        } = statement else {
-            panic!("Expected function declaration")
-        };
+        match statement {
+            Statement::FunctionIR { var_ref, arguments, statements } => {
+                let mut context = context_ref.lock();
 
-        let mut context = context_ref.borrow_mut();
+                let scope = context.environment.scopes.last_mut().cloned().unwrap();
+                
+                context.environment.set(
+                    var_ref,
+                    ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
+                        arguments: arguments.to_vec(),
+                        statements: statements.to_vec(),
+                        scope
+                    })),
+                    true,
+                )?
+            }
+            Statement::ClassIR { var_ref, methods: raw_methods, fields: raw_fields } => {
+                let mut context = context_ref.lock();
 
-        let scope = context.environment.scopes.last_mut().cloned().unwrap();
-        
-        context.environment.set(
-            var_ref,
-            ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
-                arguments: arguments.to_vec(),
-                statements: statements.to_vec(),
-                scope
-            })),
-            true,
-        )?
+                let mut methods: HashMap<String, FunctionKind> = HashMap::new();
+                let mut fields: Vec<Field> = vec![];
+
+                let scope = context.environment.scopes.last_mut().unwrap();
+
+                let mut prototype = Prototype::new(var_ref.name.clone().unwrap().as_ref());
+
+                for method in raw_methods {
+                    let Statement::Method { name, arguments, statements } = method.clone() else {
+                        unreachable!()
+                    };
+
+                    prototype.with_method(&name, Arc::new(move |this, call_arguments, context_ref| {
+                        let scope = context_ref.lock().environment.scopes.last_mut().unwrap().clone();
+
+                        let statements = statements.clone();
+  
+                        if arguments.len() != call_arguments.len() {
+                            return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
+                        }
+
+                        let context = scope.lock().context.clone();
+
+                        context
+                            .lock()
+                            .environment
+                            .enter_scope(ScopeKind::Call(scope.clone()));
+
+                        context.lock().environment.set(
+                            &VariableRef {
+                                name: None,
+                                slot: 0,
+                                depth: 0,
+                            },
+                            ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
+                                arguments: arguments.clone(),
+                                statements: statements.clone(),
+                                scope,
+                            })),
+                            true,
+                        )?;
+
+                        for (argument, value) in arguments.iter().zip(call_arguments.iter()) {
+                            context
+                                .lock()
+                                .environment
+                                .set(argument, value.clone(), true)?;
+                        }
+
+                        let return_value = eval_body(&statements, context.clone());
+                        context.lock().environment.exit_scope();
+                        return_value
+                    }));
+                }
+
+                for field in raw_fields {
+                    let Statement::Field { visibility, name, value } = field.clone() else {
+                        unreachable!()
+                    };
+
+                    fields.push(Field {
+                        visibility: visibility,
+                        name: name,
+                        value: eval_expr(&value, context_ref.clone())?
+                    });
+                }
+                
+                context.environment.set(
+                    var_ref,
+                    ValueHolder::ClassDefinition(ClassDefinition {
+                        methods,
+                        fields,
+                        prototype
+                    }),
+                    true,
+                )?
+            }
+            _=> ()
+        }
     }
 
     Ok(())
 }
 
-fn eval_body(statements: &Vec<Statement>, context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-    define_functions(statements, context.clone())?;
+fn eval_body(statements: &Vec<Statement>, context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
+    hoist_declarations(statements, context.clone())?;
 
     for statement in statements {
         let value = eval_statement(statement, context.clone())?;
-        if let Some(value) = &context.borrow().environment.scopes.last().unwrap().borrow().interrupted {
+        if let Some(value) = &context.lock().environment.scopes.last().unwrap().lock().interrupted {
             return Ok(value.clone());
         }
 
-        for mut scope in context.borrow().environment.scopes.iter().rev().map(|scope| scope.borrow_mut()) {
+        for mut scope in context.lock().environment.scopes.iter().rev().map(|scope| scope.lock()) {
             match (statement, &scope.kind) {
                 (Statement::Return { .. }, ScopeKind::Call(_)) => {
                     scope.interrupted = Some(value.clone());
@@ -560,7 +658,7 @@ fn eval_body(statements: &Vec<Statement>, context: Rc<RefCell<ModuleContext>>) -
     Ok(ValueHolder::Void)
 }
 
-fn eval_statement(statement: &Statement, context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn eval_statement(statement: &Statement, context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     match statement {
         Statement::Expression { expression } => eval_expr(&expression, context),
         Statement::If {
@@ -590,6 +688,7 @@ fn eval_statement(statement: &Statement, context: Rc<RefCell<ModuleContext>>) ->
             "Import declarations can only be at the top of modules".into(),
         ), 0, 0)),
         Statement::Export { declaration } => eval_statement(declaration, context),
+        Statement::ClassIR { .. } => Ok(ValueHolder::Void),
         _ => panic!("Invalid statement : {:?}", statement),
     }
 }
@@ -607,7 +706,7 @@ fn eval_for(
     left: &Option<Expression>,
     right: &Option<Expression>,
     statements: &Vec<Statement>,
-    context_ref: Rc<RefCell<ModuleContext>>,
+    context_ref: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
     let mut iter: Box<dyn Iterator<Item = i32>> = Box::new(0..);
 
@@ -635,17 +734,17 @@ fn eval_for(
         _ => (),
     }
 
-    context_ref.borrow_mut().environment.enter_scope(ScopeKind::Loop);
+    context_ref.lock().environment.enter_scope(ScopeKind::Loop);
     context_ref
-        .borrow_mut()
+        .lock()
         .environment
         .set(variable, ValueHolder::Number(DynamicNumber::new(NumberHolder::Integer8(0))), true)?;
 
     for i in iter {
         {
-            let context = context_ref.borrow();
+            let context = context_ref.lock();
             // Faster than environment.set in this context
-            let mut scope = context.environment.scopes.last().unwrap().borrow_mut();
+            let mut scope = context.environment.scopes.last().unwrap().lock();
 
             scope.slots.fill(ValueHolder::Void);
 
@@ -654,12 +753,12 @@ fn eval_for(
 
         eval_body(&statements, context_ref.clone())?;
         let broken = context_ref
-            .borrow()
+            .lock()
             .environment
             .scopes
             .last()
             .unwrap()
-            .borrow()
+            .lock()
             .interrupted
             .is_some();
 
@@ -667,7 +766,7 @@ fn eval_for(
             break;
         }
     }
-    context_ref.borrow_mut().environment.exit_scope();
+    context_ref.lock().environment.exit_scope();
 
     Ok(ValueHolder::Void)
 }
@@ -675,29 +774,29 @@ fn eval_for(
 fn eval_while(
     condition: &Expression,
     statements: &Vec<Statement>,
-    context_ref: Rc<RefCell<ModuleContext>>,
+    context_ref: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
-    context_ref.borrow_mut().environment.enter_scope(ScopeKind::Loop);
+    context_ref.lock().environment.enter_scope(ScopeKind::Loop);
 
     fn execute_loop_body(
         statements: &Vec<Statement>,
-        context_ref: &Rc<RefCell<ModuleContext>>
+        context_ref: &Arc<Mutex<ModuleContext>>
     ) -> LanguageResult<bool> {
         {
-            let context = context_ref.borrow();
-            let scope = &mut context.environment.scopes.last().unwrap().borrow_mut();
+            let context = context_ref.lock();
+            let mut scope = context.environment.scopes.last().unwrap().lock();
 
             scope.slots.fill(ValueHolder::Void);
         }
 
         eval_body(statements, context_ref.clone())?;
         let broken = context_ref
-            .borrow()
+            .lock()
             .environment
             .scopes
             .last()
             .unwrap()
-            .borrow()
+            .lock()
             .interrupted
             .is_some();
 
@@ -726,7 +825,7 @@ fn eval_while(
         }
     }
 
-    context_ref.borrow_mut().environment.exit_scope();
+    context_ref.lock().environment.exit_scope();
 
     Ok(ValueHolder::Void)
 }
@@ -735,11 +834,11 @@ fn eval_if(
     condition: &Expression,
     block: &Block,
     alternate: &Option<Box<Statement>>,
-    context_ref: Rc<RefCell<ModuleContext>>,
+    context_ref: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
     let cond: bool = eval_expr(condition, context_ref.clone())?.into();
 
-    context_ref.borrow_mut().environment.enter_scope(ScopeKind::Regular);
+    context_ref.lock().environment.enter_scope(ScopeKind::Regular);
 
     if cond {
         eval_body(&block.statements, context_ref.clone())?;
@@ -753,11 +852,11 @@ fn eval_if(
     } else if let Some(box Statement::Block(Block { statements })) = alternate {
         eval_body(&statements, context_ref.clone())?;
     }
-    context_ref.borrow_mut().environment.exit_scope();
+    context_ref.lock().environment.exit_scope();
     Ok(ValueHolder::Void)
 }
 
-fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn eval_expr(expr: &Expression, context_ref: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     return match expr {
         Expression::Binary {
             left,
@@ -782,8 +881,8 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                         "Cannot access index on type other than Array".to_string(),
                     ), 0, 0));
                 }
+                
             }
-
             let ValueHolder::String(property) = property else {
                 return Err(LanguageError::with_source(RuntimeError::InvalidType(
                     "Property should be a string".to_string(),
@@ -799,7 +898,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
 
             let prototype = value.get_prototype();
 
-            let method = Rc::new(
+            let method = Arc::new(
                 prototype
                     .get_method(&property)
                     .ok_or(LanguageError::with_source(RuntimeError::NoSuchProperty(property), 0, 0))?
@@ -808,7 +907,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
 
             Ok(ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
                 func: method,
-                instance: Rc::new(value),
+                instance: Arc::new(value),
             })))
         }
         Expression::Literal { r#type, value } => {
@@ -848,7 +947,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
             eval_expr(left, context_ref)
         }
         Expression::Variable(variable) => {
-            let value = context_ref.borrow().environment.get(variable).ok_or(
+            let value = context_ref.lock().environment.get(variable).ok_or(
                 LanguageError::with_source(RuntimeError::VariableNotFound(format!(
                     "Slot {} at depth {} not found",
                     variable.slot, variable.depth
@@ -857,27 +956,29 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
 
             match value {
                 ValueHolder::LazyRef { slot, module: source } => {
-                    let program_ref = context_ref.borrow().program.clone();
-                    let program = program_ref.borrow();
+                    let program_ref = context_ref.lock().program.clone();
+                    let program = program_ref.lock();
 
-                    let is_loaded = program.modules.get(&source).unwrap().borrow().is_loaded();
+                    let is_loaded = program.modules.get(&source).unwrap().lock().is_loaded();
 
                     if !is_loaded {
                         let module = program.modules.get(&source).unwrap().clone();
                         drop(program);
                         Module::execute(module)?
+                    } else {
+                        drop(program);
                     }
 
-                    let program = program_ref.borrow();
+                    let program = program_ref.lock();
 
-                    let Some(module) = program.modules.get(&source).map(|module| module.borrow()) else {
+                    let Some(module) = program.modules.get(&source).map(|module| module.lock()) else {
                         unreachable!()
                     };
 
                     let context = module.context.clone().unwrap();  
-                    let context = context.borrow();
+                    let context = context.lock();
 
-                    let environment= context.environment.scopes.first().unwrap().borrow();
+                    let environment= context.environment.scopes.first().unwrap().lock();
 
                     let value = environment.slots.get(slot).unwrap();
                     
@@ -914,11 +1015,11 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
             if let Expression::Variable(var_ref) = &**left {
                 let expr = eval_expr(right, context_ref.clone())?;
                 let value = compute_value!(expr, {
-                    let context_ref = context_ref.borrow_mut();
+                    let context_ref = context_ref.lock();
                     context_ref.environment.get(var_ref).unwrap()
                 })?;
 
-                context_ref.borrow_mut().environment.set(
+                context_ref.lock().environment.set(
                     var_ref,
                     value,
                     *is_definition
@@ -1012,7 +1113,7 @@ fn eval_binary(
     left: &Expression,
     operator: &TokenKind,
     right: &Expression,
-    context: Rc<RefCell<ModuleContext>>,
+    context: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
     let left = &eval_expr(left, context.clone())?;
     let right = &eval_expr(right, context)?;
@@ -1031,19 +1132,19 @@ fn eval_binary(
 fn eval_call(
     callee: &Expression,
     call_arguments: &Vec<Expression>,
-    context: Rc<RefCell<ModuleContext>>,
+    context: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
     let evaluated_args: Vec<ValueHolder> = call_arguments
         .into_iter()
         .map(|arg| eval_expr(&arg, context.clone()))
         .collect::<LanguageResult<Vec<_>>>()?;
-    
+
     if let Expression::Literal {
         value: ValueHolder::String(name),
         ..
     } = callee
     {
-        let table = FUNCTION_TABLE.lock().unwrap();
+        let table = FUNCTION_TABLE.lock();
         let func = table.get(name.as_str()).cloned();
 
         drop(table);
@@ -1065,14 +1166,14 @@ fn eval_call(
             return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
         }
 
-        let context = scope.borrow().context.clone();
+        let context = scope.lock().context.clone();
 
         context
-            .borrow_mut()
+            .lock()
             .environment
             .enter_scope(ScopeKind::Call(scope.clone()));
 
-        context.borrow_mut().environment.set(
+        context.lock().environment.set(
             &VariableRef {
                 name: None,
                 slot: 0,
@@ -1088,13 +1189,13 @@ fn eval_call(
 
         for (argument, value) in arguments.iter().zip(evaluated_args.iter()) {
             context
-                .borrow_mut()
+                .lock()
                 .environment
                 .set(argument, value.clone(), true)?;
         }
 
         let return_value = eval_body(&statements, context.clone());
-        context.borrow_mut().environment.exit_scope();
+        context.lock().environment.exit_scope();
         return return_value;
     }
 
@@ -1109,7 +1210,7 @@ fn eval_equality(
     left: &Expression,
     operator: &TokenKind,
     right: &Expression,
-    context: Rc<RefCell<ModuleContext>>,
+    context: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
     let left = eval_expr(left, context.clone())?;
     let right = eval_expr(right, context)?;
@@ -1127,7 +1228,7 @@ fn eval_relational(
     left: &Expression,
     operator: &TokenKind,
     right: &Expression,
-    context: Rc<RefCell<ModuleContext>>,
+    context: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
     let left = eval_expr(left, context.clone())?;
     let right = eval_expr(right, context)?;
@@ -1145,7 +1246,7 @@ fn eval_logical(
     left: &Expression,
     operator: &TokenKind,
     right: &Expression,
-    context: Rc<RefCell<ModuleContext>>,
+    context: Arc<Mutex<ModuleContext>>,
 ) -> RuntimeResult {
     let left = eval_expr(left, context.clone())?;
 

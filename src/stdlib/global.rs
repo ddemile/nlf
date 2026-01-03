@@ -1,11 +1,12 @@
-use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, str::FromStr, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
 
 use lib::expose;
+use parking_lot::Mutex;
 
 use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE, types::{DynamicNumber, NumberHolder}};
 
 #[expose]
-fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn print(values: &[ValueHolder], context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let arguments: Vec<String> = values
         .iter()
         .map(|argument| -> String {
@@ -25,14 +26,14 @@ fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
 }
 
 #[expose]
-fn panic(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn panic(values: &[ValueHolder], _context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let message = argument!(values, ValueHolder::String, "message", 0);
 
     Err(LanguageError::with_source(RuntimeError::Custom(message.clone()), 0, 0))
 }
 
 #[expose]
-fn now(_values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn now(_values: &[ValueHolder], _context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let start = SystemTime::now();
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
@@ -41,7 +42,7 @@ fn now(_values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runtime
 }
 
 #[expose]
-fn assert(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn assert(values: &[ValueHolder], _context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let a = match values.get(0).unwrap() {
         ValueHolder::Bool(f) => f,
         _ => panic!("Expected bool value"),
@@ -55,13 +56,13 @@ fn assert(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runti
 }
 
 #[expose]
-fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn binding(values: &[ValueHolder], context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let name = match values.get(0).unwrap() {
         ValueHolder::String(f) => f,
         _ => panic!("Expected test name"),
     };
 
-    let table = MODULE_TABLE.lock().unwrap();
+    let table = MODULE_TABLE.lock();
 
     if !table.contains_key(name.as_str()) {
         return Err(LanguageError::from(RuntimeError::Custom(format!("Core module not found: {}", name))))
@@ -73,10 +74,10 @@ fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runti
 
     for (key, value) in module_map {
         let function = ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
-            func: Rc::new(Arc::new(move |_, args, ctx| {
+            func: Arc::new(Arc::new(move |_, args, ctx| {
                 value.clone()(&args, ctx)
             })),
-            instance: Rc::new(ValueHolder::Void)
+            instance: Arc::new(ValueHolder::Void)
         }));
 
         map.insert(key.to_string(), function);
@@ -86,7 +87,7 @@ fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runti
 }
 
 #[expose]
-fn input(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn input(values: &[ValueHolder], _context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let prompt = argument!(values, ValueHolder::String, "prompt", 0);
     
     print!("{}", prompt);
@@ -101,7 +102,7 @@ fn input(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runtim
 }
 
 #[expose]
-fn confirm(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn confirm(values: &[ValueHolder], _context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let prompt = argument!(values, ValueHolder::String, "prompt", 0);
     
     loop {
@@ -120,7 +121,7 @@ fn confirm(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runt
 }
 
 #[expose]
-fn cast_number(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn cast_number(values: &[ValueHolder], _context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let number = argument!(values, ValueHolder::Number, "number", 0);
     let cast = argument!(values, ValueHolder::String, "cast", 1);
 
@@ -128,7 +129,7 @@ fn cast_number(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> 
 }
 
 #[expose]
-fn get_number_type(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn get_number_type(values: &[ValueHolder], _context: Arc<Mutex<ModuleContext>>) -> RuntimeResult {
     let number = argument!(values, ValueHolder::Number, "number", 0);
 
     Ok(ValueHolder::String(number.get_str_repr()))

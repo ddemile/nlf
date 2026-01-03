@@ -71,7 +71,11 @@ pub enum KeywordKind {
     Let,
     Export,
     Import,
-    From
+    From,
+    Class,
+    Public,
+    Protected,
+    Private
 }
 
 pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
@@ -93,6 +97,7 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
                     while !matches!(char_at(cursor), Some('\n')) && cursor < code.len() {
                         cursor += 1;
                     }
+                    cursor += 1;
                 }
 
                 let mut longest_match = "";
@@ -167,6 +172,10 @@ fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("export", TokenKind::Keyword(KeywordKind::Export));
     map.insert("import", TokenKind::Keyword(KeywordKind::Import));
     map.insert("from", TokenKind::Keyword(KeywordKind::From));
+    map.insert("class", TokenKind::Keyword(KeywordKind::Class));
+    map.insert("public", TokenKind::Keyword(KeywordKind::Public));
+    map.insert("protected", TokenKind::Keyword(KeywordKind::Protected));
+    map.insert("private", TokenKind::Keyword(KeywordKind::Private));
 
     // Booleans
     map.insert("true", TokenKind::BooleanLiteral { value: true });
