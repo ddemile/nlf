@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{ClassDefinition, Scope, prototypes::MethodFunc}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{ClassDefinition, Scope, prototypes::{BuiltInMethodFunc, Method}}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
 };
 
 macro_rules! expect_token {
@@ -53,13 +53,13 @@ pub struct RuntimeFunction {
     pub arguments: Vec<VariableRef>,
     pub statements: Vec<Statement>,
     #[serde(skip)]
-    pub scope: Arc<Mutex<Scope>>,
+    pub scope: Rc<RefCell<Scope>>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct BuiltInFunction {
     #[serde(skip)]
-    pub func: Arc<MethodFunc>,
+    pub func: Method,
     #[serde(skip)]
     pub instance: Arc<ValueHolder>,
 }

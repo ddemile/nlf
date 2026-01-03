@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::{Arc}};
+use std::{cell::RefCell, collections::HashMap, io::SeekFrom, rc::Rc, sync::Arc};
 
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -14,17 +14,34 @@ pub enum Operation {
     Modulo
 }
 
-pub type OperatorFunc = Arc<dyn Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Send + Sync>;
-pub type MethodFunc = Arc<dyn Fn(&ValueHolder, Vec<ValueHolder>, Arc<Mutex<ModuleContext>>) -> RuntimeResult + Send + Sync>;
-
 #[derive(Clone)]
-pub struct Prototype {
-    pub _name: String,
-    operators: Vec<Option<OperatorFunc>>,
-    methods: HashMap<String, MethodFunc>
+pub enum Method {
+    BuiltIn(BuiltInMethodFunc),
+    Local(LocalMethodFunc)
 }
 
-impl std::fmt::Debug for Prototype {
+impl Method {
+    pub fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+        match self {
+            Method::BuiltIn(method) => method(this, arguments, context_ref),
+            Method::Local(method) => method.call(this, arguments, context_ref),
+        }
+    }
+}
+
+pub trait Prototype {
+    fn operate(&self, operation: Operation, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult;
+    fn get_method(&self, name: &str) -> Option<Method>;
+}
+
+#[derive(Clone)]
+pub struct LocalPrototype {
+    pub _name: String,
+    operators: Vec<Option<LocalOperatorFunc>>,
+    methods: HashMap<String, LocalMethodFunc>
+}
+
+impl std::fmt::Debug for LocalPrototype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Prototype")
             .field("_name", &self._name)
@@ -32,12 +49,82 @@ impl std::fmt::Debug for Prototype {
     }
 }
 
-impl Prototype {
+impl Prototype for LocalPrototype {
+    fn operate(&self, operation: Operation, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult {
+        let operation_id = operation as usize;
+
+        if self.operators.len() <= operation_id {
+            return Err(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))));
+        }
+
+        let func: &LocalOperatorFunc = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
+
+        func.call(a, b)
+    }
+
+    fn get_method(&self, name: &str) -> Option<Method> {
+        self.methods.get(name).map(|method| Method::Local(method.clone()))
+    }
+}
+
+pub trait LocalOperatorFuncTrait {
+    fn call(&self, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult;
+    fn box_clone(&self) -> Box<dyn LocalOperatorFuncTrait>;
+}
+
+impl<T> LocalOperatorFuncTrait for T
+where
+    T: Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Clone + 'static,
+{
+    fn call(&self, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult {
+        self(a, b)
+    }
+
+    fn box_clone(&self) -> Box<dyn LocalOperatorFuncTrait> {
+        Box::new(self.clone())
+    }
+}
+
+pub type LocalOperatorFunc = Box<dyn LocalOperatorFuncTrait>;
+
+impl Clone for LocalOperatorFunc {
+    fn clone(&self) -> Self {
+        self.box_clone()
+    }
+}
+
+pub trait LocalMethodFuncTrait {
+    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult;
+    fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait>;
+}
+
+impl<T> LocalMethodFuncTrait for T
+where
+    T: Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Clone + 'static,
+{
+    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+        self(this, arguments, context_ref)
+    }
+
+    fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait> {
+        Box::new(self.clone())
+    }
+}
+
+pub type LocalMethodFunc = Box<dyn LocalMethodFuncTrait>;
+
+impl Clone for LocalMethodFunc {
+    fn clone(&self) -> Self {
+        self.box_clone()
+    }
+}
+
+impl LocalPrototype {
     pub fn new(name: &str) -> Self {
         Self { _name: name.to_string(), operators: vec![], methods: HashMap::new() }
     }
 
-    pub fn with_operator(&mut self, operation: Operation, func: OperatorFunc) -> &mut Self {
+    pub fn with_operator(&mut self, operation: Operation, func: LocalOperatorFunc) -> &mut Self {
         let operation = operation as usize;
 
         if self.operators.len() <= operation {
@@ -49,31 +136,75 @@ impl Prototype {
         self
     }
 
-    pub fn with_method(&mut self, name: &str, func: MethodFunc) -> &mut Self {
+    pub fn with_method(&mut self, name: &str, func: LocalMethodFunc) -> &mut Self {
         self.methods.insert(name.to_string(), func);
         self
     }
+}
 
-    pub fn operate(&self, operation: Operation, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult {
+
+#[derive(Clone)]
+pub struct BuiltInPrototype {
+    pub _name: String,
+    operators: Vec<Option<BuiltInOperatorFunc>>,
+    methods: HashMap<String, BuiltInMethodFunc>
+}
+
+impl Prototype for BuiltInPrototype {
+    fn operate(&self, operation: Operation, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult {
         let operation_id = operation as usize;
 
         if self.operators.len() <= operation_id {
             return Err(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))));
         }
 
-        let func: &Arc<dyn Fn(&ValueHolder, &ValueHolder) -> Result<ValueHolder, LanguageError> + Send + Sync> = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
+        let func: &BuiltInOperatorFunc = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
 
         func(a, b)
     }
 
-    pub fn get_method(&self, name: &str) -> Option<&MethodFunc> {
-        self.methods.get(name)
+    fn get_method(&self, name: &str) -> Option<Method> {
+        self.methods.get(name).map(|method| Method::BuiltIn(method.clone()))
+    }
+}
+
+pub type BuiltInOperatorFunc = Arc<dyn Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Send + Sync>;
+pub type BuiltInMethodFunc = Arc<dyn Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>;
+
+impl std::fmt::Debug for BuiltInPrototype {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Prototype")
+            .field("_name", &self._name)
+            .finish()
+    }
+}
+
+impl BuiltInPrototype {
+    pub fn new(name: &str) -> Self {
+        Self { _name: name.to_string(), operators: vec![], methods: HashMap::new() }
+    }
+
+    pub fn with_operator(&mut self, operation: Operation, func: BuiltInOperatorFunc) -> &mut Self {
+        let operation = operation as usize;
+
+        if self.operators.len() <= operation {
+            self.operators.resize_with(operation + 1, || None);
+        }
+
+        self.operators[operation] = Some(func);
+        
+        self
+    }
+
+    pub fn with_method(&mut self, name: &str, func: BuiltInMethodFunc) -> &mut Self {
+        self.methods.insert(name.to_string(), func);
+        self
     }
 }
 
 lazy_static! {
-    pub static ref OBJECT_PROTOTYPE: Prototype = {
-        let mut prototype = Prototype::new("Object");
+    pub static ref OBJECT_PROTOTYPE: BuiltInPrototype = {
+        let mut prototype = BuiltInPrototype::new("Object");
         prototype
             .with_method("toString", Arc::new(|instance, args, _| {
                 if args.len() > 0 {
@@ -85,8 +216,8 @@ lazy_static! {
         prototype
     };
 
-    pub static ref ARRAY_PROTOTYPE: Prototype = {
-        let mut prototype = Prototype::new("Array");
+    pub static ref ARRAY_PROTOTYPE: BuiltInPrototype = {
+        let mut prototype = BuiltInPrototype::new("Array");
         prototype
             .with_method("toString", Arc::new(|instance, args, _| {
                 if args.len() > 0 {
@@ -135,8 +266,8 @@ lazy_static! {
         prototype
     };
 
-    pub static ref STRING_PROTOTYPE: Prototype = {
-        let mut prototype = Prototype::new("String");
+    pub static ref STRING_PROTOTYPE: BuiltInPrototype = {
+        let mut prototype = BuiltInPrototype::new("String");
         prototype
             .with_operator(Operation::Addition, Arc::new(|a, b| {
                 let ValueHolder::String(value) = a else {
@@ -174,8 +305,8 @@ lazy_static! {
         prototype
     };
 
-    pub static ref NUMBER_PROTOTYPE: Prototype = {
-        let mut prototype = Prototype::new("Number");
+    pub static ref NUMBER_PROTOTYPE: BuiltInPrototype = {
+        let mut prototype = BuiltInPrototype::new("Number");
         prototype
             .with_operator(Operation::Addition, Arc::new(|a, b| {
                 let ValueHolder::Number(a) = a else {

@@ -19,7 +19,7 @@ lazy_static! {
         Mutex::new(HashMap::new());
 }
 
-pub type NativeFunctionType = fn(&[ValueHolder], Arc<Mutex<ModuleContext>>) -> RuntimeResult;
+pub type NativeFunctionType = fn(&[ValueHolder], Rc<RefCell<ModuleContext>>) -> RuntimeResult;
 
 mod global;
 mod modules;

@@ -116,13 +116,13 @@ fn run_test(name: String, content: String) -> TestOutput {
 
         let now = Instant::now();
 
-        let program = Arc::new(Mutex::new(ProgramContext::new()));
+        let program = Rc::new(RefCell::new(ProgramContext::new()));
 
         let context = ModuleContext::new(program);
 
-        let context_ref = Arc::new(Mutex::new(context));
+        let context_ref = Rc::new(RefCell::new(context));
 
-        context_ref.lock().environment.init(context_ref.clone());
+        context_ref.borrow_mut().environment.init(context_ref.clone());
 
         let result = interpreter::interpret(ir, context_ref);
 

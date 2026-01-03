@@ -16,10 +16,10 @@ pub struct Import {
 pub struct Module {
     pub source: String,
     pub exports: HashMap<String, ValueHolder>,
-    pub context: Option<Arc<Mutex<ModuleContext>>>,
+    pub context: Option<Rc<RefCell<ModuleContext>>>,
     pub statements: Vec<Statement>,
     pub imports: Vec<Import>,
-    pub program: Arc<Mutex<ProgramContext>>,
+    pub program: Rc<RefCell<ProgramContext>>,
     pub contents: Option<Arc<Mutex<String>>>,
     pub kind: ModuleKind
 }
@@ -70,7 +70,7 @@ pub enum ModuleKind {
 }
 
 impl Module {
-    pub fn new(source: &str, kind: ModuleKind, program: Arc<Mutex<ProgramContext>>) -> Self {
+    pub fn new(source: &str, kind: ModuleKind, program: Rc<RefCell<ProgramContext>>) -> Self {
         Self {
             source: source.into(),
             exports: HashMap::new(),
@@ -240,22 +240,22 @@ impl Module {
 
         let context = ModuleContext::new(module_ref.lock().program.clone());
 
-        let context_ref = Arc::new(Mutex::new(context));
+        let context_ref = Rc::new(RefCell::new(context));
 
-        context_ref.lock().environment.init(context_ref.clone());
+        context_ref.borrow_mut().environment.init(context_ref.clone());
 
         module_ref.lock().context = Some(context_ref);
 
         {
             let context = module_ref.lock().context.clone().unwrap();
-            let mut context = context.lock();
+            let mut context = context.borrow_mut();
 
             let imports = module_ref.lock().imports.clone();
             for import in imports {
                 for specifier in &import.specifiers {
                     let name = specifier.name.clone().unwrap();
                     let module = module_ref.lock();
-                    let program = module.program.lock();
+                    let program = module.program.borrow();
 
                     let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.source.clone()).parent().unwrap().to_path_buf()))?;
                     
@@ -300,7 +300,7 @@ impl Module {
     }
 }
 
-pub fn resolve_module(path: &str, pg_context: Arc<Mutex<ProgramContext>>) -> LanguageResult<Arc<Mutex<Module>>> {
+pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> LanguageResult<Arc<Mutex<Module>>> {
     let kind = if PathBuf::from(path).exists() {
         ModuleKind::Standard
     } else if path.starts_with("core:") {
@@ -309,25 +309,25 @@ pub fn resolve_module(path: &str, pg_context: Arc<Mutex<ProgramContext>>) -> Lan
         return Err(LanguageError::from(LoaderError::ModuleNotFound(path.to_string())))
     };
 
-    if !pg_context.lock().modules.contains_key(path) {
+    if !pg_context.borrow().modules.contains_key(path) {
         let module = Arc::new(Mutex::new(Module::new(&path, kind, pg_context.clone())));
 
         // Borrow only to insert, then drop it immediately.
         {
-            let modules = &mut pg_context.lock().modules;
+            let modules = &mut pg_context.borrow_mut().modules;
             modules.insert(path.into(), module.clone());
         }
 
         Module::scan(module)?;
     }
 
-    let module = pg_context.lock().modules.get(path).unwrap().clone();
+    let module = pg_context.borrow().modules.get(path).unwrap().clone();
 
     Ok(module)
 }
 
 pub fn run_main(path: &str) -> LanguageResult<()> {
-    let pg_context = Arc::new(Mutex::new(ProgramContext::new()));
+    let pg_context = Rc::new(RefCell::new(ProgramContext::new()));
 
     let path = Module::resolve_path(path)?;
 
