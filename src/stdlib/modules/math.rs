@@ -1,7 +1,6 @@
-use std::{cell::RefCell, rc::Rc, sync::{Arc}};
+use std::{cell::RefCell, rc::Rc};
 
 use lib::module;
-use parking_lot::Mutex;
 
 use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, types::{DynamicNumber, NumberHolder}};
 

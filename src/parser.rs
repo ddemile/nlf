@@ -2,11 +2,10 @@ use std::{
     cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, sync::{Arc}
 };
 
-use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{ClassDefinition, Scope, prototypes::{BuiltInMethodFunc, Method}}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{ClassDefinition, Scope, prototypes::Method}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
 };
 
 macro_rules! expect_token {

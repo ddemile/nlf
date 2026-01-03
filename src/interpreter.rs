@@ -1,14 +1,13 @@
 use core::panic;
-use std::{cell::{RefCell, RefMut}, collections::HashMap, f32::NAN, fmt::{self}, rc::Rc, sync::{Arc}};
+use std::{cell::RefCell, collections::HashMap, fmt::{self}, rc::Rc, sync::{Arc}};
 
 use indexmap::IndexSet;
 use parking_lot::{Mutex, MutexGuard};
-use reqwest::Method;
 use serde::Serialize;
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
-        ARRAY_PROTOTYPE, BuiltInPrototype, LocalMethodFunc, LocalPrototype, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
+        ARRAY_PROTOTYPE, LocalPrototype, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }, lexer::TokenKind, loader::Module, parser::{
         ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE, types::{DynamicNumber, NumberHolder}
@@ -545,7 +544,7 @@ fn hoist_declarations(
 
                 let mut prototype = LocalPrototype::new(var_ref.name.clone().unwrap().as_ref());
 
-                prototype.with_operator(Operation::Addition, Box::new(move |a: &ValueHolder, b: &ValueHolder| {
+                prototype.with_operator(Operation::Addition, Box::new(move |_a: &ValueHolder, _b: &ValueHolder| {
                     Ok(ValueHolder::Number(DynamicNumber::from_str("545")))
                 }));
 
@@ -557,7 +556,7 @@ fn hoist_declarations(
                     let arguments = arguments.clone();
                     let statements = statements.clone();
                     
-                    prototype.with_method(&name, Box::new(move |this: &ValueHolder, call_arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>| {
+                    prototype.with_method(&name, Box::new(move |_this: &ValueHolder, call_arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>| {
                         let scope = context_ref.borrow_mut().environment.scopes.last_mut().unwrap().clone();
   
                         if arguments.len() != call_arguments.len() {

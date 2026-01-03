@@ -1,9 +1,8 @@
 #![feature(box_patterns)]
 #![feature(duration_millis_float)]
-use core::num;
-use std::{i64, path::Path, str::FromStr};
+use std::path::Path;
 
-use crate::{loader::run_main, types::{DynamicNumber, NumberHolder}};
+use crate::loader::run_main;
 use clap::Parser;
 
 mod lexer;
