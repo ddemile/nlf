@@ -512,7 +512,25 @@ fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<St
         let token = tokens.get(*cursor).unwrap();
         *cursor += 1;
 
+        if let TokenKind::Identifier { value } = &token.kind {
+            if *value == name {
+                *cursor -= 1;
+                methods.push(parse_function(cursor, tokens)?);
+                continue;
+            }
+        }
+
         if token.kind == TokenKind::Keyword(KeywordKind::Fn) {
+            let Some(Token { kind: TokenKind::Identifier { value }, .. }) = tokens.get(*cursor) else {
+                let token = tokens.get(*cursor).unwrap();
+                return Err(LanguageError::with_source(ParserError::InvalidType("identifier".into()), token.start, token.end))
+            };
+
+            if *value == name {
+                let token = tokens.get(*cursor).unwrap();
+                return Err(LanguageError::with_source(ParserError::UnexpectedToken("a valid function name".into()), token.start, token.end))
+            }
+
             methods.push(parse_function(cursor, tokens)?);
         } else if let TokenKind::Keyword(KeywordKind::Public | KeywordKind::Protected | KeywordKind::Private) = &token.kind {
             let visibility = Visibility::from(&token.kind);

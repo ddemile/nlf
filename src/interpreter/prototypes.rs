@@ -22,8 +22,8 @@ pub enum Method {
 impl Method {
     pub fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
         match self {
-            Method::BuiltIn(method) => method(this, arguments, context_ref),
             Method::Local(method) => method.call(this, arguments, context_ref),
+            Method::BuiltIn(method) => method(this, arguments, context_ref),
         }
     }
 }

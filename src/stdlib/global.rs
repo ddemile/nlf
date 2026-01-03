@@ -82,7 +82,7 @@ fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runti
         map.insert(key.to_string(), function);
     }
 
-    Ok(ValueHolder::Object(ObjectRef::new(map, context)))
+    Ok(ValueHolder::Object(ObjectRef::new(map, None, context)))
 }
 
 #[expose]

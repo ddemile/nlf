@@ -183,8 +183,8 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
         Statement::Export { declaration } => {
             Ok(Statement::Export { declaration: Box::new(translate_statement(*declaration, context)?) })
         }
-        Statement::Class { name,  methods, fields } => {
-            let var_ref = context.set(&name);
+        Statement::Class { name: class_name,  methods, fields } => {
+            let var_ref = context.set(&class_name);
 
             let mut translated_methods = vec![];
             for method in methods {
@@ -193,7 +193,13 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
                 };
 
                 context.enter_scope(ScopeKind::Function);
-                context.set(&name);
+                if name == class_name {
+                    // When accessing the method name in the constructor, return the class instead of the constructor
+                    context.set("0");
+                } else {
+                    context.set(&name);
+                }
+                context.set("self");
                 let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
                 let statements = translate_body(&statements, context)?;
                 context.exit_scope();

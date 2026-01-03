@@ -65,7 +65,6 @@ impl ValueHolder {
             ValueHolder::Number(_) => &*NUMBER_PROTOTYPE,
             ValueHolder::Object(_) => &*OBJECT_PROTOTYPE,
             ValueHolder::Array(_) => &*ARRAY_PROTOTYPE,
-            ValueHolder::ClassDefinition(ClassDefinition { prototype, .. }) => prototype,
             _ => todo!(),
         }
     }
@@ -148,10 +147,18 @@ pub struct Schema {
     keys: IndexSet<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Object {
     schema_id: usize,
     values: Vec<ValueHolder>,
+    prototype: Option<Rc<dyn Prototype>>
+}
+
+impl std::fmt::Debug for Object {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Object")
+            .finish()
+    }
 }
 
 fn get_schema(keys: IndexSet<String>, context: Rc<RefCell<ModuleContext>>) -> Schema {
@@ -175,7 +182,7 @@ fn get_schema(keys: IndexSet<String>, context: Rc<RefCell<ModuleContext>>) -> Sc
 }
 
 impl ObjectRef {
-    pub fn new(entries: HashMap<String, ValueHolder>, context: Rc<RefCell<ModuleContext>>) -> Self {
+    pub fn new(entries: HashMap<String, ValueHolder>, prototype: Option<Rc<dyn Prototype>>, context: Rc<RefCell<ModuleContext>>) -> Self {
         let keys: IndexSet<String> = entries.keys().cloned().collect();
 
         let schema = get_schema(keys, context.clone());
@@ -183,6 +190,7 @@ impl ObjectRef {
         let object = Object {
             schema_id: schema.id,
             values: entries.values().cloned().collect(),
+            prototype
         };
 
         let context = context.borrow();
@@ -228,6 +236,8 @@ impl ObjectRef {
             .get(&self.object_id)
             .expect("Object not found");
 
+        let prototype = object.prototype.clone();
+
         let schema = program
             .schemas
             .iter()
@@ -255,6 +265,7 @@ impl ObjectRef {
         let object = Object {
             schema_id: schema.id,
             values,
+            prototype
         };
 
         let context = context_ref.borrow();
@@ -289,6 +300,18 @@ impl ObjectRef {
 
         map
     }
+
+    pub fn get_prototype(&self, context_ref: Rc<RefCell<ModuleContext>>) -> Option<Rc<dyn Prototype>> {
+        let context = context_ref.borrow();
+        let program = context.program.borrow();
+
+        let object = program
+            .store
+            .get(&self.object_id)
+            .expect("Object not found");
+
+        object.prototype.clone()
+    }
 }
 
 impl ArrayRef {
@@ -299,7 +322,7 @@ impl ArrayRef {
         let array_id = program.store.len() + 1;
 
         // Placeholder implementation
-        program.store.insert(array_id, Object { schema_id: 0, values: items });
+        program.store.insert(array_id, Object { schema_id: 0, values: items, prototype: None });
 
         ArrayRef { array_id }
     }
@@ -343,6 +366,7 @@ impl ArrayRef {
         let object = Object {
             schema_id: 0,
             values,
+            prototype: None
         };
 
         let mut program = context.program.borrow_mut();
@@ -556,7 +580,7 @@ fn hoist_declarations(
                     let arguments = arguments.clone();
                     let statements = statements.clone();
                     
-                    prototype.with_method(&name, Box::new(move |_this: &ValueHolder, call_arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>| {
+                    prototype.with_method(&name, Box::new(move |this: &ValueHolder, call_arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>| {
                         let scope = context_ref.borrow_mut().environment.scopes.last_mut().unwrap().clone();
   
                         if arguments.len() != call_arguments.len() {
@@ -579,10 +603,24 @@ fn hoist_declarations(
                             ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                                 arguments: arguments.clone(),
                                 statements: statements.clone(),
-                                scope,
+                                scope: scope.clone(),
                             })),
                             true,
                         )?;
+
+                        if let ValueHolder::Object(object_ref) = this {
+                            context.borrow_mut().environment.set(
+                                &VariableRef {
+                                    name: None,
+                                    slot: 1,
+                                    depth: 0,
+                                },
+                                ValueHolder::Object(*object_ref),
+                                true,
+                            )?
+                        } else {
+                            unreachable!()
+                        };
 
                         for (argument, value) in arguments.iter().zip(call_arguments.iter()) {
                             context
@@ -895,9 +933,22 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 };
             };
 
-            let prototype = value.get_prototype();
+            let mut prototype: Option<&dyn Prototype> = if let ValueHolder::Object(object) = value {
+                if let Some(prototype) = object.get_prototype(context_ref.clone()) {
+                    Some(&*prototype.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if prototype.is_none() {
+                prototype = Some(value.get_prototype());
+            }
 
             let method = prototype
+                .unwrap()
                 .get_method(&property)
                 .ok_or(LanguageError::with_source(RuntimeError::NoSuchProperty(property), 0, 0))?;
 
@@ -914,7 +965,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                     .iter()
                     .map(|(k, v)| (k.clone(), eval_expr(v, context_ref.clone()).unwrap()))
                     .collect();
-                let object_ref = ObjectRef::new(entries, context_ref.clone());
+                let object_ref = ObjectRef::new(entries, None, context_ref.clone());
                 return Ok(ValueHolder::Object(object_ref));
             } else if let LiteralExpressionKind::Array(items) = r#type {
                 let items: Vec<ValueHolder> = items
@@ -1026,15 +1077,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 let value = eval_expr(&object, context_ref.clone())?;
 
                 if let ValueHolder::Object(ObjectRef { object_id }) = value {
-                    let value = match &**property {
-                        Expression::Literal { r#type: _, value } => value,
-                        Expression::Variable(_) => &eval_expr(&property, context_ref.clone())?,
-                        _ => {
-                            return Err(LanguageError::with_source(RuntimeError::InvalidType(
-                                "Property should be a variable".to_string(),
-                            ), 0, 0));
-                        }
-                    };
+                    let value = eval_expr(property, context_ref.clone())?;
 
                     let ValueHolder::String(property) = value else {
                         return Err(LanguageError::with_source(RuntimeError::InvalidType(
@@ -1197,6 +1240,22 @@ fn eval_call(
 
     if let ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func, instance })) = expr {
         return func.call(&instance, evaluated_args, context.clone());
+    }
+
+    if let ValueHolder::ClassDefinition(definition) = expr {
+        let mut entries = HashMap::new();
+        for field in definition.fields {
+            entries.insert(field.name, field.value);
+        }
+        let prototype = Rc::new(definition.prototype);
+        let class = ValueHolder::Object(ObjectRef::new(entries, Some(prototype.clone()), context.clone()));
+        let constructor = prototype.get_method(&prototype._name);
+        if let Some(method) = constructor {
+            method.call(&class, evaluated_args, context.clone())?;
+        } else if evaluated_args.len() != 0 {
+            return Err(LanguageError::with_source(RuntimeError::Custom("No arguments accepted when a constructor is not defined".to_string()), 0 ,0));
+        }
+        return Ok(class);
     }
 
     panic!("Tried to call invalid function expression: {:?}", *callee);
