@@ -98,7 +98,7 @@ macro_rules! overload_operator {
                     (NumberHolder::Float64(a), NumberHolder::Float64(b)) => Some(NumberHolder::Float64(a.$fn_name(b))),
                     _ => panic!()
                 }
-            }   
+            }
         }
     };
 }

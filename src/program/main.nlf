@@ -1,0 +1,5 @@
+let native_addon = addon("C:/Users/emili/Documents/Programmation/Rust/test-lib/target/debug/test_lib.dll")
+
+native_addon.debug("ddemile", 10)
+
+print(native_addon.not(true))

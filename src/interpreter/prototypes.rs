@@ -1,8 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use lazy_static::lazy_static;
+use shared::numbers::{DynamicNumber, NumberHolder};
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, types::{DynamicNumber, NumberHolder}};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub enum Operation {

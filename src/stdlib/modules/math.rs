@@ -1,8 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
 use lib::module;
+use shared::numbers::{DynamicNumber, NumberHolder};
 
-use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, types::{DynamicNumber, NumberHolder}};
+use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
 
 module!("math", {
     fn sqrt(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {

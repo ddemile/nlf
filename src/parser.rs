@@ -3,9 +3,10 @@ use std::{
 };
 
 use serde::Serialize;
+use shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{ClassDefinition, Scope, prototypes::Method}, lexer::{KeywordKind, Token, TokenKind}, types::{DynamicNumber, NumberHolder}
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{ClassDefinition, Scope, prototypes::Method}, lexer::{KeywordKind, Token, TokenKind}
 };
 
 macro_rules! expect_token {

@@ -13,7 +13,7 @@ mod tests;
 mod loader;
 mod errors;
 mod stdlib;
-mod types;
+mod addons;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

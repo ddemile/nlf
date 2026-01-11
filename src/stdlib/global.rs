@@ -1,8 +1,10 @@
 use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
 
 use lib::expose;
+use rayon::vec;
+use shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
 
-use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE, types::{DynamicNumber, NumberHolder}};
+use crate::{addons::Addon, argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
 
 #[expose]
 fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
@@ -132,4 +134,30 @@ fn get_number_type(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>)
     let number = argument!(values, ValueHolder::Number, "number", 0);
 
     Ok(ValueHolder::String(number.get_str_repr()))
+}
+
+#[expose]
+fn addon(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+    let path = argument!(values, ValueHolder::String, "path", 0);
+
+    let addon = Addon::new(&path);
+
+    let mut map: HashMap<String, ValueHolder> = HashMap::new();
+
+    for function in addon.functions {
+        let func = ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
+            func: Method::BuiltIn(Arc::new(move |_, args, ctx| {
+                let args: Vec<AddonValue> = args.iter().map(|arg| {
+                    <ValueHolder as Into<AddonValue>>::into(arg.clone())
+                }).collect();
+
+                Ok((function.1)(args).into())
+            })),
+            instance: Arc::new(ValueHolder::Void)
+        }));
+
+        map.insert(function.0, func);
+    }
+
+    Ok(ValueHolder::Object(ObjectRef::new(map, None, context)))
 }

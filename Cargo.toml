@@ -14,6 +14,7 @@ ctor = "0.6.1"
 indexmap = "2.11.4"
 inline_colorization = "0.1.6"
 lazy_static = "1.5.0"
+libloading = "0.9.0"
 parking_lot = "0.12.5"
 quote = "1.0.42"
 rand = "0.9.2"
@@ -23,7 +24,9 @@ rust-embed = { version = "8.9.0", features = ["include-exclude"]}
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 strum = { version = "0.27.2", features = ["derive"] }
-syn = "2.0.110"
+syn = "2.0.113"
+# types = { path = "./types"}
+shared = { path = "./shared"}
 
 [profile.release]
 debug = true

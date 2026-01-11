@@ -1,0 +1,12 @@
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+addon = ["dep:inventory"]
+
+[dependencies]
+inventory = { version = "0.3.21", optional = true }
+serde = { version = "1.0.228", features = ["derive"] }
+strum = { version = "0.27.2", features = ["derive"] }

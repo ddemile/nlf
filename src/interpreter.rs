@@ -4,13 +4,14 @@ use std::{cell::RefCell, collections::HashMap, fmt::{self}, rc::Rc, sync::{Arc}}
 use indexmap::IndexSet;
 use parking_lot::{Mutex, MutexGuard};
 use serde::Serialize;
+use shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
         ARRAY_PROTOTYPE, LocalPrototype, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }, lexer::TokenKind, loader::Module, parser::{
         ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef, Visibility
-    }, stdlib::FUNCTION_TABLE, types::{DynamicNumber, NumberHolder}
+    }, stdlib::FUNCTION_TABLE
 };
 
 use inline_colorization::*;
