@@ -3,14 +3,14 @@ use std::{collections::HashMap, path::PathBuf};
 use lazy_static::lazy_static;
 use libloading::{Library, Symbol};
 use parking_lot::Mutex;
-use shared::{addons::{AddonCall, AddonFn, AddonValue}, numbers::{DynamicNumber, NumberHolder}};
+use shared::addons::{AddonCall, AddonFn, AddonValue};
 
 use crate::{parser::ValueHolder};
 
 impl From<ValueHolder> for AddonValue {
     fn from(value: ValueHolder) -> Self {
         match value {
-            ValueHolder::Number(number) => AddonValue::Number(number.clone().into()),
+            ValueHolder::Number(number) => AddonValue::Number(number),
             ValueHolder::String(string) => AddonValue::String(string),
             ValueHolder::Bool(bool) => AddonValue::Bool(bool),
             ValueHolder::Void => AddonValue::Void,
@@ -22,7 +22,7 @@ impl From<ValueHolder> for AddonValue {
 impl Into<ValueHolder> for AddonValue {
     fn into(self) -> ValueHolder {
         match self {
-            AddonValue::Number(number) => ValueHolder::Number(DynamicNumber::new(NumberHolder::Integer32(number))),
+            AddonValue::Number(number) => ValueHolder::Number(number),
             AddonValue::String(string) => ValueHolder::String(string),
             AddonValue::Bool(bool) => ValueHolder::Bool(bool),
             AddonValue::Void => ValueHolder::Void,

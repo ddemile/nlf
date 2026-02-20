@@ -1,3 +1,5 @@
+use crate::numbers::DynamicNumber;
+
 pub type AddonCall = extern "Rust" fn(Vec<AddonValue>) -> AddonValue;
 
 pub struct AddonFn {
@@ -10,7 +12,7 @@ inventory::collect!(AddonFn);
 
 pub enum AddonValue {
     String(String),
-    Number(i32),
+    Number(DynamicNumber),
     Bool(bool),
     Void
 }

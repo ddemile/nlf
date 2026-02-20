@@ -1,0 +1,14 @@
+// Name: Age check with if/else if/else
+let age = 16
+
+fn check_age(age) {
+    if age >= 18 {
+        return "allowed"
+    } else if age >= 16 {
+        return "almost allowed"
+    } else {
+        return "not allowed"
+    }
+}
+
+assert(check_age(age) == "almost allowed")

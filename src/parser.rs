@@ -384,7 +384,7 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
         TokenKind::Keyword(KeywordKind::While) => {
             *cursor += 1;
 
-            let condition = equality_expression(cursor, tokens)?;
+            let condition = logical_expression(cursor, tokens)?;
 
             let inner_statements = block(cursor, tokens)?;
 
@@ -401,7 +401,7 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
         TokenKind::Keyword(KeywordKind::Return) => {
             *cursor += 1;
             Some(Statement::Return {
-                expression: equality_expression(cursor, tokens)?,
+                expression: logical_expression(cursor, tokens)?,
             })
         }
         TokenKind::Keyword(KeywordKind::Break) => {
@@ -430,7 +430,7 @@ fn match_token(cursor: &mut usize, tokens: &mut Vec<Token>, token: Token) -> Lan
                     }
                     _ => {
                         // Parse the argument
-                        let expr = equality_expression(cursor, tokens)?;
+                        let expr = logical_expression(cursor, tokens)?;
                         specifiers.push(ImportSpecifier { local: expr });
 
                         // After parsing argument, check if next token is a comma
@@ -550,7 +550,7 @@ fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<St
 
             *cursor += 1;
 
-            let value = equality_expression(cursor, tokens)?;
+            let value = logical_expression(cursor, tokens)?;
 
             fields.push(Statement::Field {
                 visibility,
@@ -631,7 +631,7 @@ fn parse_function(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult
 }
 
 fn parse_if(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Statement> {
-    let condition = equality_expression(cursor, tokens)?;
+    let condition = logical_expression(cursor, tokens)?;
 
     let inner_statements = block(cursor, tokens)?;
 
@@ -687,7 +687,7 @@ fn assignment_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Languag
         false
     };
 
-    let left = equality_expression(cursor, tokens)?;
+    let left = logical_expression(cursor, tokens)?;
 
     if matches!(left, Expression::Literal { .. })
         || (!is_definition && matches!(left, Expression::Member { .. }))
@@ -698,7 +698,7 @@ fn assignment_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Languag
             return Ok(Expression::Assignment {
                 left: Box::new(left),
                 operator,
-                right: Box::new(equality_expression(cursor, tokens)?),
+                right: Box::new(logical_expression(cursor, tokens)?),
                 is_definition,
             });
         }
@@ -707,29 +707,29 @@ fn assignment_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> Languag
     Ok(left)
 }
 
-fn equality_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
-    let mut left = logical_expression(cursor, tokens)?;
-    while matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::EQ | TokenKind::NE)) {
+fn logical_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
+    let mut left: Expression = equality_expression(cursor, tokens)?;
+    while matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::And | TokenKind::Or)) {
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
-        left = Expression::Equality {
+        left = Expression::Logical {
             left: Box::new(left),
             operator,
-            right: Box::new(logical_expression(cursor, tokens)?),
+            right: Box::new(equality_expression(cursor, tokens)?),
         };
     }
 
     Ok(left)
 }
 
-fn logical_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
-    let mut left: Expression = relational_expression(cursor, tokens)?;
-    while matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::And | TokenKind::Or)) {
+fn equality_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
+    let mut left = relational_expression(cursor, tokens)?;
+    while matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::EQ | TokenKind::NE)) {
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
-        left = Expression::Logical {
+        left = Expression::Equality {
             left: Box::new(left),
             operator,
             right: Box::new(relational_expression(cursor, tokens)?),
@@ -807,7 +807,7 @@ fn call_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResul
                     }
                     _ => {
                         // Parse the argument
-                        let expr = equality_expression(cursor, tokens)?;
+                        let expr = logical_expression(cursor, tokens)?;
                         args.push(expr);
 
                         // After parsing argument, check if next token is a comma
@@ -986,7 +986,7 @@ fn member(
 
             expr = Expression::Member {
                 object: Box::new(expr),
-                property: Box::new(equality_expression(cursor, tokens)?),
+                property: Box::new(logical_expression(cursor, tokens)?),
             };
 
             if !matches!(tokens.get(*cursor).map(|token| token.kind.clone()), Some(TokenKind::ClosingSquareBracket)) {
@@ -1011,7 +1011,7 @@ fn member(
                     }
                     _ => {
                         // Parse the argument
-                        let expr = equality_expression(cursor, tokens)?;
+                        let expr = logical_expression(cursor, tokens)?;
                         args.push(expr);
 
                         // After parsing argument, check if next token is a comma

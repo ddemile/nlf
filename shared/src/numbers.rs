@@ -77,6 +77,46 @@ into!(usize);
 into!(f32);
 into!(f64);
 
+macro_rules! from {
+    ($type:ident, $name:ident) => {
+        impl From<$type> for DynamicNumber {
+            fn from(value: $type) -> Self {
+                DynamicNumber::new(NumberHolder::$name(value))
+            }
+        }
+    };
+    ($type:ident, $name:ident, $as:ident) => {
+        impl From<$type> for DynamicNumber {
+            fn from(value: $type) -> Self {
+                DynamicNumber::new(NumberHolder::$name(value as $as))
+            }
+        }
+    };
+}
+
+from!(u8, Unsigned8);
+from!(u16, Unsigned16);
+from!(u32, Unsigned32);
+from!(u64, Unsigned64);
+from!(u128, Unsigned128);
+#[cfg(target_pointer_width = "32")]
+from!(usize, Unsigned32, u32);
+#[cfg(target_pointer_width = "64")]
+from!(usize, Unsigned64, u64);
+
+from!(i8, Integer8);
+from!(i16, Integer16);
+from!(i32, Integer32);
+from!(i64, Integer64);
+from!(i128, Integer128);
+#[cfg(target_pointer_width = "32")]
+from!(isize, Integer32, i32);
+#[cfg(target_pointer_width = "64")]
+from!(isize, Integer64, i64);
+
+from!(f32, Float32);
+from!(f64, Float64);
+
 macro_rules! overload_operator {
     ($name:ident, $fn_name:ident, $checked_fn_name:ident) => {
         impl ops::$name for NumberHolder {

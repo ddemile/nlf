@@ -876,10 +876,10 @@ fn eval_if(
 ) -> RuntimeResult {
     let cond: bool = eval_expr(condition, context_ref.clone())?.into();
 
-    context_ref.borrow_mut().environment.enter_scope(ScopeKind::Regular);
-
     if cond {
+        context_ref.borrow_mut().environment.enter_scope(ScopeKind::Regular);
         eval_body(&block.statements, context_ref.clone())?;
+        context_ref.borrow_mut().environment.exit_scope();
     } else if let Some(box Statement::If {
         condition,
         block,
@@ -888,9 +888,10 @@ fn eval_if(
     {
         eval_if(&condition, block, alternate, context_ref.clone())?;
     } else if let Some(box Statement::Block(Block { statements })) = alternate {
+        context_ref.borrow_mut().environment.enter_scope(ScopeKind::Regular);
         eval_body(&statements, context_ref.clone())?;
+        context_ref.borrow_mut().environment.exit_scope();
     }
-    context_ref.borrow_mut().environment.exit_scope();
     Ok(ValueHolder::Void)
 }
 
