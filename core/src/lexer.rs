@@ -206,8 +206,8 @@ fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("&&", TokenKind::And);
     map.insert("||", TokenKind::Or);
 
-    map.insert("->", TokenKind::Arrow);
-    
+    map.insert("=>", TokenKind::Arrow);
+
     return map;
 }
 

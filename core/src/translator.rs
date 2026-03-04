@@ -249,12 +249,46 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
                 property: Box::new(property),
             })
         }
-        Expression::Literal { r#type, value: ValueHolder::String(value) } => {
-            if let LiteralExpressionKind::Variable = r#type {
-                let variable_ref = context.get(value).ok_or("Not found")?;
+        Expression::Literal { r#type, value } => {
+            match r#type {
+                LiteralExpressionKind::Variable => {
+                    let ValueHolder::String(value) = value else {
+                        panic!()
+                    };
 
-                return Ok(Expression::Variable(variable_ref));
+                    let variable_ref = context.get(value).ok_or("Not found")?;
+
+                    return Ok(Expression::Variable(variable_ref));
+                }
+                LiteralExpressionKind::Function(statement) => {
+                    let box Statement::Function { name, arguments, statements } = statement.clone() else {
+                        panic!()
+                    };
+
+                    let var_ref = context.set(&name);
+                    context.enter_scope(ScopeKind::Function);
+                    context.set(&name);
+                    let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
+                    let statements = translate_body(&statements, context)?;
+                    context.exit_scope();
+
+                    return Ok(Expression::Literal { r#type: LiteralExpressionKind::Function(Box::new(Statement::FunctionIR {
+                        var_ref,
+                        arguments: inner_arguements,
+                        statements
+                    })), value: value.clone() })
+                }
+                LiteralExpressionKind::Array(array) => {
+                    return Ok(Expression::Literal {
+                        r#type: LiteralExpressionKind::Array(array.iter().map(|expression| translate_expression(expression.clone(), context).unwrap()).collect()),
+                        value: value.clone()
+                    })
+                }
+                _ => ()
             }
+            // if let LiteralExpressionKind::Variable = r#type {
+
+            // }
 
             Ok(expression)
         }

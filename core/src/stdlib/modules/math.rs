@@ -1,7 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 
-use lib::module;
-use shared::numbers::{DynamicNumber, NumberHolder};
+use nlf_macros::module;
+use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
 
@@ -76,5 +76,9 @@ module!("math", {
         let x: f32 = x.into();
 
         Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.ceil()))))
+    }
+
+    fn pi(_values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(PI))))
     }
 });

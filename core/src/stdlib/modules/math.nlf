@@ -39,3 +39,7 @@ export fn floor(x) {
 export fn ceil(x) {
     return math.ceil(x)
 }
+
+export fn pi() {
+    return math.pi()
+}

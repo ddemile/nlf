@@ -1,9 +1,9 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use lazy_static::lazy_static;
-use shared::numbers::{DynamicNumber, NumberHolder};
+use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, Scope}, parser::ValueHolder};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub enum Operation {
@@ -17,13 +17,13 @@ pub enum Operation {
 #[derive(Clone)]
 pub enum Method {
     BuiltIn(BuiltInMethodFunc),
-    Local(LocalMethodFunc)
+    Local(LocalMethodFunc, Rc<RefCell<Scope>>)
 }
 
 impl Method {
     pub fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
         match self {
-            Method::Local(method) => method.call(this, arguments, context_ref),
+            Method::Local(method, scope) => method.call(this, arguments, context_ref, scope.clone()),
             Method::BuiltIn(method) => method(this, arguments, context_ref),
         }
     }
@@ -38,7 +38,7 @@ pub trait Prototype {
 pub struct LocalPrototype {
     pub _name: String,
     operators: Vec<Option<LocalOperatorFunc>>,
-    methods: HashMap<String, LocalMethodFunc>
+    methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)>
 }
 
 impl std::fmt::Debug for LocalPrototype {
@@ -63,7 +63,7 @@ impl Prototype for LocalPrototype {
     }
 
     fn get_method(&self, name: &str) -> Option<Method> {
-        self.methods.get(name).map(|method| Method::Local(method.clone()))
+        self.methods.get(name).map(|(method, scope)| Method::Local(method.clone(), scope.clone()))
     }
 }
 
@@ -94,16 +94,16 @@ impl Clone for LocalOperatorFunc {
 }
 
 pub trait LocalMethodFuncTrait {
-    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult;
+    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>, scope: Rc<RefCell<Scope>>) -> RuntimeResult;
     fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait>;
 }
 
 impl<T> LocalMethodFuncTrait for T
 where
-    T: Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Clone + 'static,
+    T: Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>, Rc<RefCell<Scope>>) -> RuntimeResult + Clone + 'static,
 {
-    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-        self(this, arguments, context_ref)
+    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>, scope: Rc<RefCell<Scope>>) -> RuntimeResult {
+        self(this, arguments, context_ref, scope)
     }
 
     fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait> {
@@ -136,8 +136,8 @@ impl LocalPrototype {
         self
     }
 
-    pub fn with_method(&mut self, name: &str, func: LocalMethodFunc) -> &mut Self {
-        self.methods.insert(name.to_string(), func);
+    pub fn with_method(&mut self, name: &str, func: LocalMethodFunc, scope: Rc<RefCell<Scope>>) -> &mut Self {
+        self.methods.insert(name.to_string(), (func, scope));
         self
     }
 }

@@ -2,18 +2,8 @@
 #![feature(duration_millis_float)]
 use std::path::Path;
 
-use crate::loader::run_main;
+use nlf_core::{tests, loader::run_main};
 use clap::Parser;
-
-mod lexer;
-mod parser;
-mod translator;
-mod interpreter;
-mod tests;
-mod loader;
-mod errors;
-mod stdlib;
-mod addons;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -27,11 +17,11 @@ fn main() {
     let args = Args::parse();
 
     if args.tests {
-        tests::run_tests(Path::new("./tests"));
+        tests::run_tests(Path::new("core/tests"));
         return;
     }
 
-    let file = if let Some(value) = args.file { value } else { String::from("src/program/main.nlf") };
+    let file = if let Some(value) = args.file { value } else { String::from("core/src/program/main.nlf") };
 
     match run_main(&file) {
         Ok(_) => (),

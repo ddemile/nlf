@@ -4,7 +4,7 @@ use std::{cell::RefCell, collections::HashMap, fmt::{self}, rc::Rc, sync::{Arc}}
 use indexmap::IndexSet;
 use parking_lot::{Mutex, MutexGuard};
 use serde::Serialize;
-use shared::numbers::{DynamicNumber, NumberHolder};
+use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
@@ -426,7 +426,7 @@ pub struct Scope {
     slots: Vec<ValueHolder>,
     interrupted: Option<ValueHolder>,
     parent: Option<Rc<RefCell<Scope>>>,
-    context: Rc<RefCell<ModuleContext>>
+    pub context: Rc<RefCell<ModuleContext>>
 }
 
 #[derive(Debug, Clone)]
@@ -569,10 +569,6 @@ fn hoist_declarations(
 
                 let mut prototype = LocalPrototype::new(var_ref.name.clone().unwrap().as_ref());
 
-                prototype.with_operator(Operation::Addition, Box::new(move |_a: &ValueHolder, _b: &ValueHolder| {
-                    Ok(ValueHolder::Number(DynamicNumber::from_str("545")))
-                }));
-
                 for method in raw_methods {
                     let Statement::Method { name, arguments, statements } = method.clone() else {
                         unreachable!()
@@ -580,10 +576,10 @@ fn hoist_declarations(
 
                     let arguments = arguments.clone();
                     let statements = statements.clone();
+
+                    let scope = context.environment.scopes.last_mut().cloned().unwrap();
                     
-                    prototype.with_method(&name, Box::new(move |this: &ValueHolder, call_arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>| {
-                        let scope = context_ref.borrow_mut().environment.scopes.last_mut().unwrap().clone();
-  
+                    prototype.with_method(&name, Box::new(move |this: &ValueHolder, call_arguments: Vec<ValueHolder>, _context_ref: Rc<RefCell<ModuleContext>>, scope: Rc<RefCell<Scope>>| {  
                         if arguments.len() != call_arguments.len() {
                             return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
                         }
@@ -633,7 +629,7 @@ fn hoist_declarations(
                         let return_value = eval_body(&statements, context.clone());
                         context.borrow_mut().environment.exit_scope();
                         return_value
-                    }));
+                    }), scope);
                 }
 
                 for field in raw_fields {
@@ -664,7 +660,7 @@ fn hoist_declarations(
     Ok(())
 }
 
-fn eval_body(statements: &Vec<Statement>, context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+pub fn eval_body(statements: &Vec<Statement>, context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
     hoist_declarations(statements, context.clone())?;
 
     for statement in statements {
@@ -976,6 +972,18 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                     .collect();
                 // ArrayRef creation to be implemented
                 return Ok(ValueHolder::Array(ArrayRef::new(items, context_ref.clone()))); // Placeholder
+            } else if let LiteralExpressionKind::Function(statement) = r#type {
+                let box Statement::FunctionIR { var_ref, arguments, statements } = statement.clone() else {
+                    panic!()
+                };
+
+                let scope = context_ref.borrow_mut().environment.scopes.last_mut().cloned().unwrap();
+
+                return Ok(ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
+                    arguments,
+                    statements,
+                    scope
+                })))
             } else if let LiteralExpressionKind::Variable = r#type {
                 return Err(LanguageError::with_source(RuntimeError::VariableNotFound(value.to_string()), 0, 0));
             } else {
@@ -1197,47 +1205,9 @@ fn eval_call(
 
     let expr = eval_expr(callee, context.clone())?;
 
-    if let ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
-        arguments,
-        statements,
-        scope
-    })) = expr
+    if let ValueHolder::Fn(FunctionKind::Runtime(function)) = expr
     {
-        if arguments.len() != evaluated_args.len() {
-            return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
-        }
-
-        let context = scope.borrow().context.clone();
-
-        context
-            .borrow_mut()
-            .environment
-            .enter_scope(ScopeKind::Call(scope.clone()));
-
-        context.borrow_mut().environment.set(
-            &VariableRef {
-                name: None,
-                slot: 0,
-                depth: 0,
-            },
-            ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
-                arguments: arguments.clone(),
-                statements: statements.clone(),
-                scope,
-            })),
-            true,
-        )?;
-
-        for (argument, value) in arguments.iter().zip(evaluated_args.iter()) {
-            context
-                .borrow_mut()
-                .environment
-                .set(argument, value.clone(), true)?;
-        }
-
-        let return_value = eval_body(&statements, context.clone());
-        context.borrow_mut().environment.exit_scope();
-        return return_value;
+        return eval_runtime_function(function, &evaluated_args);
     }
 
     if let ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction { func, instance })) = expr {
@@ -1261,6 +1231,44 @@ fn eval_call(
     }
 
     panic!("Tried to call invalid function expression: {:?}", *callee);
+}
+
+pub fn eval_runtime_function(function: RuntimeFunction, evaluated_args: &Vec<ValueHolder>) -> RuntimeResult {
+    if function.arguments.len() != evaluated_args.len() {
+        return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
+    }
+
+    let context = function.scope.borrow().context.clone();
+
+    context
+        .borrow_mut()
+        .environment
+        .enter_scope(ScopeKind::Call(function.scope.clone()));
+
+    context.borrow_mut().environment.set(
+        &VariableRef {
+            name: None,
+            slot: 0,
+            depth: 0,
+        },
+        ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
+            arguments: function.arguments.clone(),
+            statements: function.statements.clone(),
+            scope: function.scope,
+        })),
+        true,
+    )?;
+
+    for (argument, value) in function.arguments.iter().zip(evaluated_args.iter()) {
+        context
+            .borrow_mut()
+            .environment
+            .set(argument, value.clone(), true)?;
+    }
+
+    let return_value = eval_body(&function.statements, context.clone());
+    context.borrow_mut().environment.exit_scope();
+    return return_value;
 }
 
 fn eval_equality(

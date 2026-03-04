@@ -1,8 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
 
-use lib::expose;
+use nlf_macros::expose;
 use rayon::vec;
-use shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
+use nlf_shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
 
 use crate::{addons::Addon, argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
 

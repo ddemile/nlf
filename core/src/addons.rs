@@ -1,11 +1,11 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, rc::Rc};
 
 use lazy_static::lazy_static;
 use libloading::{Library, Symbol};
 use parking_lot::Mutex;
-use shared::addons::{AddonCall, AddonFn, AddonValue};
+use nlf_shared::addons::{AddonCall, AddonFn, AddonValue, FnRef};
 
-use crate::{parser::ValueHolder};
+use crate::{interpreter::{ScopeKind, eval_body, eval_runtime_function}, parser::{FunctionKind, RuntimeFunction, ValueHolder, VariableRef}};
 
 impl From<ValueHolder> for AddonValue {
     fn from(value: ValueHolder) -> Self {
@@ -13,6 +13,24 @@ impl From<ValueHolder> for AddonValue {
             ValueHolder::Number(number) => AddonValue::Number(number),
             ValueHolder::String(string) => AddonValue::String(string),
             ValueHolder::Bool(bool) => AddonValue::Bool(bool),
+            ValueHolder::Fn(func) => {
+                let func = func.clone();
+                let function_ref = FnRef::new(move |args| {
+                    let FunctionKind::Runtime(function) = func.clone() else {
+                        panic!()
+                    };
+
+                    let mut converted_args: Vec<ValueHolder> = vec![];
+
+                    for arg in args {
+                        converted_args.push(arg.into());
+                    }
+
+                    eval_runtime_function(function, &converted_args).unwrap().into()
+                });
+
+                AddonValue::Function(function_ref)
+            },
             ValueHolder::Void => AddonValue::Void,
             _ => panic!()
         }

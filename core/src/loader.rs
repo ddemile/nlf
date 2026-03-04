@@ -149,6 +149,7 @@ impl Module {
                 Statement::Export { declaration } => {
                     let var_ref = match declaration.clone() {
                         box Statement::FunctionIR { var_ref, .. } => var_ref,
+                        box Statement::ClassIR { var_ref, .. } => var_ref,
                         _ => panic!(),
                     };
 

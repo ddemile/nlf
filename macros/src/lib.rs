@@ -25,7 +25,7 @@ pub fn module(input: TokenStream) -> TokenStream {
     for stmt in content.stmts {
         if let Stmt::Item(Item::Fn(func)) = stmt {
             let decorated = quote! {
-                #[lib::expose(#name)]
+                #[nlf_macros::expose(#name)]
                 #func
             };
             output_items.push(decorated);

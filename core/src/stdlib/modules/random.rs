@@ -1,8 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use lib::module;
+use nlf_macros::module;
 use rand::Rng;
-use shared::numbers::{DynamicNumber, NumberHolder};
+use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
 

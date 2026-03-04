@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use lib::{module};
+use nlf_macros::module;
 
 use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder, argument};
 
