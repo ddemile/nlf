@@ -2,7 +2,7 @@ use std::{collections::HashMap, vec};
 
 use serde::Serialize;
 
-use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, ParserError, Program, Statement, StatementKind, ValueHolder, VariableRef}};
+use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}};
 
 #[derive(Debug)]
 pub enum TranslatorError {

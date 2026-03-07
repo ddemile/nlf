@@ -1,11 +1,11 @@
-use std::{collections::HashMap, path::PathBuf, rc::Rc};
+use std::{collections::HashMap, path::PathBuf};
 
 use lazy_static::lazy_static;
 use libloading::{Library, Symbol};
 use parking_lot::Mutex;
 use nlf_shared::addons::{AddonCall, AddonFn, AddonValue, FnRef};
 
-use crate::{interpreter::{ScopeKind, eval_body, eval_runtime_function}, parser::{FunctionKind, RuntimeFunction, ValueHolder, VariableRef}};
+use crate::{interpreter::eval_runtime_function, parser::{FunctionKind, ValueHolder}};
 
 impl From<ValueHolder> for AddonValue {
     fn from(value: ValueHolder) -> Self {

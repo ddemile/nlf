@@ -1,7 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
 
 use nlf_macros::expose;
-use rayon::vec;
 use nlf_shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
 
 use crate::{addons::Addon, argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
@@ -146,7 +145,7 @@ fn addon(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
 
     for function in addon.functions {
         let func = ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
-            func: Method::BuiltIn(Arc::new(move |_, args, ctx| {
+            func: Method::BuiltIn(Arc::new(move |_, args, _ctx| {
                 let args: Vec<AddonValue> = args.iter().map(|arg| {
                     <ValueHolder as Into<AddonValue>>::into(arg.clone())
                 }).collect();
@@ -163,7 +162,7 @@ fn addon(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
 }
 
 #[expose]
-fn debug(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn debug(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
     let start = argument!(values, ValueHolder::Number, "start", 0);
     let end = argument!(values, ValueHolder::Number, "end", 1);
 

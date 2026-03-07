@@ -977,7 +977,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 // ArrayRef creation to be implemented
                 return Ok(ValueHolder::Array(ArrayRef::new(items, context_ref.clone()))); // Placeholder
             } else if let LiteralExpressionKind::Function(statement) = r#type {
-                let box StatementKind::FunctionIR { var_ref, arguments, statements } = statement.clone() else {
+                let box StatementKind::FunctionIR { var_ref: _, arguments, statements } = statement.clone() else {
                     panic!()
                 };
 
