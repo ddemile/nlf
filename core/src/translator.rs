@@ -2,7 +2,15 @@ use std::{collections::HashMap, vec};
 
 use serde::Serialize;
 
-use crate::parser::{Block, Expression, LiteralExpressionKind, Program, Statement, ValueHolder, VariableRef};
+use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, ParserError, Program, Statement, StatementKind, ValueHolder, VariableRef}};
+
+#[derive(Debug)]
+pub enum TranslatorError {
+    UnknownVariable(String),
+    TODO(String)
+}
+
+impl LanguageErrorTrait for TranslatorError {}
 
 #[derive(Serialize, Debug, Clone)]
 enum ScopeKind {
@@ -14,9 +22,16 @@ enum ScopeKind {
     Block
 }
 
+#[derive(Serialize, Debug, Clone, Copy)]
+struct Symbol {
+    pub slot: usize,
+    pub start: usize,
+    pub end: usize
+}
+
 #[derive(Serialize, Debug, Clone)]
 struct SymbolTable {
-    map: HashMap<String, usize>
+    map: HashMap<String, Symbol>
 }
 
 impl SymbolTable {
@@ -24,13 +39,13 @@ impl SymbolTable {
         SymbolTable { map: HashMap::new() }
     }
 
-    fn get(&self, name: &str) -> Option<usize> {
+    fn get(&self, name: &str) -> Option<Symbol> {
         self.map.get(name).copied()
     }
 
-    fn set(&mut self, name: &str) -> usize {
+    fn set(&mut self, name: &str, position: (usize, usize)) -> usize {
         let id = self.map.len();
-        self.map.insert(name.to_string(), id);
+        self.map.insert(name.to_string(), Symbol { slot: id, start: position.0, end: position.1 });
         id
     }
 }
@@ -57,8 +72,8 @@ impl Context {
                 scopes = self.stack[0..((idx + 1) as usize)].iter().rev();
             }
 
-            if let Some(v) = scope.symbol_table.get(name) {
-                return Some(VariableRef { name: None, slot: v, depth });
+            if let Some(symbol) = scope.symbol_table.get(name) {
+                return Some(VariableRef { name: None, slot: symbol.slot, depth, start: symbol.start, end: symbol.end });
             }
 
             depth += 1;
@@ -66,14 +81,18 @@ impl Context {
 
         None
     }
-    
-    fn set(&mut self, name: &str) -> VariableRef {
+
+    fn set_with_position(&mut self, name: &str, position: (usize, usize)) -> VariableRef {
         let scope = self.stack.last_mut().unwrap();
 
-        let id = scope.symbol_table.set(name);
+        let id = scope.symbol_table.set(name, position);
 
         // TOOD: refactor
-        VariableRef { name: Some(name.to_owned()), slot: id, depth: 0 }
+        VariableRef { name: Some(name.to_owned()), slot: id, depth: 0, start: position.0, end: position.1 }
+    }
+    
+    fn set(&mut self, name: &str) -> VariableRef {
+        self.set_with_position(name, (0, 0))
     }
 
     fn enter_scope(&mut self, scope: ScopeKind) {
@@ -85,20 +104,15 @@ impl Context {
     }
 }
 
-pub fn translate(program: Program) -> Program {
+pub fn translate(program: Program) -> LanguageResult<Program> {
     let mut context = Context {
         stack: vec![Scope { kind: ScopeKind::Program, slot_index: 0, symbol_table: SymbolTable::new() }]
     };
 
-    match translate_body(&program.body, &mut context) {
-        Ok(statements) => Program { body: statements },
-        Err(e) => {
-            panic!("Translation error: {}", e);
-        }
-    }
+    translate_body(&program.body, &mut context).map(|statements| Program { body: statements })
 }
 
-fn translate_body(statements: &Vec<Statement>, context: &mut Context) -> Result<Vec<Statement>, String> {
+fn translate_body(statements: &Vec<Statement>, context: &mut Context) -> LanguageResult<Vec<Statement>> {
     let mut inner_statements: Vec<Statement> = vec![];
     
     for statement in statements {
@@ -108,18 +122,18 @@ fn translate_body(statements: &Vec<Statement>, context: &mut Context) -> Result<
     Ok(inner_statements)
 }
 
-fn translate_statement(statement: Statement, context: &mut Context) -> Result<Statement, String> {
-    match statement {
-        Statement::Expression { expression } => {
-            Ok(Statement::Expression { expression: translate_expression(expression, context)? })
+fn translate_statement(statement: Statement, context: &mut Context) -> LanguageResult<Statement> {
+    let mut new_statement = statement.clone();
+    new_statement.kind = match statement.kind {
+        StatementKind::Expression { expression } => {
+            StatementKind::Expression { expression: translate_expression(expression, context)? }
         },
-        Statement::If { condition, block, alternate } => {
+        StatementKind::If { condition, block, alternate } => {
             let condition = translate_expression(condition, context)?;
 
             context.enter_scope(ScopeKind::Conditional);
-            let block = Block { statements: translate_body(&block.statements, context)? };
+            let block = Block { statements: translate_body(&block.statements, context)?, start: block.start, end: block.end };
             context.exit_scope();
-
 
             let alternate = if let Some(alt) = alternate {
                 Some(Box::new(translate_statement(*alt, context)?))
@@ -127,9 +141,9 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
                 None
             };
 
-            Ok(Statement::If { condition, block, alternate })
+            StatementKind::If { condition, block, alternate }
         },
-        Statement::Function { name, arguments, statements } => {
+        StatementKind::Function { name, arguments, statements } => {
             let var_ref = context.set(&name);
             context.enter_scope(ScopeKind::Function);
             context.set(&name);
@@ -137,16 +151,16 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
             let statements = translate_body(&statements, context)?;
             context.exit_scope();
 
-            Ok(Statement::FunctionIR { var_ref, arguments: inner_arguements, statements })
+            StatementKind::FunctionIR { var_ref, arguments: inner_arguements, statements }
         },
-        Statement::Block(Block { statements }) => {
+        StatementKind::Block(Block { statements, start, end }) => {
             context.enter_scope(ScopeKind::Block);
-            let block = Block { statements: translate_body(&statements, context)? };
+            let block = Block { statements: translate_body(&statements, context)?, start, end };
             context.exit_scope();
 
-            Ok(Statement::Block(block))
+            StatementKind::Block(block)
         }
-        Statement::For { variable: Expression::Literal { value: ValueHolder::String(value), .. }, left, right, statements } => {
+        StatementKind::For { variable: Expression { kind: ExpressionKind::Literal { value: ValueHolder::String(value), .. }, .. }, left, right, statements } => {
             let left = left.map(|left| translate_expression(left, context)).transpose()?;
             let right = right.map(|right| translate_expression(right, context)).transpose()?;
 
@@ -155,40 +169,40 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
             let statements = translate_body(&statements, context)?;
             context.exit_scope();
 
-            Ok(Statement::ForIR { variable: var_ref, left, right, statements })
+            StatementKind::ForIR { variable: var_ref, left, right, statements }
         }
-        Statement::While { condition, statements } => {
+        StatementKind::While { condition, statements } => {
             
             context.enter_scope(ScopeKind::Loop);
             let condition = translate_expression(condition, context)?;
             let statements = translate_body(&statements, context)?;
             context.exit_scope();
 
-            Ok(Statement::While { condition, statements })
+            StatementKind::While { condition, statements }
         }
-        Statement::Return { expression } => {
-            Ok(Statement::Return { expression: translate_expression(expression, context)? })
+        StatementKind::Return { expression } => {
+            StatementKind::Return { expression: translate_expression(expression, context)? }
         }
-        Statement::Import { specifiers, source } => {
+        StatementKind::Import { specifiers, source } => {
             let specifiers= specifiers.iter().map(|specifier| {
-                let Expression::Literal { value: ValueHolder::String(name), ..  } = &specifier.local else {
+                let ExpressionKind::Literal { value: ValueHolder::String(name), ..  } = &specifier.local.kind else {
                     unreachable!()
                 };
 
                 context.set(name)
             }).collect();
 
-            Ok(Statement::ImportIR { specifiers, source })
+            StatementKind::ImportIR { specifiers, source }
         }
-        Statement::Export { declaration } => {
-            Ok(Statement::Export { declaration: Box::new(translate_statement(*declaration, context)?) })
+        StatementKind::Export { declaration } => {
+            StatementKind::Export { declaration: Box::new(translate_statement(*declaration, context)?) }
         }
-        Statement::Class { name: class_name,  methods, fields } => {
+        StatementKind::Class { name: class_name,  methods, fields } => {
             let var_ref = context.set(&class_name);
 
             let mut translated_methods = vec![];
-            for method in methods {
-                let Statement::Function { name, arguments, statements } = method.clone() else {
+            for mut method in methods {
+                let StatementKind::Function { name, arguments, statements } = method.kind else {
                     unreachable!()
                 };
 
@@ -204,64 +218,67 @@ fn translate_statement(statement: Statement, context: &mut Context) -> Result<St
                 let statements = translate_body(&statements, context)?;
                 context.exit_scope();
 
-                translated_methods.push(Statement::Method { name, arguments: inner_arguements, statements });
+                method.kind = StatementKind::Method { name, arguments: inner_arguements, statements };
+
+                translated_methods.push(method);
             }
         
-            Ok(Statement::ClassIR { var_ref, methods: translated_methods, fields })
+            StatementKind::ClassIR { var_ref, methods: translated_methods, fields }
         }
-        _ => Ok(statement)
-    }
+        _ => statement.kind
+    };
+    Ok(new_statement)
 }
 
-fn translate_expression(expression: Expression, context: &mut Context) -> Result<Expression, String> {
-    match &expression {
-        Expression::Assignment { left, operator, right, is_definition } => {
+fn translate_expression(mut expression: Expression, context: &mut Context) -> LanguageResult<Expression> {
+    expression.kind = match &expression.kind {
+        ExpressionKind::Assignment { left, operator, right, is_definition } => {
             let mut variable = *left.clone();
 
             // Find the innermost literal variable name
             loop {
-                if matches!(&variable, Expression::Literal { .. }) {
+                if matches!(&variable.kind, ExpressionKind::Literal { .. }) {
                     break;
                 }
-                if let Expression::Member { object, .. } = &variable {
+                if let ExpressionKind::Member { object, .. } = &variable.kind {
                     variable = object.as_ref().clone();
                 } else {
                     break;
                 }
             }
 
-            let Expression::Literal { value: ValueHolder::String(name), ..  } = &variable else {
-                return Err("Cannot access property on type other than a variable".to_string());
+            let ExpressionKind::Literal { value: ValueHolder::String(name), ..  } = &variable.kind else {
+                return Err(LanguageError::from(TranslatorError::TODO("Cannot access property on type other than a variable".to_string())));
             };
 
             if *is_definition {
                 context.set(name);
             }
 
-            Ok(Expression::Assignment { left: Box::new(translate_expression(*left.clone(), context)?), operator: operator.clone(), right: Box::new(translate_expression(*right.clone(), context)?), is_definition: *is_definition })
+            ExpressionKind::Assignment { left: Box::new(translate_expression(*left.clone(), context)?), operator: operator.clone(), right: Box::new(translate_expression(*right.clone(), context)?), is_definition: *is_definition }
         }
-        Expression::Member { object, property } => {
+        ExpressionKind::Member { object, property } => {
             let object = translate_expression(*object.clone(), context)?;
             let property = translate_expression(*property.clone(), context)?;
 
-            Ok(Expression::Member {
+            ExpressionKind::Member {
                 object: Box::new(object),
                 property: Box::new(property),
-            })
+            }
         }
-        Expression::Literal { r#type, value } => {
+        ExpressionKind::Literal { r#type, value } => {
             match r#type {
                 LiteralExpressionKind::Variable => {
                     let ValueHolder::String(value) = value else {
                         panic!()
                     };
 
-                    let variable_ref = context.get(value).ok_or("Not found")?;
+                    let variable_ref = context.get(value).ok_or(LanguageError::from(TranslatorError::UnknownVariable(value.clone())))?;
 
-                    return Ok(Expression::Variable(variable_ref));
+                    return Ok(ExpressionKind::Variable(variable_ref).into_expression(expression.start, expression.end));
                 }
                 LiteralExpressionKind::Function(statement) => {
-                    let box Statement::Function { name, arguments, statements } = statement.clone() else {
+                    let box StatementKind::Function { name, arguments, statements } = statement.clone() else {
                         panic!()
                     };
 
@@ -272,67 +289,64 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
                     let statements = translate_body(&statements, context)?;
                     context.exit_scope();
 
-                    return Ok(Expression::Literal { r#type: LiteralExpressionKind::Function(Box::new(Statement::FunctionIR {
+                    return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKind::FunctionIR {
                         var_ref,
                         arguments: inner_arguements,
                         statements
-                    })), value: value.clone() })
+                    })), value: value.clone() }.into_expression(expression.start, expression.end))
                 }
                 LiteralExpressionKind::Array(array) => {
-                    return Ok(Expression::Literal {
+                    return Ok(ExpressionKind::Literal {
                         r#type: LiteralExpressionKind::Array(array.iter().map(|expression| translate_expression(expression.clone(), context).unwrap()).collect()),
                         value: value.clone()
-                    })
+                    }.into_expression(expression.start, expression.end))
                 }
                 _ => ()
             }
-            // if let LiteralExpressionKind::Variable = r#type {
 
-            // }
-
-            Ok(expression)
+            expression.kind
         }
-        Expression::Binary { left, operator, right } => {
+        ExpressionKind::Binary { left, operator, right } => {
             let left = translate_expression(*left.clone(), context)?;
             let right = translate_expression(*right.clone(), context)?;
 
-            Ok(Expression::Binary {
+            ExpressionKind::Binary {
                 left: Box::new(left),
                 operator: operator.clone(),
                 right: Box::new(right),
-            })
+            }
         }
-        Expression::Logical { left, operator, right } => {
+        ExpressionKind::Logical { left, operator, right } => {
             let left = translate_expression(*left.clone(), context)?;
             let right = translate_expression(*right.clone(), context)?;
 
-            Ok(Expression::Logical {
+            ExpressionKind::Logical {
                 left: Box::new(left),
                 operator: operator.clone(),
                 right: Box::new(right),
-            })
+            }
         }
-        Expression::Equality { left, operator, right } => {
+        ExpressionKind::Equality { left, operator, right } => {
             let left = translate_expression(*left.clone(), context)?;
             let right = translate_expression(*right.clone(), context)?;
 
-            Ok(Expression::Equality {
+            ExpressionKind::Equality {
                 left: Box::new(left),
                 operator: operator.clone(),
                 right: Box::new(right),
-            })
+            }
         }
-        Expression::Relational { left, operator, right } => {
+        ExpressionKind::Relational { left, operator, right } => {
             let left = translate_expression(*left.clone(), context)?;
             let right = translate_expression(*right.clone(), context)?;
 
-            Ok(Expression::Relational {
+            ExpressionKind::Relational {
                 left: Box::new(left),
                 operator: operator.clone(),
                 right: Box::new(right),
-            })
+            }
         }
-        Expression::Call { callee, arguments } => {
+        ExpressionKind::Call { callee, arguments } => {
             let callee = match translate_expression(*callee.clone(), context) {
                 Ok(expr) => expr,
                 Err(_) => *callee.clone(),
@@ -344,11 +358,12 @@ fn translate_expression(expression: Expression, context: &mut Context) -> Result
                 inner_arguments.push(translate_expression(arg.clone(), context)?);
             }
 
-            Ok(Expression::Call {
+            ExpressionKind::Call {
                 callee: Box::new(callee),
                 arguments: inner_arguments,
-            })
+            }
         }
-        _ => Ok(expression)
-    }
+        _ => expression.kind
+    };
+    Ok(expression)
 }

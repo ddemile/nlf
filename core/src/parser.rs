@@ -1,12 +1,7 @@
 use std::{
-    cell::RefCell,
-    collections::HashMap,
-    fmt::{self, Debug},
-    rc::Rc,
-    sync::Arc,
+    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, sync::Arc
 };
 
-use clap::Parser;
 use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
@@ -149,6 +144,8 @@ impl Into<i32> for ValueHolder {
 #[serde(tag = "type")] // "type" field will contain the variant name
 pub struct Block {
     pub statements: Vec<Statement>,
+    pub start: usize,
+    pub end: usize
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -157,8 +154,20 @@ pub struct ImportSpecifier {
 }
 
 #[derive(Serialize, Debug, Clone)]
-#[serde(tag = "kind")] // "kind" field will contain the variant name
-pub enum Statement {
+pub struct Statement {
+    pub kind: StatementKind,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl StatementKind {
+    fn into_statement(self, start: usize, end: usize) -> Statement {
+        Statement { kind: self, start, end }
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub enum StatementKind {
     Expression {
         expression: Expression,
     },
@@ -237,7 +246,7 @@ pub enum LiteralExpressionKind {
     Variable,
     Object(HashMap<String, Expression>),
     Array(Vec<Expression>),
-    Function(Box<Statement>)
+    Function(Box<StatementKind>)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -245,11 +254,20 @@ pub struct VariableRef {
     pub name: Option<String>,
     pub slot: usize,
     pub depth: usize,
+    pub start: usize,
+    pub end: usize
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct Expression {
+    pub kind: ExpressionKind,
+    pub start: usize,
+    pub end: usize
 }
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "#type")] // "type" field will contain the variant name
-pub enum Expression {
+pub enum ExpressionKind {
     Literal {
         r#type: LiteralExpressionKind,
         value: ValueHolder,
@@ -293,6 +311,12 @@ pub enum Expression {
         right: Box<Expression>,
         is_definition: bool,
     },
+}
+
+impl ExpressionKind {
+    pub fn into_expression(self, start: usize, end: usize) -> Expression {
+        Expression { kind: self, start, end }
+    }
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -347,6 +371,7 @@ fn match_token(
     tokens: &mut Vec<Token>,
     token: Token,
 ) -> LanguageResult<Option<Statement>> {
+    let start = tokens.get(*cursor).unwrap().start;
     Ok(match token.kind {
         TokenKind::Keyword(KeywordKind::If) => {
             *cursor += 1;
@@ -390,31 +415,31 @@ fn match_token(
                 _ => None,
             };
 
-            let inner_statements = block(cursor, tokens)?;
+            let block = block(cursor, tokens)?;
 
             match (&left, &right) {
                 (None, None) => panic!("Both sides of a range expression cannot be None"),
                 _ => {}
             }
 
-            Some(Statement::For {
+            Some(StatementKind::For {
                 variable: loop_variable,
                 left,
                 right,
-                statements: inner_statements,
-            })
+                statements: block.statements,
+            }.into_statement(start, block.end))
         }
         TokenKind::Keyword(KeywordKind::While) => {
             *cursor += 1;
 
             let condition = logical_expression(cursor, tokens)?;
 
-            let inner_statements = block(cursor, tokens)?;
+            let block = block(cursor, tokens)?;
 
-            Some(Statement::While {
+            Some(StatementKind::While {
                 condition,
-                statements: inner_statements,
-            })
+                statements: block.statements,
+            }.into_statement(start, block.end))
         }
         TokenKind::Keyword(KeywordKind::Fn) => {
             *cursor += 1;
@@ -423,13 +448,13 @@ fn match_token(
         }
         TokenKind::Keyword(KeywordKind::Return) => {
             *cursor += 1;
-            Some(Statement::Return {
+            Some(StatementKind::Return {
                 expression: logical_expression(cursor, tokens)?,
-            })
+            }.into_statement(start, tokens.get(*cursor - 1).unwrap().end))
         }
         TokenKind::Keyword(KeywordKind::Break) => {
             *cursor += 1;
-            Some(Statement::Break)
+            Some(StatementKind::Break.into_statement(start, tokens.get(*cursor - 1).unwrap().end))
         }
         TokenKind::Keyword(KeywordKind::Class) => {
             *cursor += 1;
@@ -442,7 +467,12 @@ fn match_token(
                 tokens.get(*cursor).map(|token| token.kind.clone()),
                 Some(TokenKind::OpeningBracket)
             ) {
-                panic!("Expected '{{'");
+                let token = tokens.get(*cursor - 1).unwrap();
+                return Err(LanguageError::with_source(
+                    ParserError::UnexpectedToken("'{{'".into()),
+                    token.end,
+                    token.end,
+                ));
             }
             *cursor += 1;
 
@@ -473,7 +503,12 @@ fn match_token(
                 tokens.get(*cursor).map(|token| token.kind.clone()),
                 Some(TokenKind::ClosingBracket)
             ) {
-                panic!("Expected }}")
+                let token = tokens.get(*cursor - 1).unwrap();
+                return Err(LanguageError::with_source(
+                    ParserError::UnexpectedToken("'{{'".into()),
+                    token.end,
+                    token.end,
+                ));
             }
 
             *cursor += 1;
@@ -482,22 +517,32 @@ fn match_token(
                 tokens.get(*cursor).map(|token| token.kind.clone()),
                 Some(TokenKind::Keyword(KeywordKind::From))
             ) {
-                panic!("Expected 'from' keyword")
+                let token = tokens.get(*cursor - 1).unwrap();
+                return Err(LanguageError::with_source(
+                    ParserError::UnexpectedToken("'from' keyword".into()),
+                    token.end,
+                    token.end,
+                ));
             }
 
             *cursor += 1;
 
             let source = literal_expression(cursor, tokens)?;
 
-            let Expression::Literal {
+            let ExpressionKind::Literal {
                 value: ValueHolder::String(source),
                 ..
-            } = source
+            } = source.kind
             else {
-                panic!("Expected string as source")
+                let token = tokens.get(*cursor - 1).unwrap();
+                return Err(LanguageError::with_source(
+                    ParserError::InvalidType("string literal".into()),
+                    token.start,
+                    token.end,
+                ));
             };
 
-            Some(Statement::Import { specifiers, source })
+            Some(StatementKind::Import { specifiers, source }.into_statement(start, tokens.get(*cursor - 1).unwrap().end))
         }
         TokenKind::Keyword(KeywordKind::Export) => {
             *cursor += 1;
@@ -508,18 +553,20 @@ fn match_token(
                 return Ok(None);
             };
 
-            Some(Statement::Export {
+            Some(StatementKind::Export {
                 declaration: Box::new(statement),
-            })
+            }.into_statement(start, tokens.get(*cursor - 1).unwrap().end))
         }
         TokenKind::ClosingBracket => None,
-        _ => Some(Statement::Expression {
+        _ => Some(StatementKind::Expression {
             expression: left(cursor, tokens)?,
-        }),
+        }.into_statement(start, tokens.get(*cursor - 1).unwrap().end)),
     })
 }
 
 fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Statement> {
+    let start = tokens.get(*cursor).unwrap().start;
+
     let Some(Token {
         kind: TokenKind::Identifier { value },
         ..
@@ -562,7 +609,7 @@ fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<St
             ..
         })
     ) {
-        let token = tokens.get(*cursor).unwrap();
+        let token = tokens.get(*cursor).unwrap().clone();
         *cursor += 1;
 
         if let TokenKind::Identifier { value } = &token.kind {
@@ -610,7 +657,7 @@ fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<St
             else {
                 let token = tokens.get(*cursor).unwrap();
                 return Err(LanguageError::with_source(
-                    ParserError::UnexpectedToken("'{{'".into()),
+                    ParserError::UnexpectedToken("'a valid field name'".into()),
                     token.start,
                     token.end,
                 ));
@@ -625,7 +672,7 @@ fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<St
             else {
                 let token = tokens.get(*cursor).unwrap();
                 return Err(LanguageError::with_source(
-                    ParserError::UnexpectedToken("'{{'".into()),
+                    ParserError::UnexpectedToken("'='".into()),
                     token.start,
                     token.end,
                 ));
@@ -635,24 +682,26 @@ fn parse_class(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<St
 
             let value = logical_expression(cursor, tokens)?;
 
-            fields.push(Statement::Field {
+            fields.push(StatementKind::Field {
                 visibility,
                 name: field_name,
                 value,
-            });
+            }.into_statement(token.start, tokens.get(*cursor - 1).unwrap().end));
         }
     }
 
     *cursor += 1;
 
-    Ok(Statement::Class {
+    Ok(StatementKind::Class {
         name,
         methods,
         fields,
-    })
+    }.into_statement(start, tokens.get(*cursor - 1).unwrap().end))
 }
 
 fn parse_function(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Statement> {
+    let start = tokens.get(*cursor).unwrap().start;
+
     let Some(Token {
         kind: TokenKind::Identifier { value },
         ..
@@ -686,10 +735,10 @@ fn parse_function(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult
                     // Parse the argument
                     let expr = literal_expression(cursor, tokens)?;
 
-                    let Expression::Literal {
+                    let ExpressionKind::Literal {
                         r#type: LiteralExpressionKind::Variable,
                         value: ValueHolder::String(name),
-                    } = expr
+                    } = expr.kind
                     else {
                         panic!();
                     };
@@ -700,7 +749,14 @@ fn parse_function(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult
                     match tokens.get(*cursor).map(|token| token.kind.clone()) {
                         Some(TokenKind::Comma) => *cursor += 1, // skip comma, continue loop
                         Some(TokenKind::ClosingParenthesis) => break, // done
-                        _ => panic!("Expected ',' or ')' after argument"),
+                        _ => {
+                            let token = tokens.get(*cursor - 1).unwrap();
+                            return Err(LanguageError::with_source(
+                                ParserError::UnexpectedToken("',' or ')' after argument".into()),
+                                token.end,
+                                token.end,
+                            ));
+                        },
                     }
                 }
             }
@@ -710,27 +766,39 @@ fn parse_function(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult
             tokens.get(*cursor).map(|token| token.kind.clone()),
             Some(TokenKind::ClosingParenthesis)
         ) {
-            panic!("Expected ')'");
+            let token = tokens.get(*cursor - 1).unwrap();
+            return Err(LanguageError::with_source(
+                ParserError::UnexpectedToken("')'".into()),
+                token.end,
+                token.end,
+            ));
         }
 
         *cursor += 1; // move past ')'
 
-        let inner_statements = block(cursor, tokens)?;
+        let block = block(cursor, tokens)?;
 
-        return Ok(Statement::Function {
+        return Ok(StatementKind::Function {
             name: value.to_string(),
             arguments: args,
-            statements: inner_statements,
-        });
+            statements: block.statements,
+        }.into_statement(start, tokens.get(*cursor - 1).unwrap().end));
     }
 
-    panic!("Expected '('");
+    let token = tokens.get(*cursor).unwrap();
+    Err(LanguageError::with_source(
+        ParserError::UnexpectedToken("'('".into()),
+        token.end,
+        token.end,
+    ))
 }
 
 fn parse_if(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Statement> {
+    let start = tokens.get(*cursor).unwrap().start;
+
     let condition = logical_expression(cursor, tokens)?;
 
-    let inner_statements = block(cursor, tokens)?;
+    let inner_block = block(cursor, tokens)?;
 
     let mut alternate: Option<Box<Statement>> = None;
 
@@ -748,28 +816,33 @@ fn parse_if(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<State
             *cursor += 1;
             alternate = Some(Box::new(parse_if(cursor, tokens)?));
         } else {
-            alternate = Some(Box::new(Statement::Block(Block {
-                statements: block(cursor, tokens)?,
-            })));
+            let block = block(cursor, tokens)?;
+            alternate = Some(Box::new(StatementKind::Block(block.clone()).into_statement(block.start, block.end)));
         }
     }
 
-    Ok(Statement::If {
+    Ok(StatementKind::If {
         condition,
-        block: Block {
-            statements: inner_statements,
-        },
+        block: inner_block,
         alternate,
-    })
+    }.into_statement(start, tokens.get(*cursor - 1).unwrap().end))
 }
 
-fn block(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Vec<Statement>> {
+fn block(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Block> {
     if !matches!(
         tokens.get(*cursor).map(|token| token.kind.clone()),
         Some(TokenKind::OpeningBracket)
     ) {
-        panic!("Expected {{")
+        let token = tokens.get(*cursor - 1).unwrap();
+        return Err(LanguageError::with_source(
+            ParserError::UnexpectedToken("'{{'".into()),
+            token.end,
+            token.end,
+        ));
     }
+
+    let start = tokens.get(*cursor).unwrap().start;
+
     *cursor += 1;
     let (inner_statements, inner_cursor) = parse_internal(tokens[*cursor..].to_vec())?;
     *cursor += inner_cursor;
@@ -778,12 +851,17 @@ fn block(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Vec<Stat
         tokens.get(*cursor).map(|token| token.kind.clone()),
         Some(TokenKind::ClosingBracket)
     ) {
-        panic!("Expected }}")
+        let token = tokens.get(*cursor - 1).unwrap();
+        return Err(LanguageError::with_source(
+            ParserError::UnexpectedToken("'}}'".into()),
+            token.end,
+            token.end,
+        ));
     }
 
     *cursor += 1;
 
-    Ok(inner_statements)
+    Ok(Block { statements: inner_statements, start, end: tokens.get(*cursor - 1).unwrap().end })
 }
 
 fn left(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
@@ -794,6 +872,8 @@ fn assignment_expression(
     cursor: &mut usize,
     tokens: &mut Vec<Token>,
 ) -> LanguageResult<Expression> {
+    let start = tokens.get(*cursor).unwrap().start;
+
     let is_definition = if let Some(Token {
         kind: TokenKind::Keyword(KeywordKind::Let),
         ..
@@ -807,8 +887,8 @@ fn assignment_expression(
 
     let left = logical_expression(cursor, tokens)?;
 
-    if matches!(left, Expression::Literal { .. })
-        || (!is_definition && matches!(left, Expression::Member { .. }))
+    if matches!(left.kind, ExpressionKind::Literal { .. })
+        || (!is_definition && matches!(left.kind, ExpressionKind::Member { .. }))
     {
         if let Some(Token {
             kind:
@@ -823,12 +903,13 @@ fn assignment_expression(
         {
             let operator = tokens.get(*cursor).unwrap().kind.clone();
             *cursor += 1;
-            return Ok(Expression::Assignment {
+            let right = Box::new(logical_expression(cursor, tokens)?);
+            return Ok(ExpressionKind::Assignment {
                 left: Box::new(left),
                 operator,
-                right: Box::new(logical_expression(cursor, tokens)?),
+                right: right.clone(),
                 is_definition,
-            });
+            }.into_expression(start, right.end));
         }
     }
 
@@ -836,7 +917,7 @@ fn assignment_expression(
 }
 
 fn logical_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
-    let mut left: Expression = equality_expression(cursor, tokens)?;
+    let mut left = equality_expression(cursor, tokens)?;
     while matches!(
         tokens.get(*cursor).map(|token| token.kind.clone()),
         Some(TokenKind::And | TokenKind::Or)
@@ -844,11 +925,16 @@ fn logical_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
-        left = Expression::Logical {
+        let right = Box::new(equality_expression(cursor, tokens)?);
+        
+        let start = left.start;
+        let end = right.end;
+
+        left = ExpressionKind::Logical {
             left: Box::new(left),
             operator,
-            right: Box::new(equality_expression(cursor, tokens)?),
-        };
+            right: right.clone(),
+        }.into_expression(start, end);
     }
 
     Ok(left)
@@ -863,11 +949,16 @@ fn equality_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageR
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
-        left = Expression::Equality {
+        let right = relational_expression(cursor, tokens)?;
+        
+        let start = left.start;
+        let end = right.end;
+
+        left = ExpressionKind::Equality {
             left: Box::new(left),
             operator,
-            right: Box::new(relational_expression(cursor, tokens)?),
-        };
+            right: Box::new(right),
+        }.into_expression(start, end);
     }
 
     Ok(left)
@@ -885,11 +976,16 @@ fn relational_expression(
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
-        left = Expression::Relational {
+        let right = term_expression(cursor, tokens)?;
+
+        let start = left.start;
+        let end = right.end;
+
+        left = ExpressionKind::Relational {
             left: Box::new(left),
             operator,
-            right: Box::new(term_expression(cursor, tokens)?),
-        };
+            right: Box::new(right),
+        }.into_expression(start, end);
     }
 
     Ok(left)
@@ -904,11 +1000,16 @@ fn term_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResul
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
-        left = Expression::Binary {
+        let right = factor_expression(cursor, tokens)?;
+
+        let start = left.start;
+        let end = right.end;
+
+        left = ExpressionKind::Binary {
             left: Box::new(left),
             operator,
-            right: Box::new(factor_expression(cursor, tokens)?),
-        };
+            right: Box::new(right),
+        }.into_expression(start, end);
     }
 
     Ok(left)
@@ -923,11 +1024,16 @@ fn factor_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRes
         let operator = tokens.get(*cursor).unwrap().clone().kind;
         *cursor += 1;
 
-        left = Expression::Binary {
+        let right = call_expression(cursor, tokens)?;
+
+        let start = left.start;
+        let end = right.end;
+
+        left = ExpressionKind::Binary {
             left: Box::new(left),
             operator,
-            right: Box::new(call_expression(cursor, tokens)?),
-        };
+            right: Box::new(right),
+        }.into_expression(start, end);
     }
 
     Ok(left)
@@ -936,9 +1042,13 @@ fn factor_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRes
 fn call_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
     if let Some(Token {
         kind: TokenKind::Identifier { value },
-        ..
+        start,
+        end
     }) = tokens.get(*cursor)
     {
+        let start = start.clone();
+        let end = end.clone();
+
         if matches!(
             tokens.get(*cursor + 1).map(|token| token.kind.clone()),
             Some(TokenKind::OpeningParenthesis)
@@ -979,13 +1089,13 @@ fn call_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResul
 
             *cursor += 1; // move past ')'
 
-            return Ok(Expression::Call {
-                callee: Box::new(Expression::Literal {
+            return Ok(ExpressionKind::Call {
+                callee: Box::new(ExpressionKind::Literal {
                     r#type: LiteralExpressionKind::Variable,
                     value: ValueHolder::String(name),
-                }),
+                }.into_expression(start, end)),
                 arguments: args,
-            });
+            }.into_expression(start, tokens.get(*cursor - 1).unwrap().end));
         }
     }
 
@@ -1000,34 +1110,34 @@ fn unary_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResu
         let token = tokens.get(*cursor).unwrap().clone();
         *cursor += 1;
 
-        return Ok(Expression::Unary {
+        return Ok(ExpressionKind::Unary {
             left: Box::new(literal_expression(cursor, tokens)?),
             operator: token.kind,
-        });
+        }.into_expression(token.start, token.end));
     }
 
     literal_expression(cursor, tokens)
 }
 
 fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<Expression> {
-    let token = tokens.get(*cursor).unwrap();
+    let token = tokens.get(*cursor).unwrap().clone();
 
     *cursor += 1;
 
     let expr = match &token.kind {
-        TokenKind::NumericLiteral { value } => Expression::Literal {
+        TokenKind::NumericLiteral { value } => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
             value: ValueHolder::Number(DynamicNumber::from_str(value)),
         },
-        TokenKind::BooleanLiteral { value } => Expression::Literal {
+        TokenKind::BooleanLiteral { value } => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
             value: ValueHolder::Bool(*value),
         },
-        TokenKind::StringLiteral { value } => Expression::Literal {
+        TokenKind::StringLiteral { value } => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
             value: ValueHolder::String(value.clone()),
         },
-        TokenKind::Identifier { value } => Expression::Literal {
+        TokenKind::Identifier { value } => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Variable,
             value: ValueHolder::String(value.clone()),
         },
@@ -1053,27 +1163,31 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
             } {
                 *cursor += 1;
 
-                let inner_statements = block(cursor, tokens)?;
+                let block = block(cursor, tokens)?;
 
-                return Ok(Expression::Literal { r#type: LiteralExpressionKind::Function(Box::new(Statement::Function {
+                return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKind::Function {
                     name: "<lambda>".to_string(),
                     arguments: args,
-                    statements: inner_statements
-                })), value: ValueHolder::Void });
+                    statements: block.statements
+                })), value: ValueHolder::Void }.into_expression(tokens.get(start_cursor).unwrap().start, tokens.get(*cursor - 1).unwrap().end));
             }
 
             *cursor = start_cursor;
 
             let expr = left(cursor, tokens)?;
-
-            tokens.get(*cursor).map_or_else(
-                || panic!(") expected"),
-                |token| matches!(token.kind, TokenKind::ClosingParenthesis),
-            );
+            
+            let Some(Token { kind: TokenKind::ClosingParenthesis, .. }) = tokens.get(*cursor) else {
+                let token = tokens.get(*cursor - 1).unwrap();
+                return Err(LanguageError::with_source(
+                    ParserError::UnexpectedToken("'}}'".into()),
+                    token.end,
+                    token.end,
+                ));
+            };
 
             *cursor += 1;
 
-            expr
+            expr.kind
         }
         TokenKind::OpeningBracket => {
             let mut entries: HashMap<String, Expression> = HashMap::new();
@@ -1083,10 +1197,10 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
             ) {
                 let key = literal_expression(cursor, tokens)?;
 
-                let Expression::Literal {
+                let ExpressionKind::Literal {
                     value: ValueHolder::String(key),
                     ..
-                } = key
+                } = key.kind
                 else {
                     todo!();
                 };
@@ -1119,7 +1233,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
 
             *cursor += 1;
 
-            Expression::Literal {
+            ExpressionKind::Literal {
                 r#type: LiteralExpressionKind::Object(entries),
                 value: ValueHolder::Void,
             }
@@ -1131,7 +1245,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
                 tokens.get(*cursor).map(|token| token.kind.clone()),
                 Some(TokenKind::ClosingSquareBracket)
             ) {
-                let item: Expression = logical_expression(cursor, tokens)?;
+                let item = logical_expression(cursor, tokens)?;
 
                 items.push(item);
 
@@ -1149,7 +1263,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
 
             *cursor += 1;
 
-            Expression::Literal {
+            ExpressionKind::Literal {
                 r#type: LiteralExpressionKind::Array(items),
                 value: ValueHolder::Void,
             }
@@ -1163,7 +1277,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
         }
     };
 
-    member(cursor, tokens, expr, true)
+    member(cursor, tokens, expr.into_expression(token.start, tokens.get(*cursor - 1).unwrap().end), true)
 }
 
 fn member(
@@ -1180,7 +1294,8 @@ fn member(
             *cursor += 1;
             let Some(Token {
                 kind: TokenKind::Identifier { value },
-                ..
+                start: identifier_start,
+                end: identifier_end
             }) = tokens.get(*cursor).cloned()
             else {
                 panic!()
@@ -1188,23 +1303,29 @@ fn member(
 
             *cursor += 1;
 
-            expr = Expression::Member {
+            let start = expr.start;
+
+            expr = ExpressionKind::Member {
                 object: Box::new(expr),
-                property: Box::new(Expression::Literal {
+                property: Box::new(ExpressionKind::Literal {
                     r#type: LiteralExpressionKind::Literal,
                     value: ValueHolder::String(value.to_string()),
-                }),
-            };
+                }.into_expression(identifier_start, identifier_end)),
+            }.into_expression(start, identifier_end);
         } else if matches!(
             tokens.get(*cursor).map(|token| token.kind.clone()),
             Some(TokenKind::OpeningSquareBracket)
         ) {
             *cursor += 1;
+            
+            let property = logical_expression(cursor, tokens)?;
+            let start = expr.start;
+            let end = property.end;
 
-            expr = Expression::Member {
+            expr = ExpressionKind::Member {
                 object: Box::new(expr),
-                property: Box::new(logical_expression(cursor, tokens)?),
-            };
+                property: Box::new(property),
+            }.into_expression(start, end);
 
             if !matches!(
                 tokens.get(*cursor).map(|token| token.kind.clone()),
@@ -1269,10 +1390,10 @@ fn member(
 
             *cursor += 1; // move past ')'
 
-            expr = Expression::Call {
+            expr = ExpressionKind::Call {
                 callee: Box::new(expr),
                 arguments: args,
-            };
+            }.into_expression(0, 0);
         }
     }
 
@@ -1292,10 +1413,10 @@ fn match_arguments(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResul
                 // Parse the argument
                 let expr = literal_expression(cursor, tokens)?;
 
-                let Expression::Literal {
+                let ExpressionKind::Literal {
                     r#type: LiteralExpressionKind::Variable,
                     value: ValueHolder::String(name),
-                } = expr
+                } = expr.kind
                 else {
                     return Err(LanguageError::from(ParserError::InvalidType("Literal".into())))
                 };

@@ -2,8 +2,7 @@ use std::{cell::RefCell, env, fmt::Debug, path::{MAIN_SEPARATOR_STR, PathBuf}, r
 use inline_colorization::*;
 use parking_lot::Mutex;
 
-pub trait LanguageErrorTrait: Debug {}
-
+pub trait LanguageErrorTrait: Debug + Send + Sync {}
 
 #[derive(Debug, Clone)]
 pub struct ErrorSource {
@@ -63,26 +62,35 @@ impl LanguageError {
         let contents = source.contents.lock();
 
         fn get_line_bounds(cursor: usize, contents: String) -> LineInfo {
-            let lines = contents.lines();
-
-            let mut current_cursor: usize = 0;
+            let mut line_start = 0;
             let mut index = 1;
-            for line in lines {
-                let line_start = current_cursor;
-                let line_length = line.chars().count();
-                let line_end = line_start + line_length;
-                
-                if (line_start..=line_end).contains(&cursor) {
-                    return LineInfo {
-                        index,
-                        start: line_start,
-                        end: line_end,
-                        content: contents[line_start..line_end].to_string()
-                    }
-                }
 
-                current_cursor += line_length + 2;
-                index += 1;
+            for (i, c) in contents.char_indices() {
+                if c == '\n' {
+                    let line_end = i;
+
+                    if (line_start..=line_end).contains(&cursor) {
+                        return LineInfo {
+                            index,
+                            start: line_start,
+                            end: line_end,
+                            content: contents[line_start..line_end].to_string(),
+                        };
+                    }
+
+                    line_start = i + 1;
+                    index += 1;
+                }
+            }
+
+            // last line
+            if (line_start..=contents.len()).contains(&cursor) {
+                return LineInfo {
+                    index,
+                    start: line_start,
+                    end: contents.len(),
+                    content: contents[line_start..].to_string(),
+                };
             }
 
             unreachable!()
@@ -106,16 +114,19 @@ impl LanguageError {
 
             formatted_error.borrow_mut().push_str(format!("  {style_bold}{color_bright_white}--> {}:{}:{}{color_reset}{style_reset}\n", path, first_line.index, start - first_line.start + 1).as_str());
 
+            let indicator_pos =
+                contents[first_line.start..start].chars().count();
+            let indicator_len =
+                contents[start..end].chars().count();
             if first_line.start == last_line.start {
-                let indicator_pos = start - first_line.start;
                 add_line(first_line.index.to_string(), format!("{}\n", first_line.content));
-                add_line("".into(), format!("{color_red}{style_bold}{}{}{color_reset}{style_reset}", " ".repeat(indicator_pos), "^".repeat(end - start)));  
+                add_line("".into(), format!("{color_red}{style_bold}{}{}{color_reset}{style_reset}", " ".repeat(indicator_pos), "^".repeat(indicator_len)));  
             } else {
-                let indicator_pos = start - first_line.start;
                 add_line(first_line.index.to_string(), format!("{}\n", first_line.content));
-                add_line("".into(), format!("{color_red}{style_bold}{}^{color_reset}{style_reset}\n", " ".repeat(indicator_pos - 1)));
+                add_line("".into(), format!("{color_red}{style_bold}{}^{color_reset}{style_reset}\n", " ".repeat(indicator_pos)));
                 formatted_error.borrow_mut().push_str(format!("{style_bold}{color_bright_white}...{color_reset}{style_reset}\n").as_str());
-                let indicator_pos = end - last_line.start;
+                let indicator_pos =
+                    contents[last_line.start..last_line.end].chars().count();
                 add_line(last_line.index.to_string(), format!("{}\n", last_line.content));
                 add_line("".into(), format!("{color_red}{style_bold}{}^{color_reset}{style_reset}\n", " ".repeat(indicator_pos - 1)));
             }

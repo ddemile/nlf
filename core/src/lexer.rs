@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, f32::consts::PI};
 
 use serde::{Serialize, Deserialize};
 
@@ -85,15 +85,20 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
 
     let char_at = |pos: usize| code.chars().nth(pos);
     while cursor < code.len() {
-        let char = char_at(cursor).unwrap();
-        cursor += 1;
+        let (char_byte_len, char) = match code[cursor..].chars().next() {
+            Some(c) => (c.len_utf8(), c),
+            None => break,
+        };
 
         match char {
-            ' ' | '\0' | '\n' | '\r' | '\t' => continue,
+            ' ' | '\0' | '\n' | '\r' | '\t' => {
+                cursor += char_byte_len;
+                continue;
+            },
             _ => {
                 let map = match_table();
 
-                if code[(cursor - 1)..].starts_with("//") {
+                if code[cursor..].starts_with("//") {
                     while !matches!(char_at(cursor), Some('\n')) && cursor < code.len() {
                         cursor += 1;
                     }
@@ -103,7 +108,7 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
                 let mut longest_match = "";
 
                 for key in map.keys() {
-                    if code[(cursor - 1)..].starts_with(key) {
+                    if code[cursor..].starts_with(key) {
                         if key.len() > longest_match.len() {
                             longest_match = key;
                         }
@@ -113,9 +118,11 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
                 if longest_match.len() > 0 {
                     let kind = map.get(longest_match).unwrap().clone();
 
-                    if !matches!(kind, TokenKind::Keyword(_)) || (matches!(kind, TokenKind::Keyword(_)) && matches!(char_at(cursor + longest_match.len() - 1).map(|char| char.is_ascii_alphabetic() || char == '_'), Some(false))) {
-                        tokens.push(Token { kind, start: cursor - 1, end: cursor + longest_match.len() - 1 });
-                        cursor += longest_match.len() - 1;
+                    let next_char = code[cursor + longest_match.len()..].chars().next();
+
+                    if !matches!(kind, TokenKind::Keyword(_)) || (matches!(kind, TokenKind::Keyword(_)) && matches!(next_char.map(|char| char.is_ascii_alphabetic() || char == '_'), Some(false))) {
+                        tokens.push(Token { kind, start: cursor, end: cursor + longest_match.len() });
+                        cursor += longest_match.len();
                         continue;
                     }
                 }
@@ -134,6 +141,8 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
                     string(&code, &mut cursor, &mut tokens)?;
                     continue;
                 }
+
+                cursor += char_byte_len;
             }
         };
     }
@@ -141,7 +150,7 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
     Ok(tokens)
 }
 
-fn match_table() -> HashMap<&'static str, TokenKind> {
+pub fn match_table() -> HashMap<&'static str, TokenKind> {
     let mut map: HashMap<&'static str, TokenKind> = HashMap::new();
 
     // Punctuation
@@ -208,20 +217,37 @@ fn match_table() -> HashMap<&'static str, TokenKind> {
 
     map.insert("=>", TokenKind::Arrow);
 
+    map.insert("π", TokenKind::NumericLiteral { value: PI.to_string() });
+
     return map;
 }
 
 fn number(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
-    let start = *cursor - 1;
+    let start = *cursor;
 
-    while code.chars().nth(*cursor).map_or(false, |c| c.is_numeric()) {
-        *cursor += 1;
+    while let Some(c) = code[*cursor..].chars().next() {
+        if c.is_numeric() {
+            *cursor += c.len_utf8();
+        } else {
+            break;
+        }
     }
 
-    if code.chars().nth(*cursor) == Some('.') && code.chars().nth(*cursor + 1).unwrap().is_numeric() {
-        *cursor += 1;
-        while code.chars().nth(*cursor).unwrap().is_numeric() {
-            *cursor += 1;
+    if let Some('.') = code[*cursor..].chars().next() {
+        let mut iter = code[*cursor..].chars();
+        iter.next(); // skip '.'
+        if let Some(next_digit) = iter.next() {
+            if next_digit.is_numeric() {
+                *cursor += 1; // dot is 1 byte
+                *cursor += next_digit.len_utf8();
+                while let Some(c) = code[*cursor..].chars().next() {
+                    if c.is_numeric() {
+                        *cursor += c.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -229,25 +255,50 @@ fn number(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
 }
 
 fn alpha(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) {
-    let start = *cursor - 1;
+    let start = *cursor;
 
-    while code.chars().nth(*cursor).map_or(false, |c| c.is_ascii_alphabetic() || c == '_' || c.is_numeric()) {
-        *cursor += 1;
+    while let Some(c) = code[*cursor..].chars().next() {
+        if c.is_ascii_alphabetic() || c == '_' || c.is_numeric() {
+            *cursor += c.len_utf8();
+        } else {
+            break;
+        }
     }
 
     tokens.push(Token { kind: TokenKind::Identifier { value: code[start..*cursor].to_string() }, start, end: *cursor });
 }
 
 fn string(code: &str, cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageResult<()> {
-    let start = *cursor;
+    let start = *cursor; // points at opening quote
+    *cursor += 1; // skip the opening quote
 
-    while code.chars().nth(*cursor).map(|c| c != '"').ok_or(LanguageError::with_source(LexerError::UnterminatedString, start, *cursor))? {
-        *cursor += 1;
+    let string_start = *cursor; // start of actual string content
+
+    let mut iter = code[*cursor..].char_indices();
+
+    while let Some((i, c)) = iter.next() {
+        if c == '"' {
+            // Found closing quote
+            *cursor = string_start + i + c.len_utf8();
+
+            tokens.push(Token {
+                kind: TokenKind::StringLiteral {
+                    value: code[string_start..string_start + i].to_string(), // inner string only
+                },
+                start: start,
+                end: *cursor,
+            });
+
+            return Ok(());
+        }
     }
 
-    *cursor += 1;
+    // Unterminated string: advance cursor to end
+    *cursor = code.len();
 
-    tokens.push(Token { kind: TokenKind::StringLiteral { value: code[start..(*cursor - 1)].to_string() }, start: start - 1, end: *cursor });
-
-    Ok(())
+    Err(LanguageError::with_source(
+        LexerError::UnterminatedString,
+        start,
+        *cursor,
+    ))
 }

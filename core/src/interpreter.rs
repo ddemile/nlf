@@ -10,7 +10,7 @@ use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
         ARRAY_PROTOTYPE, LocalPrototype, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }, lexer::TokenKind, loader::Module, parser::{
-        ArrayRef, Block, BuiltInFunction, Expression, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, ValueHolder, VariableRef, Visibility
+        ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, StatementKind, ValueHolder, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE
 };
 
@@ -544,16 +544,16 @@ fn hoist_declarations(
 ) -> LanguageResult<()> {
     for statement in statements
         .iter()
-        .filter(|statement| matches!(*statement, Statement::FunctionIR { .. } | Statement::ClassIR { .. }))
+        .filter(|statement| matches!(*statement, Statement { kind: StatementKind::FunctionIR { .. } | StatementKind::ClassIR { .. }, .. } ))
     {
-        match statement {
-            Statement::FunctionIR { var_ref, arguments, statements } => {
+        match &statement.kind {
+            StatementKind::FunctionIR { var_ref, arguments, statements } => {
                 let mut context = context_ref.borrow_mut();
 
                 let scope = context.environment.scopes.last_mut().cloned().unwrap();
                 
                 context.environment.set(
-                    var_ref,
+                    &var_ref,
                     ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                         arguments: arguments.to_vec(),
                         statements: statements.to_vec(),
@@ -562,7 +562,7 @@ fn hoist_declarations(
                     true,
                 )?
             }
-            Statement::ClassIR { var_ref, methods: raw_methods, fields: raw_fields } => {
+            StatementKind::ClassIR { var_ref, methods: raw_methods, fields: raw_fields } => {
                 let mut context = context_ref.borrow_mut();
 
                 let mut fields: Vec<Field> = vec![];
@@ -570,7 +570,7 @@ fn hoist_declarations(
                 let mut prototype = LocalPrototype::new(var_ref.name.clone().unwrap().as_ref());
 
                 for method in raw_methods {
-                    let Statement::Method { name, arguments, statements } = method.clone() else {
+                    let StatementKind::Method { name, arguments, statements } = method.kind.clone() else {
                         unreachable!()
                     };
 
@@ -596,6 +596,8 @@ fn hoist_declarations(
                                 name: None,
                                 slot: 0,
                                 depth: 0,
+                                start: 0,
+                                end: 0
                             },
                             ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                                 arguments: arguments.clone(),
@@ -611,6 +613,8 @@ fn hoist_declarations(
                                     name: None,
                                     slot: 1,
                                     depth: 0,
+                                    start: 0,
+                                    end: 0
                                 },
                                 ValueHolder::Object(*object_ref),
                                 true,
@@ -633,7 +637,7 @@ fn hoist_declarations(
                 }
 
                 for field in raw_fields {
-                    let Statement::Field { visibility, name, value } = field.clone() else {
+                    let StatementKind::Field { visibility, name, value } = field.kind.clone() else {
                         unreachable!()
                     };
 
@@ -670,8 +674,8 @@ pub fn eval_body(statements: &Vec<Statement>, context: Rc<RefCell<ModuleContext>
         }
 
         for mut scope in context.borrow().environment.scopes.iter().rev().map(|scope| scope.borrow_mut()) {
-            match (statement, &scope.kind) {
-                (Statement::Return { .. }, ScopeKind::Call(_)) => {
+            match (&statement.kind, &scope.kind) {
+                (StatementKind::Return { .. }, ScopeKind::Call(_)) => {
                     scope.interrupted = Some(value.clone());
 
                     return Ok(value);
@@ -679,7 +683,7 @@ pub fn eval_body(statements: &Vec<Statement>, context: Rc<RefCell<ModuleContext>
                 (_, ScopeKind::Call(_)) => {
                     break;
                 }
-                (Statement::Break, ScopeKind::Loop) => {
+                (StatementKind::Break, ScopeKind::Loop) => {
                     scope.interrupted = Some(ValueHolder::Void);
 
                     return Ok(value);
@@ -693,36 +697,36 @@ pub fn eval_body(statements: &Vec<Statement>, context: Rc<RefCell<ModuleContext>
 }
 
 fn eval_statement(statement: &Statement, context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-    match statement {
-        Statement::Expression { expression } => eval_expr(&expression, context),
-        Statement::If {
+    match &statement.kind {
+        StatementKind::Expression { expression } => eval_expr(&expression, context),
+        StatementKind::If {
             condition,
             block,
             alternate,
         } => eval_if(&condition, block, alternate, context),
-        Statement::ForIR {
+        StatementKind::ForIR {
             variable,
             left,
             right,
             statements,
         } => eval_for(variable, left, right, statements, context),
-        Statement::While {
+        StatementKind::While {
             condition,
             statements,
         } => eval_while(&condition, statements, context),
-        Statement::FunctionIR {
+        StatementKind::FunctionIR {
             var_ref,
             arguments,
             statements,
         } => eval_function(var_ref, arguments, statements),
-        Statement::Return { expression } => eval_expr(&expression, context),
-        Statement::Break => Ok(ValueHolder::Void),
-        Statement::Block(_) => Ok(ValueHolder::Void),
-        Statement::ImportIR { .. } => Err(LanguageError::with_source(RuntimeError::Custom(
+        StatementKind::Return { expression } => eval_expr(&expression, context),
+        StatementKind::Break => Ok(ValueHolder::Void),
+        StatementKind::Block(_) => Ok(ValueHolder::Void),
+        StatementKind::ImportIR { .. } => Err(LanguageError::with_source(RuntimeError::Custom(
             "Import declarations can only be at the top of modules".into(),
         ), 0, 0)),
-        Statement::Export { declaration } => eval_statement(declaration, context),
-        Statement::ClassIR { .. } => Ok(ValueHolder::Void),
+        StatementKind::Export { declaration } => eval_statement(declaration, context),
+        StatementKind::ClassIR { .. } => Ok(ValueHolder::Void),
         _ => panic!("Invalid statement : {:?}", statement),
     }
 }
@@ -837,7 +841,7 @@ fn eval_while(
         return Ok(broken)
     }
 
-    let optimized_condition = if let Expression::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::Bool(value) } = *condition {
+    let optimized_condition = if let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::Bool(value) } = condition.kind {
         Some(value)
     } else {
         None
@@ -846,14 +850,14 @@ fn eval_while(
     if let Some(value) = optimized_condition {
         if value {
             loop {
-                if execute_loop_body(&statements, &context_ref)? {
+                if execute_loop_body(statements, &context_ref)? {
                     break;
                 }
             }
         }
     } else {
         while eval_expr(condition, context_ref.clone())?.into() {
-            if execute_loop_body(&statements, &context_ref)? {
+            if execute_loop_body(statements, &context_ref)? {
                 break;
             }
         }
@@ -876,14 +880,14 @@ fn eval_if(
         context_ref.borrow_mut().environment.enter_scope(ScopeKind::Regular);
         eval_body(&block.statements, context_ref.clone())?;
         context_ref.borrow_mut().environment.exit_scope();
-    } else if let Some(box Statement::If {
+    } else if let Some(box Statement { kind: StatementKind::If {
         condition,
         block,
         alternate,
-    }) = alternate
+    }, .. }) = alternate
     {
         eval_if(&condition, block, alternate, context_ref.clone())?;
-    } else if let Some(box Statement::Block(Block { statements })) = alternate {
+    } else if let Some(box Statement { kind : StatementKind::Block(Block { statements, .. }), .. }) = alternate {
         context_ref.borrow_mut().environment.enter_scope(ScopeKind::Regular);
         eval_body(&statements, context_ref.clone())?;
         context_ref.borrow_mut().environment.exit_scope();
@@ -892,16 +896,16 @@ fn eval_if(
 }
 
 fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-    return match expr {
-        Expression::Binary {
+    return match &expr.kind {
+        ExpressionKind::Binary {
             left,
             operator,
             right,
-        } => eval_binary(&left, operator, &right, context_ref),
-        Expression::Member { object, property } => {
-            let value = eval_expr(object, context_ref.clone())?;
+        } => eval_binary(&left, &operator, &right, context_ref),
+        ExpressionKind::Member { object, property } => {
+            let value = eval_expr(&object, context_ref.clone())?;
 
-            let property = eval_expr(property, context_ref.clone())?;
+            let property = eval_expr(&property, context_ref.clone())?;
 
             if matches!(&property, ValueHolder::Number(_)) {
                 let index = match &property {
@@ -955,7 +959,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 instance: Arc::new(value),
             })))
         }
-        Expression::Literal { r#type, value } => {
+        ExpressionKind::Literal { r#type, value } => {
             if let LiteralExpressionKind::Literal = r#type {
                 Ok(value.clone())
             } else if let LiteralExpressionKind::Object(entries) = r#type {
@@ -973,7 +977,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 // ArrayRef creation to be implemented
                 return Ok(ValueHolder::Array(ArrayRef::new(items, context_ref.clone()))); // Placeholder
             } else if let LiteralExpressionKind::Function(statement) = r#type {
-                let box Statement::FunctionIR { var_ref, arguments, statements } = statement.clone() else {
+                let box StatementKind::FunctionIR { var_ref, arguments, statements } = statement.clone() else {
                     panic!()
                 };
 
@@ -990,8 +994,8 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 unreachable!();
             }
         }
-        Expression::Unary { left, operator } => {
-            if let box Expression::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::Number(mut number) } = *left {
+        ExpressionKind::Unary { left, operator } => {
+            if let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::Number(mut number) } = left.kind {
                 if *operator == TokenKind::Minus {
                     number = number * DynamicNumber::new(NumberHolder::Integer8(-1));
 
@@ -1001,10 +1005,10 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 return Err(LanguageError::from(RuntimeError::Custom("Unable to use unary operator with this type".to_string())))
             }
 
-            eval_expr(left, context_ref)
+            eval_expr(&left, context_ref)
         }
-        Expression::Variable(variable) => {
-            let value = context_ref.borrow().environment.get(variable).ok_or(
+        ExpressionKind::Variable(variable) => {
+            let value = context_ref.borrow().environment.get(&variable).ok_or(
                 LanguageError::with_source(RuntimeError::VariableNotFound(format!(
                     "Slot {} at depth {} not found",
                     variable.slot, variable.depth
@@ -1044,7 +1048,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 value => Ok(value),
             }
         }
-        Expression::Assignment {
+        ExpressionKind::Assignment {
             left,
             operator,
             right,
@@ -1056,7 +1060,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                         Ok($right)
                     } else {
                         let prototype = $right.get_prototype();
-                        let operation = match *operator {
+                        let operation = match operator {
                             TokenKind::PlusEqual => Operation::Addition,
                             TokenKind::MinusEqual => Operation::Substraction,
                             TokenKind::AsteriskEqual => Operation::Multiplication,
@@ -1069,8 +1073,8 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 };
             }
 
-            if let Expression::Variable(var_ref) = &**left {
-                let expr = eval_expr(right, context_ref.clone())?;
+            if let ExpressionKind::Variable(var_ref) = &left.kind {
+                let expr = eval_expr(&right, context_ref.clone())?;
                 let value = compute_value!(expr, {
                     let context_ref = context_ref.borrow();
                     context_ref.environment.get(var_ref).unwrap()
@@ -1083,7 +1087,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                 )?;
 
                 return Ok(ValueHolder::Void);
-            } else if let Expression::Member { object, property } = &**left {
+            } else if let ExpressionKind::Member { object, property } = &left.kind {
                 let value = eval_expr(&object, context_ref.clone())?;
 
                 if let ValueHolder::Object(ObjectRef { object_id }) = value {
@@ -1096,7 +1100,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                     };
 
                     let object_ref = ObjectRef { object_id };
-                    let expr = eval_expr(right, context_ref.clone())?;
+                    let expr = eval_expr(&right, context_ref.clone())?;
                     let value = compute_value!(expr, {
                         object_ref.get(property.to_string(), context_ref.clone())?
                     })?;
@@ -1104,9 +1108,9 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
 
                     return Ok(ValueHolder::Void);
                 } else if let ValueHolder::Array(array_ref) = value {
-                    let index = match &**property {
-                        Expression::Literal { r#type: _, value } => value,
-                        Expression::Variable(_) => &eval_expr(&property, context_ref.clone())?,
+                    let index = match &property.kind {
+                        ExpressionKind::Literal { r#type: _, value } => value,
+                        ExpressionKind::Variable(_) => &eval_expr(&property, context_ref.clone())?,
                         _ => {
                             return Err(LanguageError::with_source(RuntimeError::InvalidType(
                                 "Index should be a variable".to_string(),
@@ -1123,7 +1127,7 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
                         }
                     };
 
-                    let expr = eval_expr(right, context_ref.clone())?;
+                    let expr = eval_expr(&right, context_ref.clone())?;
                     let value = compute_value!(expr, {
                         array_ref.get(index, context_ref.clone())?
                     })?;
@@ -1139,18 +1143,18 @@ fn eval_expr(expr: &Expression, context_ref: Rc<RefCell<ModuleContext>>) -> Runt
 
             panic!("Expected variable for assignment got {:?}", *left);
         }
-        Expression::Call { callee, arguments } => eval_call(callee, arguments, context_ref),
-        Expression::Equality {
+        ExpressionKind::Call { callee, arguments } => eval_call(callee, arguments, context_ref),
+        ExpressionKind::Equality {
             left,
             operator,
             right,
         } => eval_equality(left, operator, right, context_ref),
-        Expression::Relational {
+        ExpressionKind::Relational {
             left,
             operator,
             right,
         } => eval_relational(left, operator, right, context_ref),
-        Expression::Logical {
+        ExpressionKind::Logical {
             left,
             operator,
             right,
@@ -1188,10 +1192,10 @@ fn eval_call(
         .map(|arg| eval_expr(&arg, context.clone()))
         .collect::<LanguageResult<Vec<_>>>()?;
 
-    if let Expression::Literal {
+    if let ExpressionKind::Literal {
         value: ValueHolder::String(name),
         ..
-    } = callee
+    } = &callee.kind
     {
         let table = FUNCTION_TABLE.lock();
         let func = table.get(name.as_str()).cloned();
@@ -1250,6 +1254,8 @@ pub fn eval_runtime_function(function: RuntimeFunction, evaluated_args: &Vec<Val
             name: None,
             slot: 0,
             depth: 0,
+            start: 0,
+            end: 0
         },
         ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
             arguments: function.arguments.clone(),

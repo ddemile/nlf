@@ -112,7 +112,7 @@ fn run_test(name: String, content: String) -> TestOutput {
 
         let ast = parser::parse(tokens).unwrap();
 
-        let ir = translator::translate(ast);
+        let ir = translator::translate(ast).unwrap();
 
         let now = Instant::now();
 

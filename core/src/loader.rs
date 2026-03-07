@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, r
 use parking_lot::Mutex;
 
 use crate::{
-    errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, interpret}, lexer, loader, parser::{self, Program, Statement, ValueHolder, VariableRef}, stdlib::CoreModules, translator
+    errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, interpret}, lexer, loader, parser::{self, Program, Statement, StatementKind, ValueHolder, VariableRef}, stdlib::CoreModules, translator
 };
 
 #[derive(Debug, Clone)]
@@ -117,28 +117,28 @@ impl Module {
             .unwrap();
 
         let _ = fs::write(
-            format!("debug/{}-tokens.json", name),
+            format!("core/debug/{}-tokens.json", name),
             serde_json::to_string_pretty(&tokens).unwrap(),
         );
 
         let ast = parser::parse(tokens)?;
 
         let _ = fs::write(
-            format!("debug/{}-ast.json", name),
+            format!("core/debug/{}-ast.json", name),
             serde_json::to_string_pretty(&ast).unwrap(),
         );
 
-        let ir = translator::translate(ast);
+        let ir = translator::translate(ast)?;
         let _ = fs::write(
-            format!("debug/{}-ir.json", name),
+            format!("core/debug/{}-ir.json", name),
             serde_json::to_string_pretty(&ir).unwrap(),
         );
 
         let statements: Vec<Statement> = ir
             .body
             .iter()
-            .map(|statement| match statement {
-                Statement::ImportIR { specifiers, source } => {
+            .map(|statement| match &statement.kind {
+                StatementKind::ImportIR { specifiers, source } => {
                     module.lock().imports.push(Import {
                         specifiers: specifiers.clone(),
                         source: source.into(),
@@ -146,10 +146,10 @@ impl Module {
                     Ok(None) // We skip adding to statements
                 }
 
-                Statement::Export { declaration } => {
-                    let var_ref = match declaration.clone() {
-                        box Statement::FunctionIR { var_ref, .. } => var_ref,
-                        box Statement::ClassIR { var_ref, .. } => var_ref,
+                StatementKind::Export { declaration } => {
+                    let var_ref = match declaration.kind.clone() {
+                        StatementKind::FunctionIR { var_ref, .. } => var_ref,
+                        StatementKind::ClassIR { var_ref, .. } => var_ref,
                         _ => panic!(),
                     };
 
@@ -163,8 +163,11 @@ impl Module {
 
                     Ok(Some(*declaration.clone()))
                 }
-
-                statement => Ok(Some(statement.clone())),
+                kind => {
+                    let mut statement = statement.clone();
+                    statement.kind = kind.clone();
+                    Ok(Some(statement.clone()))
+                },
             })
             // Now we have Iterator<Item = Result<Option<Statement>, RuntimeError>>
             // Flatten it into Result<Vec<Statement>, RuntimeError>
@@ -197,7 +200,7 @@ impl Module {
         module.lock().contents = Some(Arc::new(Mutex::new(contents.clone())));
 
         let _ = fs::write(
-            format!("debug/{}-statements.json", name),
+            format!("core/debug/{}-statements.json", name),
             serde_json::to_string_pretty(&module.lock().statements).unwrap(),
         );
 

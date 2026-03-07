@@ -1,7 +1,5 @@
-import { pi, sin, cos } from "core:math"
+import { sin, cos } from "core:math"
 import { App } from "./papangue.nlf"
-
-let PI = pi()
 
 let app = App()
 
@@ -24,9 +22,9 @@ window.set_draw_callback((context, delta_time) => {
 
     window2.set_clear_color([(sin(value) + 1) / 2, 1, 1])
     
-    value += (2 * PI) * delta_time
+    value += (2 * π) * delta_time
 
-    value %= 2 * PI
+    value %= 2 * π
 
     let r = (cos(value) + 1) / 2;
     
@@ -37,12 +35,12 @@ window.set_draw_callback((context, delta_time) => {
     let count = 50
 
     for i in 0..count {
-        size_vec[0] = 800 + i * 10 + (cos(value + 2 * PI) + 1) * 100
+        size_vec[0] = 800 + i * 10 + (cos(value + 2 * π) + 1) * 100
 
-        let wave = (cos(value + 2 * PI * (i / count)) + 1) / 2;
-        let wave2 = (sin(value + 2 * PI * (i / count)) + 1) / 2;
+        let wave = (cos(value + 2 * π * (i / count)) + 1) / 2;
+        let wave2 = (sin(value + 2 * π * (i / count)) + 1) / 2;
 
-        size_vec[1] = (cos(value + 2 * PI * (i / count)) + 1) * 100 + 100
+        size_vec[1] = (cos(value + 2 * π * (i / count)) + 1) * 100 + 100
         context.draw_rect(size_vec, [10, 10], [wave, 1, 1])
     }
 })
