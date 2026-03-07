@@ -1,7 +1,11 @@
 [workspace]
+resolver = "3"
 members = [
     "core",
     "shared",
     "macros",
     "lsp"
 ]
+
+[profile.release]
+debug = true
