@@ -60,7 +60,7 @@ impl fmt::Display for RuntimeError {
 }
 
 impl ValueHolder {
-    fn get_prototype(&self) -> &dyn Prototype {
+    pub fn get_prototype(&self) -> &dyn Prototype {
         match self {
             ValueHolder::String(_) => &*STRING_PROTOTYPE,
             ValueHolder::Number(_) => &*NUMBER_PROTOTYPE,

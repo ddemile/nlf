@@ -2,7 +2,7 @@ use std::{collections::HashMap, vec};
 
 use serde::Serialize;
 
-use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}};
+use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -309,6 +309,21 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
         ExpressionKind::Binary { left, operator, right } => {
             let left = translate_expression(*left.clone(), context)?;
             let right = translate_expression(*right.clone(), context)?;
+
+            if let (ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: left_value }, ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: right_value }) = (&left.kind, &right.kind) {
+                let operation = match operator {
+                    TokenKind::Plus => Operation::Addition,
+                    TokenKind::Minus => Operation::Substraction,
+                    TokenKind::Asterisk => Operation::Multiplication,
+                    TokenKind::Slash => Operation::Division,
+                    TokenKind::Percent => Operation::Modulo,
+                    _ => unreachable!()
+                };
+                return Ok(ExpressionKind::Literal {
+                    r#type: LiteralExpressionKind::Literal,
+                    value: left_value.get_prototype().operate(operation, left_value, right_value)?
+                }.into_expression(left.start, right.end))
+            }
 
             ExpressionKind::Binary {
                 left: Box::new(left),
