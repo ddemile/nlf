@@ -1,5 +1,6 @@
-use std::{collections::HashMap, vec};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, fs, ops::Range, vec};
 
+use lazy_static::lazy_static;
 use serde::Serialize;
 
 use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}};
@@ -62,6 +63,77 @@ struct Context {
     stack: Vec<Scope>
 }
 
+thread_local! {
+    static FIND_SYMBOLS: RefCell<bool> = RefCell::new(false);
+    static TARGET_POSITION: RefCell<u32> = RefCell::new(0);
+    static DEFINED_VARIABLES: RefCell<Vec<String>> = RefCell::new(vec![]);
+
+    static BINDINGS: RefCell<Option<(u32, u32)>> = RefCell::new(None);
+}
+
+pub fn find_symbols_at(position: u32, program: Program) -> Vec<String> {
+    FIND_SYMBOLS.with_borrow_mut(|find_symbols| {
+        *find_symbols = true;
+    });
+
+    TARGET_POSITION.with_borrow_mut(|target_position| {
+        *target_position = position;
+    });
+
+    DEFINED_VARIABLES.with_borrow_mut(|value| {
+        *value = vec![];
+    });
+
+    match translate(program) {
+        Ok(_) => (),
+        Err(_) => ()
+    };
+
+    let variables = DEFINED_VARIABLES.with_borrow(|value| value.clone());
+
+    BINDINGS.with_borrow_mut(|value| {
+        *value = None;
+    });
+
+    FIND_SYMBOLS.with_borrow_mut(|find_symbols| {
+        *find_symbols = false;
+    });
+
+    fs::write("completion.txt", variables.join("\n")).unwrap();
+
+    variables
+}
+
+fn range_includes<T: PartialOrd>(a: &Range<T>, b: &Range<T>) -> bool {
+    a.start <= b.start && a.end >= b.end && (a.start != b.start || a.end != b.end)
+}
+
+fn try_set_symbols(start: usize, end: usize, context: &mut Context) {
+    if FIND_SYMBOLS.with_borrow(|value| *value) {
+        let position = TARGET_POSITION.with_borrow(|value| *value) as usize;
+
+        let bindings = BINDINGS.with_borrow(|value| *value);
+        
+        if ((start..end).contains(&position)) && (bindings.is_none() || (bindings.is_some() && range_includes(&(bindings.unwrap().0..bindings.unwrap().1), &(start as u32..end as u32)))) {
+            let mut variables: HashSet<String> = HashSet::new();
+
+            for scope in &context.stack {
+                for (variable, _) in &scope.symbol_table.map {
+                    variables.insert(variable.to_string());
+                }
+            }
+
+            DEFINED_VARIABLES.with_borrow_mut(|value| {
+                *value = variables.into_iter().collect();
+            });
+
+            BINDINGS.with_borrow_mut(|value| {
+                *value = Some((start as u32, end as u32));
+            });
+        }
+    }
+}
+
 impl Context {
     fn get(&self, name: &str) -> Option<VariableRef> {
         let mut scopes = self.stack.iter().rev();
@@ -109,7 +181,25 @@ pub fn translate(program: Program) -> LanguageResult<Program> {
         stack: vec![Scope { kind: ScopeKind::Program, slot_index: 0, symbol_table: SymbolTable::new() }]
     };
 
-    translate_body(&program.body, &mut context).map(|statements| Program { body: statements })
+    let program = translate_body(&program.body, &mut context).map(|statements| Program { body: statements });
+    if FIND_SYMBOLS.with_borrow(|value| *value) {
+        let bindings = BINDINGS.with_borrow(|value| *value);
+        
+        if bindings.is_none() {
+            let mut variables: HashSet<String> = HashSet::new();
+
+            for scope in &context.stack {
+                for (variable, _) in &scope.symbol_table.map {
+                    variables.insert(variable.to_string());
+                }
+            }
+
+            DEFINED_VARIABLES.with_borrow_mut(|value| {
+                *value = variables.into_iter().collect();
+            });
+        }
+    }
+    program
 }
 
 fn translate_body(statements: &Vec<Statement>, context: &mut Context) -> LanguageResult<Vec<Statement>> {
@@ -132,7 +222,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
             let condition = translate_expression(condition, context)?;
 
             context.enter_scope(ScopeKind::Conditional);
-            let block = Block { statements: translate_body(&block.statements, context)?, start: block.start, end: block.end };
+            let block = translate_block(block, context)?;
             context.exit_scope();
 
             let alternate = if let Some(alt) = alternate {
@@ -149,13 +239,14 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
             context.set(&name);
             let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
             let statements = translate_body(&statements, context)?;
+            try_set_symbols(statement.start, statement.end, context);
             context.exit_scope();
 
             StatementKind::FunctionIR { var_ref, arguments: inner_arguements, statements }
         },
-        StatementKind::Block(Block { statements, start, end }) => {
+        StatementKind::Block(block) => {
             context.enter_scope(ScopeKind::Block);
-            let block = Block { statements: translate_body(&statements, context)?, start, end };
+            let block = translate_block(block, context)?;
             context.exit_scope();
 
             StatementKind::Block(block)
@@ -172,7 +263,6 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
             StatementKind::ForIR { variable: var_ref, left, right, statements }
         }
         StatementKind::While { condition, statements } => {
-            
             context.enter_scope(ScopeKind::Loop);
             let condition = translate_expression(condition, context)?;
             let statements = translate_body(&statements, context)?;
@@ -197,7 +287,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
         StatementKind::Export { declaration } => {
             StatementKind::Export { declaration: Box::new(translate_statement(*declaration, context)?) }
         }
-        StatementKind::Class { name: class_name,  methods, fields } => {
+        StatementKind::Class { name: class_name, methods, fields } => {
             let var_ref = context.set(&class_name);
 
             let mut translated_methods = vec![];
@@ -227,6 +317,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
         }
         _ => statement.kind
     };
+    try_set_symbols(statement.start, statement.end, context);
     Ok(new_statement)
 }
 
@@ -287,6 +378,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                     context.set(&name);
                     let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
                     let statements = translate_body(&statements, context)?;
+                    try_set_symbols(expression.start, expression.end, context);
                     context.exit_scope();
 
                     return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKind::FunctionIR {
@@ -380,5 +472,12 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
         }
         _ => expression.kind
     };
+    try_set_symbols(expression.start, expression.end, context);
     Ok(expression)
+}
+
+fn translate_block(mut block: Block, context: &mut Context) -> LanguageResult<Block> {
+    block.statements = translate_body(&block.statements, context)?;
+    try_set_symbols(block.start, block.end, context);
+    Ok(block)
 }

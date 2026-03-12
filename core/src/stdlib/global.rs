@@ -160,11 +160,3 @@ fn addon(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
 
     Ok(ValueHolder::Object(ObjectRef::new(map, None, context)))
 }
-
-#[expose]
-fn debug(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
-    let start = argument!(values, ValueHolder::Number, "start", 0);
-    let end = argument!(values, ValueHolder::Number, "end", 1);
-
-    Err(LanguageError::with_source(RuntimeError::Custom("d".into()), start.into(), end.into()))
-}

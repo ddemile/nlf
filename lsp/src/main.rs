@@ -1,7 +1,7 @@
 use std::fs;
 
 use nlf_core::lexer::TokenKind;
-use nlf_core::{lexer, parser, translator};
+use nlf_core::{lexer, parser, stdlib, translator};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -38,16 +38,55 @@ impl LanguageServer for Backend {
         Ok(())
     }
     
-    async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let file_path = params.text_document_position.text_document.uri.to_file_path().unwrap();
+        let path = file_path.to_str().unwrap();
+
+        let contents = fs::read_to_string(path).unwrap();
+
+        let position = params.text_document_position.position;
+
+        let source = line_to_source(&contents, position);
+
+        let program = parser::parse(lexer::lex(contents).unwrap()).unwrap();
+        
+        let symbols = translator::find_symbols_at(source as u32, program);
+
         let match_table = lexer::match_table();
 
         let mut items = vec![];
+
+        for symbol in symbols {
+            if !symbol.starts_with(|c: char| { c.is_ascii_alphabetic() }) {
+                continue;
+            };
+
+            items.push(CompletionItem {
+                label: symbol.clone(),
+                kind: Some(CompletionItemKind::VARIABLE),
+                sort_text: Some(format!("0_{}", symbol)),
+                ..Default::default()
+            });
+        }
+
+        self.client.show_message(MessageType::INFO, format!("Updated {}", items.len())).await;
+
+        for function in stdlib::FUNCTION_TABLE.lock().keys() {
+            items.push(CompletionItem {
+                label: function.to_string(),
+                kind: Some(CompletionItemKind::FUNCTION),
+                detail: Some("Standard library function".to_string()),
+                sort_text: Some(format!("1_{}", function.to_string())),
+                ..Default::default()
+            });
+        }
 
         for (token, kind) in match_table {
             if matches!(kind, TokenKind::Keyword(_) | TokenKind::BooleanLiteral { .. }) {
                 items.push(CompletionItem {
                     label: token.to_string(),
                     kind: Some(CompletionItemKind::KEYWORD),
+                    sort_text: Some(format!("2_{}", token)),
                     ..Default::default()
                 });
             }
@@ -72,6 +111,8 @@ impl LanguageServer for Backend {
 
             let contents = fs::read_to_string(path).unwrap();
 
+            let position = source_to_line(&contents, 22);
+
             let tokens = match lexer::lex(contents.clone()) {
                 Ok(tokens) => tokens,
                 Err(err) => {
@@ -79,8 +120,8 @@ impl LanguageServer for Backend {
                     let diagnostics = vec![
                         Diagnostic {
                             range: Range {
-                                start: convert_source(&contents, bindings.0),
-                                end: convert_source(&contents, bindings.1),
+                                start: source_to_line(&contents, bindings.0),
+                                end: source_to_line(&contents, bindings.1),
                             },
                             severity: Some(DiagnosticSeverity::ERROR),
                             message: format!("{:?}", err.kind),
@@ -110,8 +151,8 @@ impl LanguageServer for Backend {
                     let diagnostics = vec![
                         Diagnostic {
                             range: Range {
-                                start: convert_source(&contents, bindings.0),
-                                end: convert_source(&contents, bindings.1),
+                                start: source_to_line(&contents, bindings.0),
+                                end: source_to_line(&contents, bindings.1),
                             },
                             severity: Some(DiagnosticSeverity::ERROR),
                             message: format!("{:?}", err.kind),
@@ -134,7 +175,7 @@ impl LanguageServer for Backend {
     }
 }
 
-fn convert_source(contents: &String, position: usize) -> Position {
+fn source_to_line(contents: &String, position: usize) -> Position {
     let mut cursor = 0;
 
     for (line_index, line) in contents.lines().enumerate() {
@@ -149,6 +190,22 @@ fn convert_source(contents: &String, position: usize) -> Position {
     }
 
     Position::new(contents.lines().count() as u32, 0)
+}
+
+fn line_to_source(contents: &String, position: Position) -> usize {
+    let mut cursor = 0;
+
+    for (line_index, line) in contents.lines().enumerate() {
+        let line_end = cursor + line.len();
+
+        if position.line == line_index as u32 {
+            return cursor + position.character as usize
+        }
+
+        cursor = line_end + 2;
+    }
+
+    0
 }
 
 #[tokio::main]
