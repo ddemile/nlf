@@ -15,6 +15,8 @@ window2.set_draw_callback((context, _) => {
     context.draw_rect([100, 100], [100, (sin(value) + 1) / 2 * 500], [0.5, 0.5, 1])
 })
 
+let count = 50
+
 window.set_draw_callback((context, delta_time) => {
     let window_size = window.get_size()
 
@@ -32,15 +34,13 @@ window.set_draw_callback((context, delta_time) => {
     
     context.draw_rect([0, 0], size_vec, [0.6, 0.6, 0.6])
 
-    let count = 50
-
     for i in 0..count {
         size_vec[0] = 800 + i * 10 + (cos(value + 2 * π) + 1) * 100
 
         let wave = (cos(value + 2 * π * (i / count)) + 1) / 2;
         let wave2 = (sin(value + 2 * π * (i / count)) + 1) / 2;
 
-        size_vec[1] = (cos(value + 2 * π * (i / count)) + 1) * 100 + 100
+        size_vec[1] = wave * 100 + 100
         context.draw_rect(size_vec, [10, 10], [wave, 1, 1])
     }
 })

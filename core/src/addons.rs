@@ -26,7 +26,9 @@ impl From<ValueHolder> for AddonValue {
                         converted_args.push(arg.into());
                     }
 
-                    eval_runtime_function(function, &converted_args).unwrap().into()
+                    let context = function.context;
+
+                    eval_runtime_function(function, &converted_args, unsafe { &mut *context }).unwrap().into()
                 });
 
                 AddonValue::Function(function_ref)

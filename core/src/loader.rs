@@ -242,11 +242,9 @@ impl Module {
             panic!("Module is already loaded")
         }
 
-        let context = ModuleContext::new(module_ref.lock().program.clone());
+        let context_ref = ModuleContext::new(module_ref.lock().program.clone());
 
-        let context_ref = Rc::new(RefCell::new(context));
-
-        context_ref.borrow_mut().environment.init(context_ref.clone());
+        context_ref.borrow_mut().environment.init();
 
         module_ref.lock().context = Some(context_ref);
 
@@ -282,7 +280,7 @@ impl Module {
             Program {
                 body: statements,
             },
-            module_ref.lock().context.clone().unwrap(),
+            &mut module_ref.lock().context.clone().unwrap().borrow_mut(),
         )?;
 
         Ok(())

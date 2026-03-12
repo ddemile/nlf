@@ -21,10 +21,10 @@ pub enum Method {
 }
 
 impl Method {
-    pub fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+    pub fn call(&self, this: &ValueHolder, arguments: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
         match self {
-            Method::Local(method, scope) => method.call(this, arguments, context_ref, scope.clone()),
-            Method::BuiltIn(method) => method(this, arguments, context_ref),
+            Method::Local(method, scope) => method.call(this, arguments, context, scope.clone()),
+            Method::BuiltIn(method) => method(this, arguments, context),
         }
     }
 }
@@ -94,16 +94,16 @@ impl Clone for LocalOperatorFunc {
 }
 
 pub trait LocalMethodFuncTrait {
-    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>, scope: Rc<RefCell<Scope>>) -> RuntimeResult;
+    fn call(&self, this: &ValueHolder, arguments: &[ValueHolder], context: &mut ModuleContext, scope: Rc<RefCell<Scope>>) -> RuntimeResult;
     fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait>;
 }
 
 impl<T> LocalMethodFuncTrait for T
 where
-    T: Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>, Rc<RefCell<Scope>>) -> RuntimeResult + Clone + 'static,
+    T: Fn(&ValueHolder, &[ValueHolder], &mut ModuleContext, Rc<RefCell<Scope>>) -> RuntimeResult + Clone + 'static,
 {
-    fn call(&self, this: &ValueHolder, arguments: Vec<ValueHolder>, context_ref: Rc<RefCell<ModuleContext>>, scope: Rc<RefCell<Scope>>) -> RuntimeResult {
-        self(this, arguments, context_ref, scope)
+    fn call(&self, this: &ValueHolder, arguments: &[ValueHolder], context: &mut ModuleContext, scope: Rc<RefCell<Scope>>) -> RuntimeResult {
+        self(this, arguments, context, scope)
     }
 
     fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait> {
@@ -169,7 +169,7 @@ impl Prototype for BuiltInPrototype {
 }
 
 pub type BuiltInOperatorFunc = Arc<dyn Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Send + Sync>;
-pub type BuiltInMethodFunc = Arc<dyn Fn(&ValueHolder, Vec<ValueHolder>, Rc<RefCell<ModuleContext>>) -> RuntimeResult + Send + Sync>;
+pub type BuiltInMethodFunc = Arc<dyn Fn(&ValueHolder, &[ValueHolder], &mut ModuleContext) -> RuntimeResult + Send + Sync>;
 
 impl std::fmt::Debug for BuiltInPrototype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -237,7 +237,7 @@ lazy_static! {
 
                 Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Unsigned32(array.fetch(context_ref).len() as u32))))
             }))
-            .with_method("push", Arc::new(|instance, args, context_ref| {
+            .with_method("push", Arc::new(|instance, args, context| {
                 if args.len() > 1 {
                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
                 }
@@ -246,11 +246,11 @@ lazy_static! {
                     unreachable!()
                 };
 
-                array.push(args[0].clone(), context_ref);
+                array.push(args[0].clone(), context);
 
                 Ok(ValueHolder::Void)
             }))
-            .with_method("reverse", Arc::new(|instance, args, context_ref| {
+            .with_method("reverse", Arc::new(|instance, args, context| {
                 if args.len() > 0 {
                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
                 }
@@ -259,7 +259,7 @@ lazy_static! {
                     unreachable!()
                 };
 
-                array.reverse(context_ref);
+                array.reverse(context);
 
                 Ok(ValueHolder::Void)
             }));

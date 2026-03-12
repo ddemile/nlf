@@ -1,5 +1,9 @@
 let native_addon = addon("C:/Users/emili/Documents/Programmation/Rust/papangue-bindings/target/release/papangue_bindings.dll")
 
+let last_time = now()
+let total = 0
+let samples = 0
+
 class RendererContext {
     RendererContext(handle, behaviour_handle) {
         self.handle = handle
@@ -21,7 +25,17 @@ class Window {
 
     fn set_draw_callback(callback) {
         native_addon.set_draw_callback(self.renderer_context.behaviour_handle, (delta_time) => {
+            // let start = now()
             callback(self.renderer_context, delta_time)
+            // let end = now()
+            // total += end - start
+            // samples += 1
+            // if end - last_time > 1000 {
+            //     print("Average time per frame:", total / samples)
+            //     last_time = end
+            //     total = 0
+            //     samples = 0
+            // }
         })
     }
 

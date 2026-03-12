@@ -6,14 +6,14 @@ use nlf_shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
 use crate::{addons::Addon, argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
 
 #[expose]
-fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn print(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
     let arguments: Vec<String> = values
         .iter()
         .map(|argument| -> String {
             if let ValueHolder::Object(object_ref) = argument {
-                return serde_json::to_string(&object_ref.fetch(context.clone())).expect("Failed to parse object");
+                return serde_json::to_string(&object_ref.fetch(context)).expect("Failed to parse object");
             } else if let ValueHolder::Array(array_ref) = argument {
-                return serde_json::to_string(&array_ref.fetch(context.clone())).expect("Failed to parse array");
+                return serde_json::to_string(&array_ref.fetch(context)).expect("Failed to parse array");
             }
 
             format!("{argument}")
@@ -26,14 +26,14 @@ fn print(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
 }
 
 #[expose]
-fn panic(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn panic(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let message = argument!(values, ValueHolder::String, "message", 0);
 
     Err(LanguageError::with_source(RuntimeError::Custom(message.clone()), 0, 0))
 }
 
 #[expose]
-fn now(_values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn now(_values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let start = SystemTime::now();
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
@@ -42,7 +42,7 @@ fn now(_values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runtime
 }
 
 #[expose]
-fn assert(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn assert(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let a = match values.get(0).unwrap() {
         ValueHolder::Bool(f) => f,
         _ => panic!("Expected bool value"),
@@ -56,7 +56,7 @@ fn assert(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runti
 }
 
 #[expose]
-fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn binding(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
     let name = match values.get(0).unwrap() {
         ValueHolder::String(f) => f,
         _ => panic!("Expected test name"),
@@ -77,7 +77,7 @@ fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runti
             func: Method::BuiltIn(Arc::new(move |_, args, ctx| {
                 value.clone()(&args, ctx)
             })),
-            instance: Arc::new(ValueHolder::Void)
+            instance: Rc::new(ValueHolder::Void)
         }));
 
         map.insert(key.to_string(), function);
@@ -87,7 +87,7 @@ fn binding(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runti
 }
 
 #[expose]
-fn input(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn input(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let prompt = argument!(values, ValueHolder::String, "prompt", 0);
     
     print!("{}", prompt);
@@ -102,7 +102,7 @@ fn input(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runtim
 }
 
 #[expose]
-fn confirm(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn confirm(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let prompt = argument!(values, ValueHolder::String, "prompt", 0);
     
     loop {
@@ -121,7 +121,7 @@ fn confirm(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> Runt
 }
 
 #[expose]
-fn cast_number(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn cast_number(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let number = argument!(values, ValueHolder::Number, "number", 0);
     let cast = argument!(values, ValueHolder::String, "cast", 1);
 
@@ -129,14 +129,14 @@ fn cast_number(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> 
 }
 
 #[expose]
-fn get_number_type(values: &[ValueHolder], _context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn get_number_type(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let number = argument!(values, ValueHolder::Number, "number", 0);
 
     Ok(ValueHolder::String(number.get_str_repr()))
 }
 
 #[expose]
-fn addon(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> RuntimeResult {
+fn addon(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
     let path = argument!(values, ValueHolder::String, "path", 0);
 
     let addon = Addon::new(&path);
@@ -152,7 +152,7 @@ fn addon(values: &[ValueHolder], context: Rc<RefCell<ModuleContext>>) -> Runtime
 
                 Ok((function.1)(args).into())
             })),
-            instance: Arc::new(ValueHolder::Void)
+            instance: Rc::new(ValueHolder::Void)
         }));
 
         map.insert(function.0, func);

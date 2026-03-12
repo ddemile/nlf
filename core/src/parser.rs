@@ -7,7 +7,7 @@ use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult},
-    interpreter::{ClassDefinition, Scope, prototypes::Method},
+    interpreter::{ClassDefinition, ModuleContext, Scope, prototypes::Method},
     lexer::{KeywordKind, Token, TokenKind},
 };
 
@@ -56,6 +56,8 @@ pub struct RuntimeFunction {
     pub statements: Rc<[Statement]>,
     #[serde(skip)]
     pub scope: Rc<RefCell<Scope>>,
+    #[serde(skip)]
+    pub context: *mut ModuleContext,  // ← add this back, only here
 }
 
 #[derive(Serialize, Clone)]
@@ -63,7 +65,7 @@ pub struct BuiltInFunction {
     #[serde(skip)]
     pub func: Method,
     #[serde(skip)]
-    pub instance: Arc<ValueHolder>,
+    pub instance: Rc<ValueHolder>,
 }
 
 impl Debug for BuiltInFunction {
