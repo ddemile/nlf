@@ -53,7 +53,7 @@ pub struct ArrayRef {
 #[derive(Serialize, Debug, Clone)]
 pub struct RuntimeFunction {
     pub arguments: Vec<VariableRef>,
-    pub statements: Vec<Statement>,
+    pub statements: Rc<[Statement]>,
     #[serde(skip)]
     pub scope: Rc<RefCell<Scope>>,
 }
@@ -143,7 +143,7 @@ impl Into<i32> for ValueHolder {
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")] // "type" field will contain the variant name
 pub struct Block {
-    pub statements: Vec<Statement>,
+    pub statements: Rc<[Statement]>,
     pub start: usize,
     pub end: usize
 }
@@ -180,27 +180,27 @@ pub enum StatementKind {
         variable: Expression,
         left: Option<Expression>,
         right: Option<Expression>,
-        statements: Vec<Statement>,
+        statements: Rc<[Statement]>,
     },
     ForIR {
         variable: VariableRef,
         left: Option<Expression>,
         right: Option<Expression>,
-        statements: Vec<Statement>,
+        statements: Rc<[Statement]>,
     },
     Function {
         name: String,
         arguments: Vec<Argument>,
-        statements: Vec<Statement>,
+        statements: Rc<[Statement]>,
     },
     FunctionIR {
         var_ref: VariableRef,
         arguments: Vec<VariableRef>,
-        statements: Vec<Statement>,
+        statements: Rc<[Statement]>,
     },
     While {
         condition: Expression,
-        statements: Vec<Statement>,
+        statements: Rc<[Statement]>,
     },
     Return {
         expression: Expression,
@@ -236,7 +236,7 @@ pub enum StatementKind {
     Method {
         name: String,
         arguments: Vec<VariableRef>,
-        statements: Vec<Statement>,
+        statements: Rc<[Statement]>,
     },
 }
 
@@ -340,10 +340,10 @@ impl Visibility {
 #[derive(Serialize, Debug)]
 #[serde(tag = "type")] // "type" field will contain the variant name
 pub struct Program {
-    pub body: Vec<Statement>,
+    pub body: Rc<[Statement]>,
 }
 
-fn parse_internal(mut tokens: Vec<Token>) -> LanguageResult<(Vec<Statement>, usize)> {
+fn parse_internal(mut tokens: Vec<Token>) -> LanguageResult<(Rc<[Statement]>, usize)> {
     let mut cursor = 0;
     let mut statements: Vec<Statement> = vec![];
 
@@ -357,7 +357,7 @@ fn parse_internal(mut tokens: Vec<Token>) -> LanguageResult<(Vec<Statement>, usi
         }
     }
 
-    Ok((statements, cursor))
+    Ok((statements.into(), cursor))
 }
 
 pub fn parse(tokens: Vec<Token>) -> LanguageResult<Program> {

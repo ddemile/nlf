@@ -111,8 +111,6 @@ impl LanguageServer for Backend {
 
             let contents = fs::read_to_string(path).unwrap();
 
-            let position = source_to_line(&contents, 22);
-
             let tokens = match lexer::lex(contents.clone()) {
                 Ok(tokens) => tokens,
                 Err(err) => {

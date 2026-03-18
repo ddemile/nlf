@@ -17,7 +17,7 @@ pub struct Module {
     pub source: String,
     pub exports: HashMap<String, ValueHolder>,
     pub context: Option<Rc<RefCell<ModuleContext>>>,
-    pub statements: Vec<Statement>,
+    pub statements: Rc<[Statement]>,
     pub imports: Vec<Import>,
     pub program: Rc<RefCell<ProgramContext>>,
     pub contents: Option<Arc<Mutex<String>>>,
@@ -75,7 +75,7 @@ impl Module {
             source: source.into(),
             exports: HashMap::new(),
             context: None,
-            statements: vec![],
+            statements: Rc::new([]),
             imports: vec![],
             program,
             contents: None,
@@ -134,7 +134,7 @@ impl Module {
             serde_json::to_string_pretty(&ir).unwrap(),
         );
 
-        let statements: Vec<Statement> = ir
+        let statements: Rc<[Statement]> = ir
             .body
             .iter()
             .map(|statement| match &statement.kind {

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::{HashMap, HashSet}, fs, ops::Range, vec};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, fs, ops::Range, rc::Rc, vec};
 
 use lazy_static::lazy_static;
 use serde::Serialize;
@@ -181,7 +181,7 @@ pub fn translate(program: Program) -> LanguageResult<Program> {
         stack: vec![Scope { kind: ScopeKind::Program, slot_index: 0, symbol_table: SymbolTable::new() }]
     };
 
-    let program = translate_body(&program.body, &mut context).map(|statements| Program { body: statements });
+    let program = translate_body(program.body, &mut context).map(|statements| Program { body: statements });
     if FIND_SYMBOLS.with_borrow(|value| *value) {
         let bindings = BINDINGS.with_borrow(|value| *value);
         
@@ -202,14 +202,14 @@ pub fn translate(program: Program) -> LanguageResult<Program> {
     program
 }
 
-fn translate_body(statements: &Vec<Statement>, context: &mut Context) -> LanguageResult<Vec<Statement>> {
+fn translate_body(statements: Rc<[Statement]>, context: &mut Context) -> LanguageResult<Rc<[Statement]>> {
     let mut inner_statements: Vec<Statement> = vec![];
     
-    for statement in statements {
+    for statement in statements.iter() {
         inner_statements.push(translate_statement(statement.clone(), context)?);
     }
 
-    Ok(inner_statements)
+    Ok(inner_statements.into())
 }
 
 fn translate_statement(statement: Statement, context: &mut Context) -> LanguageResult<Statement> {
@@ -238,7 +238,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
             context.enter_scope(ScopeKind::Function);
             context.set(&name);
             let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
-            let statements = translate_body(&statements, context)?;
+            let statements = translate_body(statements, context)?;
             try_set_symbols(statement.start, statement.end, context);
             context.exit_scope();
 
@@ -257,7 +257,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
 
             context.enter_scope(ScopeKind::Loop);
             let var_ref = context.set(&value);
-            let statements = translate_body(&statements, context)?;
+            let statements = translate_body(statements, context)?;
             context.exit_scope();
 
             StatementKind::ForIR { variable: var_ref, left, right, statements }
@@ -265,7 +265,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
         StatementKind::While { condition, statements } => {
             context.enter_scope(ScopeKind::Loop);
             let condition = translate_expression(condition, context)?;
-            let statements = translate_body(&statements, context)?;
+            let statements = translate_body(statements, context)?;
             context.exit_scope();
 
             StatementKind::While { condition, statements }
@@ -305,7 +305,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
                 }
                 context.set("self");
                 let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
-                let statements = translate_body(&statements, context)?;
+                let statements = translate_body(statements, context)?;
                 context.exit_scope();
 
                 method.kind = StatementKind::Method { name, arguments: inner_arguements, statements };
@@ -377,7 +377,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                     context.enter_scope(ScopeKind::Function);
                     context.set(&name);
                     let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
-                    let statements = translate_body(&statements, context)?;
+                    let statements = translate_body(statements, context)?;
                     try_set_symbols(expression.start, expression.end, context);
                     context.exit_scope();
 
@@ -453,6 +453,14 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                 right: Box::new(right),
             }
         }
+        ExpressionKind::Unary { left, operator } => {
+            let left = translate_expression(*left.clone(), context)?;
+
+            ExpressionKind::Unary {
+                left: Box::new(left),
+                operator: operator.clone()
+            }
+        }
         ExpressionKind::Call { callee, arguments } => {
             let callee = match translate_expression(*callee.clone(), context) {
                 Ok(expr) => expr,
@@ -477,7 +485,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
 }
 
 fn translate_block(mut block: Block, context: &mut Context) -> LanguageResult<Block> {
-    block.statements = translate_body(&block.statements, context)?;
+    block.statements = translate_body(block.statements, context)?;
     try_set_symbols(block.start, block.end, context);
     Ok(block)
 }
