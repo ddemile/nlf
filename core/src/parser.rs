@@ -7,7 +7,7 @@ use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult},
-    interpreter::{ClassDefinition, ModuleContext, Scope, prototypes::Method},
+    interpreter::{ClassDefinition, ModuleContext, Object, Scope, prototypes::Method},
     lexer::{KeywordKind, Token, TokenKind},
 };
 
@@ -40,14 +40,16 @@ pub struct Argument {
     pub name: String,
 }
 
-#[derive(Serialize, Debug, Clone, Copy)]
+#[derive(Serialize, Debug, Clone)]
 pub struct ObjectRef {
-    pub object_id: usize,
+    #[serde(skip)]
+    pub object: Rc<RefCell<Object>>,
 }
 
 #[derive(Serialize, Debug, Clone)]
 pub struct ArrayRef {
-    pub array_id: usize,
+    #[serde(skip)]
+    pub object: Rc<RefCell<Object>>,
 }
 
 #[derive(Serialize, Debug, Clone)]

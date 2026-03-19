@@ -108,16 +108,14 @@ pub type RuntimeResult = LanguageResult<ValueHolder>;
 #[derive(Debug)]
 pub struct ProgramContext {
     pub modules: HashMap<String, Arc<Mutex<Module>>>,
-    pub schemas: Vec<Schema>,
-    pub store: HashMap<usize, Object>
+    pub schemas: Vec<Schema>
 }
 
 impl ProgramContext {
     pub fn new() -> Self {
         Self {
             modules: HashMap::new(),
-            schemas: vec![],
-            store: HashMap::new()
+            schemas: vec![]
         }
     }
 
@@ -198,22 +196,13 @@ impl ObjectRef {
             prototype
         };
 
-        let mut program = context.program.borrow_mut();
-
-        let object_id = program.store.len() + 1;
-
-        program.store.insert(object_id, object);
-
-        ObjectRef { object_id }
+        ObjectRef { object: Rc::new(RefCell::new(object)) }
     }
 
     pub(self) fn get(self, property: String, context: &mut ModuleContext) -> RuntimeResult {
         let program = context.program.borrow();
 
-        let object = program
-            .store
-            .get(&self.object_id)
-            .expect("Object not found");
+        let object = self.object.borrow();
 
         let schema = program
             .schemas
@@ -233,12 +222,7 @@ impl ObjectRef {
     pub(self) fn set(&self, property: String, value: ValueHolder, context: &mut ModuleContext) {
         let program = context.program.borrow();
 
-        let object = program
-            .store
-            .get(&self.object_id)
-            .expect("Object not found");
-
-        let prototype = object.prototype.clone();
+        let mut object = self.object.borrow_mut();
 
         let schema = program
             .schemas
@@ -247,7 +231,7 @@ impl ObjectRef {
             .expect("Schema not found");
 
         let mut keys = schema.keys.clone();
-        let mut values = object.values.clone();
+        let values = &mut object.values;
 
         keys.insert(property.clone());
 
@@ -263,24 +247,13 @@ impl ObjectRef {
         
         let schema = get_schema(keys, context);
 
-        let object = Object {
-            schema_id: schema.id,
-            values,
-            prototype
-        };
-
-        let mut program = context.program.borrow_mut();
-
-        program.store.insert(self.object_id, object);
+        object.schema_id = schema.id;
     }
 
     pub fn fetch(&self, context: &mut ModuleContext) -> HashMap<String, ValueHolder> {
         let program = context.program.borrow();
 
-        let object = program
-            .store
-            .get(&self.object_id)
-            .expect("Object not found");
+        let object = self.object.borrow();
 
         let schema = program
             .schemas
@@ -300,39 +273,24 @@ impl ObjectRef {
         map
     }
 
-    pub fn get_prototype(&self, context: &mut ModuleContext) -> Option<Rc<dyn Prototype>> {
-        let program = context.program.borrow();
-
-        let object = program
-            .store
-            .get(&self.object_id)
-            .expect("Object not found");
+    pub fn get_prototype(&self) -> Option<Rc<dyn Prototype>> {
+        let object = self.object.borrow();
 
         object.prototype.clone()
     }
 }
 
 impl ArrayRef {
-    pub(self) fn new(items: Vec<ValueHolder>, context: &mut ModuleContext) -> Self {
-        let mut program = context.program.borrow_mut();
+    pub(self) fn new(items: Vec<ValueHolder>) -> Self {
+        let object = Object { schema_id: 0, values: items, prototype: None };
 
-        let array_id = program.store.len() + 1;
-
-        // Placeholder implementation
-        program.store.insert(array_id, Object { schema_id: 0, values: items, prototype: None });
-
-        ArrayRef { array_id }
+        ArrayRef { object: Rc::new(RefCell::new(object)) }
     }
 
-    pub fn get(&self, index: usize, context: &mut ModuleContext) -> RuntimeResult {
-        let program = context.program.borrow();
+    pub fn get(&self, index: usize) -> RuntimeResult {
+        let object = self.object.borrow();
 
-        let object = program
-            .store
-            .get(&self.array_id)
-            .expect("Array not found");
-
-        let value = object.values.get(index).cloned().ok_or(LanguageError::from(RuntimeError::Custom(format!(
+        let value = object.values.get(index).cloned().ok_or_else(|| LanguageError::from(RuntimeError::Custom(format!(
             "Index {} out of bounds",
             index
         ))))?;
@@ -340,64 +298,31 @@ impl ArrayRef {
         Ok(value)
     }
 
-    pub fn set(&self, index: usize, value: ValueHolder, context: &mut ModuleContext) {
-        let program = context.program.borrow();
+    pub fn set(&self, index: usize, value: ValueHolder) {
+        let mut object = self.object.borrow_mut();
 
-        let object = program
-            .store
-            .get(&self.array_id)
-            .expect("Array not found");
-
-        let mut values = object.values.clone();
+        let values = &mut object.values;
 
         if index >= values.len() {
-            values.push(value);
-        } else {
-            values[index] = value;
-        }
-
-        drop(program);
-
-        let object = Object {
-            schema_id: 0,
-            values,
-            prototype: None
-        };
-
-        let mut program = context.program.borrow_mut();
-
-        program.store.insert(self.array_id, object);
+            values.resize(index + 1, ValueHolder::Void);
+        } 
+        values[index] = value;
     }
 
-    pub fn fetch(&self, context: &mut ModuleContext) -> Vec<ValueHolder> {
-        let program = context.program.borrow();
-
-        let object = program
-            .store
-            .get(&self.array_id)
-            .expect("Array not found");
+    pub fn fetch(&self) -> Vec<ValueHolder> {
+        let object = self.object.borrow();
 
         object.values.clone()
     }
 
-    pub fn push(&self, value: ValueHolder, context: &mut ModuleContext) {
-        let mut program = context.program.borrow_mut();
-
-        let object = program
-            .store
-            .get_mut(&self.array_id)
-            .expect("Array not found");
+    pub fn push(&self, value: ValueHolder) {
+        let mut object = self.object.borrow_mut();
 
         object.values.push(value);
     }
 
-    pub fn reverse(&self, context: &mut ModuleContext) {
-        let mut program = context.program.borrow_mut();
-
-        let object = program
-            .store
-            .get_mut(&self.array_id)
-            .expect("Array not found");
+    pub fn reverse(&self) {
+        let mut object = self.object.borrow_mut();
 
         object.values.reverse();
     }
@@ -467,7 +392,7 @@ impl Environment {
                     let scope = current_scope.borrow();
                     match &scope.kind {
                         ScopeKind::Call(inner_scope) => inner_scope.clone(),
-                        _ => scope.parent.clone().ok_or(LanguageError::from(RuntimeError::VariableNotFound(format!(
+                        _ => scope.parent.clone().ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(format!(
                             "Parent scope not found for slot {} at depth {}",
                             var_ref.slot, var_ref.depth
                         ))))?
@@ -480,7 +405,7 @@ impl Environment {
                 .slots
                 .get_mut(var_ref.slot)
                 .map(|v| *v = value)
-                .ok_or(LanguageError::from(RuntimeError::VariableNotFound(format!(
+                .ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(format!(
                     "Slot {} at depth {} not found",
                     var_ref.slot, var_ref.depth
                 ))))?;
@@ -602,7 +527,7 @@ fn hoist_declarations(
                                     start: 0,
                                     end: 0
                                 },
-                                ValueHolder::Object(*object_ref),
+                                ValueHolder::Object(object_ref.clone()),
                                 true,
                             )?
                         } else {
@@ -884,7 +809,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                 };
 
                 if let ValueHolder::Array(array_ref) = &value {
-                    return array_ref.get(index, context);
+                    return array_ref.get(index);
                 } else {
                     return Err(LanguageError::with_source(RuntimeError::InvalidType(
                         "Cannot access index on type other than Array".to_string(),
@@ -905,8 +830,8 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                 };
             };
 
-            let mut prototype: Option<&dyn Prototype> = if let ValueHolder::Object(object) = value {
-                if let Some(prototype) = object.get_prototype(context) {
+            let mut prototype: Option<&dyn Prototype> = if let ValueHolder::Object(ref object) = value {
+                if let Some(prototype) = object.get_prototype() {
                     Some(&*prototype.clone())
                 } else {
                     None
@@ -922,7 +847,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
             let method = prototype
                 .unwrap()
                 .get_method(&property)
-                .ok_or(LanguageError::with_source(RuntimeError::NoSuchProperty(property), 0, 0))?;
+                .ok_or_else(|| LanguageError::with_source(RuntimeError::NoSuchProperty(property), 0, 0))?;
 
             Ok(ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
                 func: method,
@@ -945,7 +870,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                     .map(|v| eval_expr(v, context).unwrap())
                     .collect();
                 // ArrayRef creation to be implemented
-                return Ok(ValueHolder::Array(ArrayRef::new(items, context))); // Placeholder
+                return Ok(ValueHolder::Array(ArrayRef::new(items))); // Placeholder
             } else if let LiteralExpressionKind::Function(statement) = r#type {
                 let box StatementKind::FunctionIR { var_ref: _, arguments, statements } = statement.clone() else {
                     panic!()
@@ -980,12 +905,12 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
             Ok(value)
         }
         ExpressionKind::Variable(variable) => {
-            let value = context.environment.get(&variable).ok_or(
+            let value = context.environment.get(&variable).ok_or_else(|| {
                 LanguageError::with_source(RuntimeError::VariableNotFound(format!(
                     "Slot {} at depth {} not found",
                     variable.slot, variable.depth
-                )), 0, 0),
-            )?;
+                )), 0, 0)
+            })?;
 
             match value {
                 ValueHolder::LazyRef { slot, module: source } => {
@@ -1061,7 +986,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
             } else if let ExpressionKind::Member { object, property } = &left.kind {
                 let value = eval_expr(&object, context)?;
 
-                if let ValueHolder::Object(ObjectRef { object_id }) = value {
+                if let ValueHolder::Object(ObjectRef { object }) = value {
                     let value = eval_expr(property, context)?;
 
                     let ValueHolder::String(property) = value else {
@@ -1070,10 +995,10 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                         ), 0, 0));
                     };
 
-                    let object_ref = ObjectRef { object_id };
+                    let object_ref = ObjectRef { object };
                     let expr = eval_expr(&right, context)?;
                     let value = compute_value!(expr, {
-                        object_ref.get(property.to_string(), context)?
+                        object_ref.clone().get(property.to_string(), context)?
                     })?;
                     object_ref.set(property.to_string(), value, context);
 
@@ -1100,9 +1025,9 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
 
                     let expr = eval_expr(&right, context)?;
                     let value = compute_value!(expr, {
-                        array_ref.get(index, context)?
+                        array_ref.get(index)?
                     })?;
-                    array_ref.set(index, value, context);
+                    array_ref.set(index, value);
 
                     return Ok(ValueHolder::Void);
                 } else {

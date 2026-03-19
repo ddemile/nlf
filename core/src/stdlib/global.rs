@@ -13,7 +13,7 @@ fn print(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
             if let ValueHolder::Object(object_ref) = argument {
                 return serde_json::to_string(&object_ref.fetch(context)).expect("Failed to parse object");
             } else if let ValueHolder::Array(array_ref) = argument {
-                return serde_json::to_string(&array_ref.fetch(context)).expect("Failed to parse array");
+                return serde_json::to_string(&array_ref.fetch()).expect("Failed to parse array");
             }
 
             format!("{argument}")

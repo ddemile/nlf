@@ -364,7 +364,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                         panic!()
                     };
 
-                    let variable_ref = context.get(value).ok_or(LanguageError::from(TranslatorError::UnknownVariable(value.clone())))?;
+                    let variable_ref = context.get(value).ok_or_else(|| LanguageError::from(TranslatorError::UnknownVariable(value.clone())))?;
 
                     return Ok(ExpressionKind::Variable(variable_ref).into_expression(expression.start, expression.end));
                 }

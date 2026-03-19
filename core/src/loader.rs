@@ -213,7 +213,7 @@ impl Module {
         let contents = match module.lock().kind {
             ModuleKind::Core => {
                 let embedded_file = CoreModules::get(&format!("{}.nlf", source.strip_prefix("core:").unwrap()))
-                    .ok_or(LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?;
+                    .ok_or_else(|| LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?;
 
                 String::from_utf8(embedded_file.data.into_owned()).map_err(|_| LanguageError::from(LoaderError::TODO))?
             }
@@ -265,7 +265,7 @@ impl Module {
                     let value = module
                         .exports
                         .get(&name)
-                        .ok_or(LanguageError::with_source(LoaderError::ImportNotFound(name.to_string()), 0, 0))?;
+                        .ok_or_else(|| LanguageError::with_source(LoaderError::ImportNotFound(name.to_string()), 0, 0))?;
                     
                     context
                         .environment

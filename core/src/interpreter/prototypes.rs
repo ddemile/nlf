@@ -57,7 +57,7 @@ impl Prototype for LocalPrototype {
             return Err(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))));
         }
 
-        let func: &LocalOperatorFunc = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
+        let func: &LocalOperatorFunc = self.operators[operation_id].as_ref().ok_or_else(|| LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
 
         func.call(a, b)
     }
@@ -158,7 +158,7 @@ impl Prototype for BuiltInPrototype {
             return Err(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))));
         }
 
-        let func: &BuiltInOperatorFunc = self.operators[operation_id].as_ref().ok_or(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
+        let func: &BuiltInOperatorFunc = self.operators[operation_id].as_ref().ok_or_else(|| LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
 
         func(a, b)
     }
@@ -226,7 +226,7 @@ lazy_static! {
 
                 Ok(ValueHolder::String(instance.to_string()))
             }))
-            .with_method("len", Arc::new(|instance, args, context_ref| {
+            .with_method("len", Arc::new(|instance, args, _context| {
                 if args.len() > 0 {
                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
                 }
@@ -235,9 +235,9 @@ lazy_static! {
                     unreachable!()
                 };
 
-                Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Unsigned32(array.fetch(context_ref).len() as u32))))
+                Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Unsigned32(array.fetch().len() as u32))))
             }))
-            .with_method("push", Arc::new(|instance, args, context| {
+            .with_method("push", Arc::new(|instance, args, _context| {
                 if args.len() > 1 {
                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
                 }
@@ -246,11 +246,11 @@ lazy_static! {
                     unreachable!()
                 };
 
-                array.push(args[0].clone(), context);
+                array.push(args[0].clone());
 
                 Ok(ValueHolder::Void)
             }))
-            .with_method("reverse", Arc::new(|instance, args, context| {
+            .with_method("reverse", Arc::new(|instance, args, _context| {
                 if args.len() > 0 {
                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
                 }
@@ -259,7 +259,7 @@ lazy_static! {
                     unreachable!()
                 };
 
-                array.reverse(context);
+                array.reverse();
 
                 Ok(ValueHolder::Void)
             }));
