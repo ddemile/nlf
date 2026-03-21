@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, sync::Arc
+    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc
 };
 
 use serde::Serialize;

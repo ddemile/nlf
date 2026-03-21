@@ -1,4 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
 
 use nlf_macros::module;
 use rand::Rng;
@@ -11,7 +10,7 @@ module!("random", {
         let mut rng = rand::rng();
         let n = rng.random();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Integer32(n))))
+        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(n))))
     }
 
     fn randint(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {

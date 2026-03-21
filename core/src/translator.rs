@@ -1,6 +1,5 @@
 use std::{cell::RefCell, collections::{HashMap, HashSet}, fs, ops::Range, rc::Rc, vec};
 
-use lazy_static::lazy_static;
 use serde::Serialize;
 
 use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}};

@@ -43,3 +43,11 @@ export fn ceil(x) {
 export fn pi() {
     return math.pi()
 }
+
+export fn min(a, b) {
+    return math.min(a, b)
+}
+
+export fn max(a, b) {
+    return math.max(a, b)
+}

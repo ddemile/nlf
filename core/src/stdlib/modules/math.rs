@@ -1,4 +1,4 @@
-use std::{cell::RefCell, f32::consts::PI, rc::Rc};
+use std::f32::consts::PI;
 
 use nlf_macros::module;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
@@ -80,5 +80,23 @@ module!("math", {
 
     fn pi(_values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(PI))))
+    }
+
+    fn min(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
+        let a = argument!(values, ValueHolder::Number, "a", 0);
+        let b = argument!(values, ValueHolder::Number, "b", 0);
+        let a: f32 = a.into();
+        let b: f32 = b.into();
+
+        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(a.min(b)))))
+    }
+
+    fn max(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
+        let a = argument!(values, ValueHolder::Number, "a", 0);
+        let b = argument!(values, ValueHolder::Number, "b", 0);
+        let a: f32 = a.into();
+        let b: f32 = b.into();
+
+        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(a.min(b)))))
     }
 });
