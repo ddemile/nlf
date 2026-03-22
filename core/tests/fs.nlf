@@ -1,0 +1,10 @@
+// Name: Write a write then read it before deleting it
+let fs = binding("fs")
+
+fs.write("core/debug/file.txt", "Hello world")
+
+let contents = fs.read("core/debug/file.txt")
+
+fs.rm("core/debug/file.txt")
+
+assert(contents == "Hello world")

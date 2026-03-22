@@ -6,18 +6,10 @@ use nlf_shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
 use crate::{addons::Addon, argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
 
 #[expose]
-fn print(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
+fn print(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let arguments: Vec<String> = values
         .iter()
-        .map(|argument| -> String {
-            if let ValueHolder::Object(object_ref) = argument {
-                return serde_json::to_string(&object_ref.fetch(context)).expect("Failed to parse object");
-            } else if let ValueHolder::Array(array_ref) = argument {
-                return serde_json::to_string(&array_ref.fetch()).expect("Failed to parse array");
-            }
-
-            format!("{argument}")
-        })
+        .map(|argument| format!("{argument}"))
         .collect();
 
     println!("{}", arguments.join(" "));

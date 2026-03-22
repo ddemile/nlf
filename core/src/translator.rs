@@ -98,7 +98,7 @@ pub fn find_symbols_at(position: u32, program: Program) -> Vec<String> {
         *find_symbols = false;
     });
 
-    fs::write("completion.txt", variables.join("\n")).unwrap();
+    fs::write("core/debug/completion.txt", variables.join("\n")).unwrap();
 
     variables
 }

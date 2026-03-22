@@ -7,7 +7,7 @@ use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult},
-    interpreter::{ClassDefinition, ModuleContext, Object, Scope, prototypes::Method},
+    interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, Scope, prototypes::Method},
     lexer::{KeywordKind, Token, TokenKind},
 };
 
@@ -44,6 +44,8 @@ pub struct Argument {
 pub struct ObjectRef {
     #[serde(skip)]
     pub object: Rc<RefCell<Object>>,
+    #[serde(skip)]
+    pub program_context: Rc<RefCell<ProgramContext>>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -107,6 +109,18 @@ impl PartialEq for ValueHolder {
             (ValueHolder::Number(a), ValueHolder::Number(b)) => a == b,
             (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a == b,
             (ValueHolder::Void, ValueHolder::Void) => true,
+            (ValueHolder::Object(a), ValueHolder::Object(b)) => {
+                let a = a.fetch();
+                let b = b.fetch();
+
+                a == b
+            },
+            (ValueHolder::Array(a), ValueHolder::Array(b)) => {
+                let a = a.object.borrow();
+                let b = b.object.borrow();
+
+                a.values == b.values
+            },
             _ => false, // different variants are never equal
         }
     }

@@ -8,9 +8,9 @@ use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 use smallvec::SmallVec;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::{
+    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{format::FormatOptions, prototypes::{
         ARRAY_PROTOTYPE, LocalPrototype, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
-    }, lexer::TokenKind, loader::Module, parser::{
+    }}, lexer::TokenKind, loader::Module, parser::{
         ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, StatementKind, ValueHolder, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE
 };
@@ -18,6 +18,7 @@ use crate::{
 use inline_colorization::*;
 
 pub mod prototypes;
+pub mod format;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct Field {
@@ -78,8 +79,12 @@ impl ValueHolder {
             ValueHolder::Bool(value) => format!("{value}"),
             ValueHolder::Fn(FunctionKind::Runtime(_)) => format!("fn() {{ TODO }}"),
             ValueHolder::Fn(FunctionKind::BuiltIn(_)) => format!("fn() {{ native code }}"),
-            ValueHolder::Object(_) => format!("ObjectRef"),
-            ValueHolder::Array(_) => format!("ArrayRef"),
+            ValueHolder::Object(object_ref) => format::format_object(object_ref, FormatOptions {
+                space: if object_ref.fetch().len() > 1 { Some(2) } else { None }
+            }),
+            ValueHolder::Array(array_ref) => format::format_array(array_ref, FormatOptions {
+                space: if array_ref.fetch().len() > 1 { Some(2) } else { None }
+            }),
             ValueHolder::LazyRef { .. } => format!("LazyRef"),
             ValueHolder::ClassDefinition(_) => format!("ClassDefinition"),
             ValueHolder::Void => format!("Void"),
@@ -153,9 +158,9 @@ pub struct Schema {
 
 #[derive(Clone)]
 pub struct Object {
-    schema_id: usize,
-    values: Vec<ValueHolder>,
-    prototype: Option<Rc<dyn Prototype>>
+    pub(crate) schema_id: usize,
+    pub(crate) values: Vec<ValueHolder>,
+    pub(crate) prototype: Option<Rc<dyn Prototype>>
 }
 
 impl std::fmt::Debug for Object {
@@ -196,7 +201,7 @@ impl ObjectRef {
             prototype
         };
 
-        ObjectRef { object: Rc::new(RefCell::new(object)) }
+        ObjectRef { object: Rc::new(RefCell::new(object)), program_context: context.program.clone() }
     }
 
     pub(self) fn get(self, property: String, context: &mut ModuleContext) -> RuntimeResult {
@@ -250,8 +255,8 @@ impl ObjectRef {
         object.schema_id = schema.id;
     }
 
-    pub fn fetch(&self, context: &mut ModuleContext) -> HashMap<String, ValueHolder> {
-        let program = context.program.borrow();
+    pub fn fetch(&self) -> HashMap<String, ValueHolder> {
+        let program = self.program_context.borrow();
 
         let object = self.object.borrow();
 
@@ -986,7 +991,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
             } else if let ExpressionKind::Member { object, property } = &left.kind {
                 let value = eval_expr(&object, context)?;
 
-                if let ValueHolder::Object(ObjectRef { object }) = value {
+                if let ValueHolder::Object(object_ref) = value {
                     let value = eval_expr(property, context)?;
 
                     let ValueHolder::String(property) = value else {
@@ -995,7 +1000,6 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                         ), 0, 0));
                     };
 
-                    let object_ref = ObjectRef { object };
                     let expr = eval_expr(&right, context)?;
                     let value = compute_value!(expr, {
                         object_ref.clone().get(property.to_string(), context)?
