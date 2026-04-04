@@ -10,7 +10,9 @@ use clap::Parser;
 struct Args {
     file: Option<String>,
     #[arg(short, long)]
-    tests: bool
+    tests: bool,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
+    extra: Vec<String>,
 }
 
 fn main() {
