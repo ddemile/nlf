@@ -1,5 +1,6 @@
-use std::{collections::HashMap, io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
+use std::{io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
 
+use indexmap::IndexMap;
 use nlf_macros::expose;
 use nlf_shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
 
@@ -62,7 +63,7 @@ fn binding(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult
 
     let module_map = table.get(name.as_str()).unwrap().clone();
 
-    let mut map: HashMap<String, ValueHolder> = HashMap::new();
+    let mut map: IndexMap<String, ValueHolder> = IndexMap::new();
 
     for (key, value) in module_map {
         let function = ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
@@ -133,7 +134,7 @@ fn addon(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
 
     let addon = Addon::new(&path);
 
-    let mut map: HashMap<String, ValueHolder> = HashMap::new();
+    let mut map: IndexMap<String, ValueHolder> = IndexMap::new();
 
     for function in addon.functions {
         let func = ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {

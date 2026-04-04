@@ -1,7 +1,7 @@
 use core::panic;
 use std::{cell::RefCell, collections::HashMap, fmt::{self}, rc::{Rc, Weak}, sync::Arc};
 
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use parking_lot::{Mutex, MutexGuard};
 use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
@@ -190,7 +190,7 @@ fn get_schema(keys: IndexSet<String>, context: &mut ModuleContext) -> Schema {
 }
 
 impl ObjectRef {
-    pub fn new(entries: HashMap<String, ValueHolder>, prototype: Option<Rc<dyn Prototype>>, context: &mut ModuleContext) -> Self {
+    pub fn new(entries: IndexMap<String, ValueHolder>, prototype: Option<Rc<dyn Prototype>>, context: &mut ModuleContext) -> Self {
         let keys: IndexSet<String> = entries.keys().cloned().collect();
 
         let schema = get_schema(keys, context);
@@ -286,7 +286,7 @@ impl ObjectRef {
 }
 
 impl ArrayRef {
-    pub(self) fn new(items: Vec<ValueHolder>) -> Self {
+    pub fn new(items: Vec<ValueHolder>) -> Self {
         let object = Object { schema_id: 0, values: items, prototype: None };
 
         ArrayRef { object: Rc::new(RefCell::new(object)) }
@@ -863,7 +863,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
             if let LiteralExpressionKind::Literal = r#type {
                 Ok(value.clone())
             } else if let LiteralExpressionKind::Object(entries) = r#type {
-                let entries: HashMap<String, ValueHolder> = entries
+                let entries: IndexMap<String, ValueHolder> = entries
                     .iter()
                     .map(|(k, v)| (k.clone(), eval_expr(v, context).unwrap()))
                     .collect();
@@ -1119,7 +1119,7 @@ fn eval_call(
     }
 
     if let ValueHolder::ClassDefinition(definition) = expr {
-        let mut entries = HashMap::new();
+        let mut entries = IndexMap::new();
         for field in definition.fields {
             entries.insert(field.name, field.value);
         }

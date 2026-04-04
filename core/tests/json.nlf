@@ -1,0 +1,6 @@
+// Name: Stringify then parse JSON object
+let json = binding("json")
+
+let object = {"name": "Alice", "age": 30}
+
+assert(json.parse(json.stringify(object)) == object)

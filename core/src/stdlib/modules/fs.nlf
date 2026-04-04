@@ -1,4 +1,4 @@
-let fs = binding("http")
+let fs = binding("fs")
 
 export fn read(path) {
     return fs.read(path)
