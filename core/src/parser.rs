@@ -2,6 +2,7 @@ use std::{
     cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc
 };
 
+use indexmap::IndexMap;
 use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
@@ -262,7 +263,7 @@ pub enum StatementKind {
 pub enum LiteralExpressionKind {
     Literal,
     Variable,
-    Object(HashMap<String, Expression>),
+    Object(IndexMap<String, Expression>),
     Array(Vec<Expression>),
     Function(Box<StatementKind>)
 }
@@ -1208,7 +1209,7 @@ fn literal_expression(cursor: &mut usize, tokens: &mut Vec<Token>) -> LanguageRe
             expr.kind
         }
         TokenKind::OpeningBracket => {
-            let mut entries: HashMap<String, Expression> = HashMap::new();
+            let mut entries: IndexMap<String, Expression> = IndexMap::new();
             while !matches!(
                 tokens.get(*cursor).map(|token| token.kind.clone()),
                 Some(TokenKind::ClosingBracket)

@@ -255,7 +255,7 @@ impl ObjectRef {
         object.schema_id = schema.id;
     }
 
-    pub fn fetch(&self) -> HashMap<String, ValueHolder> {
+    pub fn fetch(&self) -> IndexMap<String, ValueHolder> {
         let program = self.program_context.borrow();
 
         let object = self.object.borrow();
@@ -266,7 +266,7 @@ impl ObjectRef {
             .find(|schema| schema.id == object.schema_id)
             .expect("Schema not found");
 
-        let mut map = HashMap::new();
+        let mut map = IndexMap::new();
 
         for i in 0..schema.keys.len() {
             let key = schema.keys[i].clone(); 
