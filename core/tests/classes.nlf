@@ -1,0 +1,19 @@
+// Name: Define and class and instanciate it
+class SomeClass {
+    public public_field = 10
+    protected protected_field = []
+    private private_field = { "key": "value" }
+
+    SomeClass(value) {
+        self.key = value
+    }
+
+    fn get_private_field() {
+        return self.private_field
+    }
+}
+
+let instance = SomeClass("value")
+
+assert(instance.key == "value")
+assert(instance.get_private_field() == { "key": "value" })
