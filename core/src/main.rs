@@ -2,7 +2,7 @@
 #![feature(duration_millis_float)]
 use std::path::Path;
 
-use nlf_core::{tests, loader::run_main};
+use nlf_core::{loader::run_main, tests};
 use clap::Parser;
 
 #[derive(Parser, Debug)]

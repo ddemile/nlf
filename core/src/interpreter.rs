@@ -897,17 +897,19 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
         }
         ExpressionKind::Unary { left, operator } => {
             let value = eval_expr(left, context)?;
-            if let ValueHolder::Number(mut number) = value {
-                if *operator == TokenKind::Minus {
+            match (value, operator) {
+                (ValueHolder::Number(mut number), TokenKind::Minus) => {
                     number = number * DynamicNumber::new(NumberHolder::Integer8(-1));
 
                     return Ok(ValueHolder::Number(number))
-                }
-            } else {
-                return Err(LanguageError::from(RuntimeError::Custom("Unable to use unary operator with this type".to_string())))
-            }
+                },
+                (ValueHolder::Bool(mut boolean), TokenKind::Bang) => {
+                    boolean = !boolean;
 
-            Ok(value)
+                    return Ok(ValueHolder::Bool(boolean))
+                },
+                _ => return Err(LanguageError::with_source(RuntimeError::Custom("Unable to use this unary operator with this type".to_string()), left.start - 1, left.start))
+            }
         }
         ExpressionKind::Variable(variable) => {
             let value = context.environment.get(&variable).ok_or_else(|| {

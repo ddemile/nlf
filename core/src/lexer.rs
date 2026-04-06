@@ -51,6 +51,7 @@ pub enum TokenKind {
     Period,
     Colon,
     Arrow,
+    Bang
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -205,6 +206,7 @@ pub fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("*", TokenKind::Asterisk);
     map.insert("/", TokenKind::Slash);
     map.insert("%", TokenKind::Percent);
+    map.insert("!", TokenKind::Bang);
 
     map.insert("+=", TokenKind::PlusEqual);
     map.insert("-=", TokenKind::MinusEqual);
