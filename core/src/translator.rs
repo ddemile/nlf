@@ -299,10 +299,10 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
                 if name == class_name {
                     // When accessing the method name in the constructor, return the class instead of the constructor
                     context.set("0");
+                    context.set("self");
                 } else {
                     context.set(&name);
-                }
-                context.set("self");
+                }                
                 let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
                 let statements = translate_body(statements, context)?;
                 context.exit_scope();

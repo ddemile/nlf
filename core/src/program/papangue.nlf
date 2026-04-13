@@ -1,4 +1,4 @@
-let native_addon = addon("C:/Users/emili/Documents/Programmation/Rust/papangue-bindings/target/release/papangue_bindings.dll")
+let native_addon = addon("/home/ddemile/Documents/Programming/Rust/papangue-bindings/target/release/libpapangue_bindings.so")
 
 let last_time = now()
 let total = 0
@@ -11,7 +11,7 @@ class RendererContext {
         self.size = 50
     }
 
-    fn draw_rect(pos, size, color) {
+    fn draw_rect(self, pos, size, color) {
         native_addon.draw_shape(self.behaviour_handle, "rectangle", pos[0], pos[1], size[0], size[1], color[0], color[1], color[2])
     }
 }
@@ -23,7 +23,7 @@ class Window {
         self.renderer_context = RendererContext(native_addon.get_renderer_handle(handle), native_addon.get_behaviour_handle(handle))
     }
 
-    fn set_draw_callback(callback) {
+    fn set_draw_callback(self, callback) {
         native_addon.set_draw_callback(self.renderer_context.behaviour_handle, (delta_time) => {
             // let start = now()
             callback(self.renderer_context, delta_time)
@@ -39,11 +39,11 @@ class Window {
         })
     }
 
-    fn get_size() {
+    fn get_size(self) {
         return [native_addon.get_window_width(self.handle), native_addon.get_window_height(self.handle)]
     }
 
-    fn set_clear_color(color) {
+    fn set_clear_color(self, color) {
         native_addon.set_clear_color(self.renderer_context.handle, color[0], color[1], color[2])
     }
 }
@@ -51,15 +51,15 @@ class Window {
 export class App {
     App() {
         self.handle = native_addon.create_app()
-    } 
+    }
 
-    fn create_window(title) {
+    fn create_window(self, title) {
         let window_handle = native_addon.create_window(self.handle, title)
 
         return Window(window_handle, self.handle)
     }
 
-    fn run() {
+    fn run(self) {
         native_addon.run_app(self.handle)
     }
 }

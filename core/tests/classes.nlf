@@ -1,4 +1,4 @@
-// Name: Define and class and instanciate it
+// Name: Define a class and instanciate it
 class SomeClass {
     public public_field = 10
     protected protected_field = []
@@ -8,7 +8,7 @@ class SomeClass {
         self.key = value
     }
 
-    fn get_private_field() {
+    fn get_private_field(self) {
         return self.private_field
     }
 }
@@ -17,3 +17,12 @@ let instance = SomeClass("value")
 
 assert(instance.key == "value")
 assert(instance.get_private_field() == { "key": "value" })
+
+// Name: Define a class and call a static method on it
+class SomeClass {
+    fn static_method() {
+        return "static value"
+    }
+}
+
+assert(SomeClass.static_method() == "static value")

@@ -1,5 +1,5 @@
 use core::panic;
-use std::{cell::RefCell, collections::HashMap, fmt::{self}, rc::{Rc, Weak}, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::{Rc, Weak}, sync::Arc};
 
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::{Mutex, MutexGuard};
@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{format::FormatOptions, prototypes::{
-        ARRAY_PROTOTYPE, LocalPrototype, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
+        ARRAY_PROTOTYPE, LocalMethodFunc, LocalPrototype, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }}, lexer::TokenKind, loader::Module, parser::{
         ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, StatementKind, ValueHolder, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE
@@ -27,11 +27,21 @@ pub struct Field {
     value: ValueHolder
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Serialize, Clone)]
 pub struct ClassDefinition {
     fields: Vec<Field>,
     #[serde(skip)]
-    prototype: LocalPrototype
+    prototype: LocalPrototype,
+    #[serde(skip)]
+    methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)>
+}
+
+impl Debug for ClassDefinition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClassDefinition")
+            .field("fields", &self.fields)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -482,16 +492,25 @@ fn hoist_declarations(
 
                 let mut prototype = LocalPrototype::new(var_ref.name.clone().unwrap().as_ref());
 
+                let mut static_methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)> = HashMap::new();
+
                 for method in raw_methods {
                     let StatementKind::Method { name, arguments, statements } = method.kind.clone() else {
                         unreachable!()
                     };
 
-                    let arguments = arguments.clone();
+                    let is_constructor = Some(name.clone()) == var_ref.name;
+
+                    let is_method_static = !arguments
+                        .get(0)
+                        .and_then(|arg| arg.name.clone())
+                        .is_some_and(|name| name == "self") && !is_constructor;
+                    
+                    let arguments = if is_method_static || is_constructor { arguments } else { arguments[1..].to_vec() };
 
                     let scope = context.environment.scopes.last_mut().cloned().unwrap();
-                    
-                    prototype.with_method(&name, Box::new(move |this: &ValueHolder, call_arguments: &[ValueHolder], context_ref: &mut ModuleContext, scope: Rc<RefCell<Scope>>| {  
+
+                    let method = Box::new(move |this: &ValueHolder, call_arguments: &[ValueHolder], context_ref: &mut ModuleContext, scope: Rc<RefCell<Scope>>| {  
                         if arguments.len() != call_arguments.len() {
                             return Err(LanguageError::with_source(RuntimeError::Custom("Invalid number of args".to_string()), 0 ,0));
                         }
@@ -524,20 +543,20 @@ fn hoist_declarations(
                         )?;
 
                         if let ValueHolder::Object(object_ref) = this {
-                            context.environment.set(
-                                &VariableRef {
-                                    name: None,
-                                    slot: 1,
-                                    depth: 0,
-                                    start: 0,
-                                    end: 0
-                                },
-                                ValueHolder::Object(object_ref.clone()),
-                                true,
-                            )?
-                        } else {
-                            unreachable!()
-                        };
+                            if !is_method_static {
+                                context.environment.set(
+                                    &VariableRef {
+                                        name: None,
+                                        slot: 1,
+                                        depth: 0,
+                                        start: 0,
+                                        end: 0
+                                    },
+                                    ValueHolder::Object(object_ref.clone()),
+                                    true,
+                                )?
+                            }
+                        }
 
                         for (argument, value) in arguments.iter().zip(call_arguments.iter()) {
                             context
@@ -548,7 +567,14 @@ fn hoist_declarations(
                         let return_value = eval_body(statements, context);
                         context.environment.exit_scope();
                         return_value
-                    }), scope);
+                    });
+
+                    if is_method_static {
+                        static_methods.insert(name.clone(), (method, scope));
+                        continue;
+                    }
+                    
+                    prototype.with_method(&name, method, scope);
                 }
 
                 for field in raw_fields {
@@ -567,7 +593,8 @@ fn hoist_declarations(
                     var_ref,
                     ValueHolder::ClassDefinition(ClassDefinition {
                         fields,
-                        prototype
+                        prototype,
+                        methods: static_methods
                     }),
                     true,
                 )?
@@ -822,6 +849,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                 }
                 
             }
+
             let ValueHolder::String(property) = property else {
                 return Err(LanguageError::with_source(RuntimeError::InvalidType(
                     "Property should be a string".to_string(),
@@ -834,6 +862,15 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                     Err(_) => (),
                 };
             };
+
+            if let ValueHolder::ClassDefinition(definition) = &value {
+                if let Some((method, scope)) = definition.methods.get(&property.to_string()) {
+                    return Ok(ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
+                        func: Method::Local(method.clone(), scope.clone()),
+                        instance: Rc::new(ValueHolder::Void),
+                    })));
+                }
+            }
 
             let mut prototype: Option<&dyn Prototype> = if let ValueHolder::Object(ref object) = value {
                 if let Some(prototype) = object.get_prototype() {
