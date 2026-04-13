@@ -1,8 +1,7 @@
-use std::sync::OnceLock;
 
 use proc_macro::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Ident, Index, ItemFn, Type, TypeTuple, parse::{Parse, ParseStream}, parse_macro_input};
+use syn::{Ident, Index, ItemFn, parse_macro_input};
 
 fn get_type_ident(input: &syn::Type) -> &Ident {
     match input {
@@ -25,7 +24,7 @@ fn convert_type(input: &syn::Type) -> Ident {
 }
 
 #[proc_macro_attribute]
-pub fn register(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as ItemFn);
     let name = input.sig.ident;
     let name_str = name.to_string();
