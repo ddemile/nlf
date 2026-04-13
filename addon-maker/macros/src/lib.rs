@@ -61,25 +61,25 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let call = if return_type.to_string() == "Void" {
         quote! {
             #fn_call;
-            addon_maker::AddonValue::#return_type
+            nlf_addon_maker::AddonValue::#return_type
         }
     } else if return_type.to_string() == "Number" {
         quote! {
-            addon_maker::AddonValue::#return_type(DynamicNumber::from(#fn_call))
+            nlf_addon_maker::AddonValue::#return_type(DynamicNumber::from(#fn_call))
         }
     } else {
         quote! {            
-            addon_maker::AddonValue::#return_type(#fn_call)
+            nlf_addon_maker::AddonValue::#return_type(#fn_call)
         }
     };
 
     let register_fn = quote! {
         #[unsafe(no_mangle)]
-        pub extern "Rust" fn #name(values: Vec<addon_maker::AddonValue>) -> addon_maker::AddonValue {
+        pub extern "Rust" fn #name(values: Vec<nlf_addon_maker::AddonValue>) -> nlf_addon_maker::AddonValue {
             let _ = crate::__ADDON_INIT_MARKER;
 
             #(
-                let Some(addon_maker::AddonValue::#mapped_types(#names)) = values.get(#indices) else {
+                let Some(nlf_addon_maker::AddonValue::#mapped_types(#names)) = values.get(#indices) else {
                     panic!("Expected {}", stringify!(#mapped_types))
                 }
             );*;
@@ -87,8 +87,8 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         // register metadata
-        addon_maker::inventory::submit! {
-            addon_maker::AddonFn {
+        nlf_addon_maker::inventory::submit! {
+            nlf_addon_maker::AddonFn {
                 name: #name_str,
                 call: #name
             }
@@ -110,8 +110,8 @@ pub fn init(_item: TokenStream) -> TokenStream {
         pub const __ADDON_INIT_MARKER: () = ();
 
         #[unsafe(no_mangle)]
-        pub extern "Rust" fn all_registered() -> Vec<&'static addon_maker::AddonFn> {
-            addon_maker::inventory::iter::<addon_maker::AddonFn>.into_iter().collect()
+        pub extern "Rust" fn all_registered() -> Vec<&'static nlf_addon_maker::AddonFn> {
+            nlf_addon_maker::inventory::iter::<nlf_addon_maker::AddonFn>.into_iter().collect()
         }
     }.into()
 }
