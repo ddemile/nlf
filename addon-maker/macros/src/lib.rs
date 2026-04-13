@@ -1,4 +1,3 @@
-
 use proc_macro::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::{Ident, Index, ItemFn, parse_macro_input};
