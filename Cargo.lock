@@ -961,6 +961,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -998,6 +1006,14 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nlf-addon-maker"
+version = "0.1.0"
+dependencies = [
+ "macros",
+ "nlf-shared",
 ]
 
 [[package]]

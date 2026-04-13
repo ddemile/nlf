@@ -4,7 +4,8 @@ members = [
     "core",
     "shared",
     "macros",
-    "lsp"
+    "lsp",
+    "addon-maker"
 ]
 
 [profile.release]

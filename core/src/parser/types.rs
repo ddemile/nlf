@@ -12,22 +12,6 @@ use crate::{
     lexer::{KeywordKind, TokenKind},
 };
 
-macro_rules! expect_token {
-    ($pat:pat, $expected:expr, $token:expr) => {{
-        let Some(token) = $token else {
-            panic!("Unexpected end of input while expecting '{}'", $expected);
-        };
-
-        if !matches!(token.kind, $pat) {
-            return Err(LanguageError::with_source(
-                ParserError::UnexpectedToken($expected.into()),
-                token.start,
-                token.end,
-            ));
-        }
-    }};
-}
-
 #[derive(Debug)]
 pub enum ParserError {
     UnexpectedToken(String),
