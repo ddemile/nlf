@@ -141,7 +141,7 @@ impl Module {
                 StatementKind::ImportIR { specifiers, source } => {
                     module.lock().imports.push(Import {
                         specifiers: specifiers.clone(),
-                        source: source.into(),
+                        source: source.value.clone()
                     });
                     Ok(None) // We skip adding to statements
                 }

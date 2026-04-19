@@ -44,7 +44,7 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
     let expression_kind: ExpressionKind = match parser.peek().map(|token| &token.kind) {
         Some(TokenKind::StringLiteral { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
-            value: ValueHolder::String(expect_string!(parser)) 
+            value: ValueHolder::String(expect_string!(parser).value) 
         },
         Some(TokenKind::NumericLiteral { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,

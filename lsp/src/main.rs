@@ -1,7 +1,8 @@
-use std::fs;
+use std::collections::HashMap;
 
 use nlf_core::lexer::TokenKind;
 use nlf_core::{lexer, parser, stdlib, translator};
+use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -9,6 +10,7 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 #[derive(Debug)]
 struct Backend {
     client: Client,
+    documents: RwLock<HashMap<Url, String>>
 }
 
 #[tower_lsp::async_trait]
@@ -19,7 +21,7 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
-                    trigger_characters: Some(vec![".".to_string()]),
+                    trigger_characters: Some(vec![".".to_string(), "\"".to_string()]),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -39,10 +41,11 @@ impl LanguageServer for Backend {
     }
     
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let file_path = params.text_document_position.text_document.uri.to_file_path().unwrap();
-        let path = file_path.to_str().unwrap();
+        let uri = params.text_document_position.text_document.uri;
+        
+        let docs = self.documents.read().await;
 
-        let contents = fs::read_to_string(path).unwrap();
+        let contents = docs.get(&uri).unwrap().to_string();
 
         let position = params.text_document_position.position;
 
@@ -104,12 +107,9 @@ impl LanguageServer for Backend {
         self.client.publish_diagnostics(uri.clone(), vec![], None).await;
 
         {
-            let file_path = uri.to_file_path().unwrap();
-            let path = file_path.to_str().unwrap();
+            let docs = self.documents.read().await;
 
-            // let module = loader::resolve_module(path, pg_context);
-
-            let contents = fs::read_to_string(path).unwrap();
+            let contents = docs.get(&uri).unwrap().to_string();
 
             let tokens = match lexer::lex(contents.clone()) {
                 Ok(tokens) => tokens,
@@ -171,6 +171,27 @@ impl LanguageServer for Backend {
             }
         }
     }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let mut docs = self.documents.write().await;
+
+        docs.insert(params.text_document.uri, params.text_document.text);
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let mut docs = self.documents.write().await;
+
+        if let Some(doc) = docs.get_mut(&params.text_document.uri) {
+            if let Some(change) = params.content_changes.first() {
+                *doc = change.text.clone();
+            }
+        }
+    }
+    
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        let mut docs = self.documents.write().await;
+        docs.remove(&params.text_document.uri);
+    }
 }
 
 fn source_to_line(contents: &String, position: usize) -> Position {
@@ -211,6 +232,6 @@ async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) = LspService::new(|client| Backend { client });
+    let (service, socket) = LspService::new(|client| Backend { client, documents: RwLock::new(HashMap::new()) });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

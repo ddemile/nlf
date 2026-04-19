@@ -1,8 +1,8 @@
-use std::{cell::RefCell, collections::{HashMap, HashSet}, fs, ops::Range, rc::Rc, vec};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, fmt::format, fs, ops::Range, rc::Rc, vec};
 
 use serde::Serialize;
 
-use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}};
+use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}, stdlib};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -272,7 +272,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
         StatementKind::Return { expression } => {
             StatementKind::Return { expression: translate_expression(expression, context)? }
         }
-        StatementKind::Import { specifiers, source } => {
+        StatementKind::Import { specifiers, mut source } => {
             let specifiers= specifiers.iter().map(|specifier| {
                 let ExpressionKind::Literal { value: ValueHolder::String(name), ..  } = &specifier.local.kind else {
                     unreachable!()
@@ -280,6 +280,30 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
 
                 context.set(name)
             }).collect();
+
+            if FIND_SYMBOLS.with_borrow(|value| *value) {
+                let position = TARGET_POSITION.with_borrow(|value| *value) as usize;
+                
+                source.start += 1;
+
+                if (source.start..source.end).contains(&position) {
+                    let mut variables: HashSet<String> = HashSet::new();
+
+                    for name in stdlib::MODULE_TABLE.lock().keys() {
+                        variables.insert(format!("core:{name}"));
+                    }
+
+                    variables.insert("core:math".to_string());
+
+                    DEFINED_VARIABLES.with_borrow_mut(|value| {
+                        *value = variables.into_iter().collect();
+                    });
+
+                    BINDINGS.with_borrow_mut(|value| {
+                        *value = Some((source.start as u32, source.end as u32));
+                    });
+                }
+            }
 
             StatementKind::ImportIR { specifiers, source }
         }

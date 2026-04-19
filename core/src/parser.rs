@@ -90,10 +90,10 @@ macro_rules! expect_keyword {
 #[macro_export]
 macro_rules! expect_string {
     ($parser:expr) => {{
-        let Token { kind: TokenKind::StringLiteral { value }, .. } = crate::expect_token!($parser, TokenKind::StringLiteral { .. }) else {
+        let Token { kind: TokenKind::StringLiteral { value }, start, end } = crate::expect_token!($parser, TokenKind::StringLiteral { .. }) else {
             unreachable!()
         };
-        value
+        crate::parser::types::StringLiteral { value, start, end }
     }};
 }
 
@@ -191,7 +191,7 @@ macro_rules! expect_object {
             let key = crate::expect_string!($parser);
             crate::expect_token!($parser, TokenKind::Colon);
             let value = parse_expression($parser, 0)?;
-            map.insert(key, value);
+            map.insert(key.value, value);
             ()
         });
 

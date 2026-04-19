@@ -159,6 +159,13 @@ pub struct ImportSpecifier {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct StringLiteral {
+    pub value: String,
+    pub start: usize,
+    pub end: usize
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
     pub start: usize,
@@ -214,11 +221,11 @@ pub enum StatementKind {
     Block(Block),
     Import {
         specifiers: Vec<ImportSpecifier>,
-        source: String,
+        source: StringLiteral,
     },
     ImportIR {
         specifiers: Vec<VariableRef>,
-        source: String,
+        source: StringLiteral,
     },
     Export {
         declaration: Box<Statement>,
