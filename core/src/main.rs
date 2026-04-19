@@ -1,5 +1,3 @@
-#![feature(box_patterns)]
-#![feature(duration_millis_float)]
 use std::path::Path;
 
 use nlf_core::{loader::run_main, tests};
