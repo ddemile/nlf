@@ -1,6 +1,7 @@
-use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc, sync::{Arc}};
+use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc, sync::Arc};
 
 use parking_lot::Mutex;
+use ron::ser::PrettyConfig;
 
 use crate::{
     errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, interpret}, lexer, loader, parser, parser::{Program, Statement, StatementKind, ValueHolder, VariableRef}, stdlib::CoreModules, translator
@@ -116,22 +117,23 @@ impl Module {
             .to_str()
             .unwrap();
 
+        
         let _ = fs::write(
-            format!("core/debug/{}-tokens.json", name),
-            serde_json::to_string_pretty(&tokens).unwrap(),
+            format!("core/debug/{}-tokens.ron", name),
+            ron::ser::to_string_pretty(&tokens, PrettyConfig::default()).unwrap(),
         );
-
+        
         let ast = parser::parse(tokens)?;
 
         let _ = fs::write(
-            format!("core/debug/{}-ast.json", name),
-            serde_json::to_string_pretty(&ast).unwrap(),
+            format!("core/debug/{}-ast.ron", name),
+            ron::ser::to_string_pretty(&ast, PrettyConfig::default()).unwrap(),
         );
 
         let ir = translator::translate(ast)?;
         let _ = fs::write(
-            format!("core/debug/{}-ir.json", name),
-            serde_json::to_string_pretty(&ir).unwrap(),
+            format!("core/debug/{}-ir.ron", name),
+            ron::ser::to_string_pretty(&ir, PrettyConfig::default()).unwrap(),
         );
 
         let statements: Rc<[Statement]> = ir
@@ -200,8 +202,8 @@ impl Module {
         module.lock().contents = Some(Arc::new(Mutex::new(contents.clone())));
 
         let _ = fs::write(
-            format!("core/debug/{}-statements.json", name),
-            serde_json::to_string_pretty(&module.lock().statements).unwrap(),
+            format!("core/debug/{}-statements.ron", name),
+            ron::ser::to_string_pretty(&module.lock().statements, PrettyConfig::default()).unwrap(),
         );
 
         Ok(())

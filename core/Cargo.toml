@@ -26,6 +26,7 @@ strum = { version = "0.27.2", features = ["derive"] }
 nlf-shared = { path = "../shared"}
 nlf-macros = { path = "../macros" }
 smallvec = { version = "1.15.1", features = ["union"] }
+ron = "0.12.1"
 
 [[bin]]
 name = "nlf"

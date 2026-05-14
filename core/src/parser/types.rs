@@ -278,7 +278,6 @@ pub struct Expression {
 }
 
 #[derive(Serialize, Debug, Clone)]
-#[serde(tag = "#type")] // "type" field will contain the variant name
 pub enum ExpressionKind {
     Literal {
         r#type: LiteralExpressionKind,
