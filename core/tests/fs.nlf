@@ -1,4 +1,4 @@
-// Name: Write a write then read it before deleting it
+// Name: Write a file then read it before deleting it
 let fs = binding("fs")
 
 fs.write("core/debug/file.txt", "Hello world")
