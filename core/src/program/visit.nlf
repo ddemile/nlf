@@ -1,0 +1,9 @@
+fn function() {
+    let nested = true
+}
+
+class MyClass {
+
+}
+
+let value = 10

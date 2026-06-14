@@ -471,7 +471,7 @@ fn hoist_declarations(
         .filter(|statement| matches!(*statement, Statement { kind: StatementKind::FunctionIR { .. } | StatementKind::ClassIR { .. }, .. } ))
     {
         match &statement.kind {
-            StatementKind::FunctionIR { var_ref, arguments, statements } => {
+            StatementKind::FunctionIR { var_ref, arguments, block } => {
                 let scope = context.environment.scopes.last_mut().cloned().unwrap();
                 
                 let context_ptr = context as *mut ModuleContext;
@@ -480,7 +480,7 @@ fn hoist_declarations(
                     &var_ref,
                     ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                         arguments: arguments.to_vec(),
-                        statements: statements.clone(),
+                        statements: block.statements.clone(),
                         scope,
                         context: context_ptr
                     })),
@@ -495,7 +495,7 @@ fn hoist_declarations(
                 let mut static_methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)> = HashMap::new();
 
                 for method in raw_methods {
-                    let StatementKind::Method { name, arguments, statements } = method.kind.clone() else {
+                    let StatementKind::Method { name, arguments, block } = method.kind.clone() else {
                         unreachable!()
                     };
 
@@ -517,7 +517,7 @@ fn hoist_declarations(
 
                         let context = context_ref;
 
-                        let statements: Rc<[Statement]> = statements.clone();
+                        let statements: Rc<[Statement]> = block.statements.clone();
 
                         context
                             .environment
@@ -564,7 +564,7 @@ fn hoist_declarations(
                                 .set(argument, value.clone(), true)?;
                         }
 
-                        let return_value = eval_body(statements, context);
+                        let return_value = eval_body(statements.clone(), context);
                         context.environment.exit_scope();
                         return_value
                     });
@@ -914,7 +914,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                 // ArrayRef creation to be implemented
                 return Ok(ValueHolder::Array(ArrayRef::new(items))); // Placeholder
             } else if let LiteralExpressionKind::Function(statement) = r#type {
-                let box StatementKind::FunctionIR { var_ref: _, arguments, statements } = statement.clone() else {
+                let box StatementKind::FunctionIR { var_ref: _, arguments, block } = statement.clone() else {
                     panic!()
                 };
 
@@ -922,7 +922,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
 
                 return Ok(ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                     arguments,
-                    statements,
+                    statements: block.statements,
                     scope,
                     context,
                 })))

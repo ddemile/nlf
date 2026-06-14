@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
+use nlf_core::analysis::{ScopeBuilder, ScopeId, SymbolIndex, SymbolKind};
 use nlf_core::lexer::TokenKind;
-use nlf_core::{lexer, parser, stdlib, translator};
+use nlf_core::{explorer, lexer, parser, stdlib, translator};
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -41,59 +42,86 @@ impl LanguageServer for Backend {
     }
     
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        let uri = params.text_document_position.text_document.uri;
-        
-        let docs = self.documents.read().await;
+        let scope_id;
 
-        let contents = docs.get(&uri).unwrap().to_string();
+        let items = {
+            let uri = params.text_document_position.text_document.uri;
+            let docs = self.documents.read().await;
 
-        let position = params.text_document_position.position;
-
-        let source = line_to_source(&contents, position);
-
-        let program = parser::parse(lexer::lex(contents).unwrap()).unwrap();
-        
-        let symbols = translator::find_symbols_at(source as u32, program);
-
-        let match_table = lexer::match_table();
-
-        let mut items = vec![];
-
-        for symbol in symbols {
-            if !symbol.starts_with(|c: char| { c.is_ascii_alphabetic() }) {
-                continue;
+            let contents = docs.get(&uri).unwrap().to_string();
+            let position = params.text_document_position.position;
+            let source = line_to_source(&contents, position);
+            
+            let tokens = match lexer::lex(contents) {
+                Ok(tokens) => tokens,
+                Err(_) => return Ok(None)
             };
 
-            items.push(CompletionItem {
-                label: symbol.clone(),
-                kind: Some(CompletionItemKind::VARIABLE),
-                sort_text: Some(format!("0_{}", symbol)),
-                ..Default::default()
-            });
-        }
+            let program = match parser::parse(tokens) {
+                Ok(program) => program,
+                Err(_) => return Ok(None)
+            };
 
-        self.client.show_message(MessageType::INFO, format!("Updated {}", items.len())).await;
+            let index = {
+                let mut scope_builder = ScopeBuilder::new();
 
-        for function in stdlib::FUNCTION_TABLE.lock().keys() {
-            items.push(CompletionItem {
-                label: function.to_string(),
-                kind: Some(CompletionItemKind::FUNCTION),
-                detail: Some("Standard library function".to_string()),
-                sort_text: Some(format!("1_{}", function.to_string())),
-                ..Default::default()
-            });
-        }
+                explorer::visit_program(&program, &mut scope_builder);
 
-        for (token, kind) in match_table {
-            if matches!(kind, TokenKind::Keyword(_) | TokenKind::BooleanLiteral { .. }) {
+                SymbolIndex::from(scope_builder)
+            };
+            
+            let scope = index.scope_at_position(source);
+            scope_id = scope;
+            let symbols = index.visible_symbols(scope);
+            let match_table = lexer::match_table();
+
+            let mut items = vec![];
+
+            for symbol in symbols {
+                if !symbol.name.starts_with(|c: char| { c.is_ascii_alphabetic() }) {
+                    continue;
+                }
+
+                let kind: CompletionItemKind = match symbol.kind {
+                    SymbolKind::Variable => CompletionItemKind::VARIABLE,
+                    SymbolKind::Function => CompletionItemKind::FUNCTION,
+                    SymbolKind::Class => CompletionItemKind::CLASS,
+                    _ => todo!()
+                };
+
                 items.push(CompletionItem {
-                    label: token.to_string(),
-                    kind: Some(CompletionItemKind::KEYWORD),
-                    sort_text: Some(format!("2_{}", token)),
+                    label: symbol.name.clone(),
+                    kind: Some(kind),
+                    sort_text: Some(format!("0_{}", symbol.name)),
                     ..Default::default()
                 });
             }
-        }
+
+            for function in stdlib::FUNCTION_TABLE.lock().keys() {
+                items.push(CompletionItem {
+                    label: function.to_string(),
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail: Some("Standard library function".to_string()),
+                    sort_text: Some(format!("1_{}", function.to_string())),
+                    ..Default::default()
+                });
+            }
+
+            for (token, kind) in match_table {
+                if matches!(kind, TokenKind::Keyword(_) | TokenKind::BooleanLiteral { .. }) {
+                    items.push(CompletionItem {
+                        label: token.to_string(),
+                        kind: Some(CompletionItemKind::KEYWORD),
+                        sort_text: Some(format!("2_{}", token)),
+                        ..Default::default()
+                    });
+                }
+            }
+
+            items
+        };
+
+        self.client.show_message(MessageType::INFO, format!("Updated {} - Scope: {}", items.len(), scope_id.0)).await;
 
         Ok(Some(CompletionResponse::Array(items)))
     }

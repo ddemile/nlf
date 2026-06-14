@@ -34,7 +34,7 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
 
         parser.advance();
 
-        let expression= parse_expression(parser, 0)?;
+        let expression = parse_expression(parser, 0)?;
 
         expect_token!(parser, TokenKind::ClosingParenthesis);
 

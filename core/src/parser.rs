@@ -233,7 +233,9 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<Statement> {
 
     expect_token!(parser, TokenKind::Arrow);
 
-    let Block { statements, end, .. } = expect_block(parser)?;
+    let block = expect_block(parser)?;
+
+    let end = block.end;
 
     Ok(StatementKind::Function {
         name: format!("<lambda:{start}-{end}>"),
@@ -247,7 +249,7 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<Statement> {
                 }
             }
         }).collect(),
-        statements: statements.into()
+        block
     }.into_statement(start, end))
 }
 
@@ -326,7 +328,9 @@ fn match_method(parser: &mut Parser) -> LanguageResult<Statement> {
     let start = parser.get_token_at(parser.cursor - 1).start;
 
     let arguments = expect_arguments_definition!(parser);
-    let Block { statements, end, .. } = expect_block(parser)?;
+    let block = expect_block(parser)?;
+
+    let end = block.end;
 
     Ok(StatementKind::Function {
         name,
@@ -340,7 +344,7 @@ fn match_method(parser: &mut Parser) -> LanguageResult<Statement> {
                 }
             }
         }).collect(),
-        statements: statements.into()
+        block
     }.into_statement(start, end))
 }
 

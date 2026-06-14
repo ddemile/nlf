@@ -7,9 +7,7 @@ use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
-    errors::LanguageErrorTrait,
-    interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, Scope, prototypes::Method},
-    lexer::{KeywordKind, TokenKind},
+    analysis::Span, errors::LanguageErrorTrait, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
 };
 
 #[derive(Debug)]
@@ -153,6 +151,12 @@ pub struct Block {
     pub end: usize
 }
 
+impl Block {
+    pub fn get_span(&self) -> Span {
+        Span { start: self.start, end: self.end }
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub struct ImportSpecifier {
     pub local: Expression,
@@ -203,12 +207,12 @@ pub enum StatementKind {
     Function {
         name: String,
         arguments: Vec<Argument>,
-        statements: Rc<[Statement]>,
+        block: Block,
     },
     FunctionIR {
         var_ref: VariableRef,
         arguments: Vec<VariableRef>,
-        statements: Rc<[Statement]>,
+        block: Block
     },
     While {
         condition: Expression,
@@ -248,7 +252,7 @@ pub enum StatementKind {
     Method {
         name: String,
         arguments: Vec<VariableRef>,
-        statements: Rc<[Statement]>,
+        block: Block
     },
 }
 

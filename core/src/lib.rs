@@ -10,3 +10,5 @@ pub mod loader;
 pub mod errors;
 pub mod stdlib;
 pub mod addons;
+pub mod explorer;
+pub mod analysis;
