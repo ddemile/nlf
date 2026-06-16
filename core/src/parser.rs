@@ -120,10 +120,10 @@ macro_rules! expect_boolean {
 #[macro_export]
 macro_rules! expect_identifier {
     ($parser:expr) => {{
-        let Token { kind: TokenKind::Identifier { value }, .. } = crate::expect_token!($parser, TokenKind::Identifier { .. }) else {
+        let Token { kind: TokenKind::Identifier { value }, start, end } = crate::expect_token!($parser, TokenKind::Identifier { .. }) else {
             unreachable!()
         };
-        value
+        crate::parser::types::Identifier { value, start, end }
     }};
 }
 
@@ -238,12 +238,12 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<Statement> {
     let end = block.end;
 
     Ok(StatementKind::Function {
-        name: format!("<lambda:{start}-{end}>"),
+        name: Identifier { value: format!("<lambda:{start}-{end}>"), start: 0, end: 0 },
         arguments: arguments.iter().map(|argument| {
             Argument {
                 name: match argument {
-                    Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start: _, end: _ } => {
-                        value.into()
+                    Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
+                        Identifier { value: value.to_string(), start: *start, end: *end }
                     },
                     _ => unreachable!()
                 }
@@ -337,8 +337,8 @@ fn match_method(parser: &mut Parser) -> LanguageResult<Statement> {
         arguments: arguments.iter().map(|argument| {
             Argument {
                 name: match argument {
-                    Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start: _, end: _ } => {
-                        value.into()
+                    Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
+                        Identifier { value: value.to_string(), start: *start, end: *end }
                     },
                     _ => unreachable!()
                 }
@@ -479,7 +479,7 @@ fn match_class(parser: &mut Parser) -> LanguageResult<Statement> {
                 _ => unreachable!()
             };
 
-            let field_name = expect_identifier!(parser);
+            let Identifier { value: field_name, .. } = expect_identifier!(parser);
 
             expect_token!(parser, TokenKind::Assign);
             let expression = parse_expression(parser, 0)?;

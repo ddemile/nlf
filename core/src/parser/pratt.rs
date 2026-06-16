@@ -56,7 +56,7 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
         },
         Some(TokenKind::Identifier { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Variable,
-            value: ValueHolder::String(expect_identifier!(parser))
+            value: ValueHolder::String(expect_identifier!(parser).value)
         },
         Some(TokenKind::OpeningSquareBracket) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Array(expect_array!(parser)),

@@ -144,10 +144,10 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
             StatementKind::If { condition, block, alternate }
         },
         StatementKind::Function { name, arguments, block } => {
-            let var_ref = context.set(&name);
+            let var_ref = context.set(&name.value);
             context.enter_scope(ScopeKind::Function);
-            context.set(&name);
-            let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
+            context.set(&name.value);
+            let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name.value)).collect();
             let block = translate_block(block, context)?;
             context.exit_scope();
 
@@ -197,7 +197,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
             StatementKind::Export { declaration: Box::new(translate_statement(*declaration, context)?) }
         }
         StatementKind::Class { name: class_name, methods, fields } => {
-            let var_ref = context.set(&class_name);
+            let var_ref = context.set(&class_name.value);
 
             let mut translated_methods = vec![];
             for mut method in methods {
@@ -206,18 +206,18 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
                 };
 
                 context.enter_scope(ScopeKind::Function);
-                if name == class_name {
+                if name.value == class_name.value {
                     // When accessing the method name in the constructor, return the class instead of the constructor
                     context.set("0");
                     context.set("self");
                 } else {
-                    context.set(&name);
+                    context.set(&name.value);
                 }                
-                let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
+                let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name.value)).collect();
                 let block = translate_block(block, context)?;
                 context.exit_scope();
 
-                method.kind = StatementKind::Method { name, arguments: inner_arguements, block };
+                method.kind = StatementKind::Method { name: name.value, arguments: inner_arguements, block };
 
                 translated_methods.push(method);
             }
@@ -281,10 +281,10 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                         panic!()
                     };
 
-                    let var_ref = context.set(&name);
+                    let var_ref = context.set(&name.value);
                     context.enter_scope(ScopeKind::Function);
-                    context.set(&name);
-                    let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name)).collect();
+                    context.set(&name.value);
+                    let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name.value)).collect();
                     let block = translate_block(block, context)?;
                     context.exit_scope();
 

@@ -116,7 +116,6 @@ impl Module {
             .unwrap()
             .to_str()
             .unwrap();
-
         
         let _ = fs::write(
             format!("core/debug/{}-tokens.ron", name),

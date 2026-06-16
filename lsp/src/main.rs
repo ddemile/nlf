@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::format;
 
 use nlf_core::analysis::{ScopeBuilder, ScopeId, SymbolIndex, SymbolKind};
 use nlf_core::lexer::TokenKind;
@@ -14,6 +15,36 @@ struct Backend {
     documents: RwLock<HashMap<Url, String>>
 }
 
+const LINE_ENDING_LENGTH: usize = if cfg!(target_os = "windows") { 2 } else { 1 };
+
+impl Backend {
+    async fn get_symbol_index(&self, uri: Url) -> Option<SymbolIndex> {
+        let docs = self.documents.read().await;
+
+        let contents = docs.get(&uri).unwrap().to_string();
+        
+        let tokens = match lexer::lex(contents) {
+            Ok(tokens) => tokens,
+            Err(_) => return None
+        };
+
+        let program = match parser::parse(tokens) {
+            Ok(program) => program,
+            Err(_) => return None
+        };
+
+        let index = {
+            let mut scope_builder = ScopeBuilder::new();
+
+            explorer::visit_program(&program, &mut scope_builder);
+
+            SymbolIndex::from(scope_builder)
+        };
+
+        Some(index)
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
@@ -25,6 +56,9 @@ impl LanguageServer for Backend {
                     trigger_characters: Some(vec![".".to_string(), "\"".to_string()]),
                     ..Default::default()
                 }),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
+                definition_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: None,
@@ -51,23 +85,10 @@ impl LanguageServer for Backend {
             let contents = docs.get(&uri).unwrap().to_string();
             let position = params.text_document_position.position;
             let source = line_to_source(&contents, position);
-            
-            let tokens = match lexer::lex(contents) {
-                Ok(tokens) => tokens,
-                Err(_) => return Ok(None)
-            };
 
-            let program = match parser::parse(tokens) {
-                Ok(program) => program,
-                Err(_) => return Ok(None)
-            };
-
-            let index = {
-                let mut scope_builder = ScopeBuilder::new();
-
-                explorer::visit_program(&program, &mut scope_builder);
-
-                SymbolIndex::from(scope_builder)
+            let index = match self.get_symbol_index(uri).await {
+                Some(index) => index,
+                None => return Ok(None)
             };
             
             let scope = index.scope_at_position(source);
@@ -84,7 +105,7 @@ impl LanguageServer for Backend {
 
                 let kind: CompletionItemKind = match symbol.kind {
                     SymbolKind::Variable => CompletionItemKind::VARIABLE,
-                    SymbolKind::Function => CompletionItemKind::FUNCTION,
+                    SymbolKind::Function(_) => CompletionItemKind::FUNCTION,
                     SymbolKind::Class => CompletionItemKind::CLASS,
                     _ => todo!()
                 };
@@ -220,6 +241,75 @@ impl LanguageServer for Backend {
         let mut docs = self.documents.write().await;
         docs.remove(&params.text_document.uri);
     }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let docs = self.documents.read().await;
+
+        let contents = docs.get(&uri).unwrap().to_string();
+
+        let index = match self.get_symbol_index(uri).await {
+            Some(index) => index,
+            None => return Ok(None)
+        };
+
+        let source = line_to_source(&contents, position);
+
+        let symbol = index.symbol_at(source);
+
+        if let Some(symbol) = symbol {
+            let hover_text = match &symbol.kind {
+                SymbolKind::Variable => format!("let {};", symbol.name),
+                SymbolKind::Function(args) => format!("fn {}({}) {{}}", symbol.name, args.iter().map(|arg| arg.name.value.clone()).collect::<Vec<String>>().join(", ")),
+                SymbolKind::Class => format!("class {} {{}}", symbol.name),
+                _ => todo!()
+            };
+            let contents = HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("```nlf\n{}\n```", hover_text),
+            });
+
+            return Ok(Some(Hover { contents, range: None }));
+        }
+
+        Ok(None)
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+       let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let docs = self.documents.read().await;
+
+        let contents = docs.get(&uri).unwrap().to_string();
+
+        let index = match self.get_symbol_index(uri).await {
+            Some(index) => index,
+            None => return Ok(None)
+        };
+
+        let source = line_to_source(&contents, position);
+
+        let symbol = index.symbol_at(source);
+
+        if let Some(symbol) = symbol {
+            let mut highlights = vec![];
+
+            highlights.push(DocumentHighlight {
+                range: Range { start: source_to_line(&contents, symbol.span.start), end: source_to_line(&contents, symbol.span.end) },
+                kind: Some(DocumentHighlightKind::TEXT),
+            });
+            
+            return Ok(Some(highlights))
+        }
+
+        Ok(None)
+    }
 }
 
 fn source_to_line(contents: &String, position: usize) -> Position {
@@ -233,7 +323,7 @@ fn source_to_line(contents: &String, position: usize) -> Position {
             return Position::new(line_index as u32, character);
         }
 
-        cursor = line_end + 2;
+        cursor = line_end + LINE_ENDING_LENGTH;
     }
 
     Position::new(contents.lines().count() as u32, 0)
@@ -249,7 +339,7 @@ fn line_to_source(contents: &String, position: Position) -> usize {
             return cursor + position.character as usize
         }
 
-        cursor = line_end + 2;
+        cursor = line_end + LINE_ENDING_LENGTH;
     }
 
     0

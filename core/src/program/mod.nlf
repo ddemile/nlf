@@ -1,7 +1,7 @@
 import {mutate_key, concat} from "./lib.nlf"
 
 let store = {
-    value: 10
+    "value": 10
 }
 
 export fn get_key(key) {

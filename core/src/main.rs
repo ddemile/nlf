@@ -41,7 +41,7 @@ fn main() {
             println!("Scope {}: Parent: {:?}, Children: {:?}, Symbols: {:?}, Span: {:?}", i, scope.parent, scope.children, scope.symbols, scope.span);
         });
 
-        index.visible_symbols(ScopeId(0)).iter().for_each(|symbol| {
+        index.symbol_at(8).iter().for_each(|symbol| {
             println!("Symbol: {} (Scope: {:?})", symbol.name, symbol.scope);
         });
 

@@ -1,9 +1,9 @@
-fn function() {
+fn function(a, b) {
     let nested = true
 }
 
-class MyClass {
+let value = 10
+
+class Miami {
 
 }
-
-let value = 10

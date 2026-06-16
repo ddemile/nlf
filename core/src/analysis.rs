@@ -18,7 +18,7 @@ pub struct Scope {
 
 pub enum SymbolKind {
     Variable,
-    Function,
+    Function(Vec<Argument>),
     Class,
     Method,
     Constant
@@ -88,6 +88,22 @@ impl SymbolIndex {
 
         best
     }
+
+    pub fn symbol_at(&self, pos: usize) -> Option<&Symbol> {
+        let mut deepest_symbol: Option<&Symbol> = None;
+        for symbol in self.symbols.iter() {
+            if pos >= symbol.span.start && pos <= symbol.span.end {
+                if let Some(Symbol { span, .. }) = deepest_symbol {
+                    if symbol.span.start > span.start || symbol.span.end < span.end {
+                        deepest_symbol = Some(symbol);
+                    }
+                } else {
+                    deepest_symbol = Some(symbol);
+                }
+            }
+        }
+        deepest_symbol
+    }
 }
 
 pub struct ScopeBuilder {
@@ -131,11 +147,11 @@ impl ScopeBuilder {
 impl Visitor for ScopeBuilder {
     fn visit_statement(&mut self, statement: &Statement) {
         match &statement.kind {
-            StatementKind::Function { name, arguments: _, .. } => {
-                self.define(name.to_string(), SymbolKind::Function, Span { start: statement.start, end: statement.end });
+            StatementKind::Function { name, arguments, .. } => {
+                self.define(name.value.to_string(), SymbolKind::Function(arguments.clone()), Span { start: name.start, end: name.end });
             }
             StatementKind::Class { name, .. } => {
-                self.define(name.to_string(), SymbolKind::Class, Span { start: statement.start, end: statement.end });
+                self.define(name.value.to_string(), SymbolKind::Class, Span { start: name.start, end: name.end });
             }
             StatementKind::Import { specifiers, .. } => {
                 for specifier in specifiers {
@@ -161,7 +177,7 @@ impl Visitor for ScopeBuilder {
 
     fn visit_argument(&mut self, argument: &Argument) {
         // TODO: fix span
-        self.define(argument.name.to_string(), SymbolKind::Variable, Span { start: 0, end: 0 });
+        self.define(argument.name.value.to_string(), SymbolKind::Variable, Span { start: argument.name.start, end: argument.name.end });
     }
 
     fn enter_scope(&mut self, span: Span) -> ScopeId {

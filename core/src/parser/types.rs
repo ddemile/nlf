@@ -22,7 +22,7 @@ impl LanguageErrorTrait for ParserError {}
 
 #[derive(Serialize, Debug, Clone)]
 pub struct Argument {
-    pub name: String,
+    pub name: Identifier,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -170,6 +170,13 @@ pub struct StringLiteral {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct Identifier {
+    pub value: String,
+    pub start: usize,
+    pub end: usize
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
     pub start: usize,
@@ -205,7 +212,7 @@ pub enum StatementKind {
         statements: Rc<[Statement]>,
     },
     Function {
-        name: String,
+        name: Identifier,
         arguments: Vec<Argument>,
         block: Block,
     },
@@ -235,7 +242,7 @@ pub enum StatementKind {
         declaration: Box<Statement>,
     },
     Class {
-        name: String,
+        name: Identifier,
         methods: Vec<Statement>,
         fields: Vec<Statement>,
     },
