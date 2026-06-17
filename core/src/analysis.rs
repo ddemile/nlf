@@ -1,4 +1,4 @@
-use crate::{explorer::Visitor, parser::{Argument, Expression, ExpressionKind, Identifier, ImportSpecifier, LiteralExpressionKind, Statement, StatementKind, ValueHolder, VariableDescriptor}};
+use crate::{explorer::Visitor, parser::{Expression, ExpressionKind, Identifier, LiteralExpressionKind, ASTStatement, ASTStatementKind, ValueHolder, VariableDescriptor}};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
@@ -20,7 +20,7 @@ pub struct Scope {
 pub enum SymbolKind {
     Definition,
     Variable,
-    Function(Vec<Argument>),
+    Function(Vec<Identifier>),
     Class,
     Method,
     Constant,
@@ -194,24 +194,22 @@ impl ScopeBuilder {
 }
 
 impl Visitor for ScopeBuilder {
-    fn visit_statement(&mut self, statement: &Statement) {
+    fn visit_statement(&mut self, statement: &ASTStatement) {
         match &statement.kind {
-            StatementKind::Function { name, arguments, .. } => {
+            ASTStatementKind::Function { variable: name, arguments, .. } => {
                 self.define(name.value.to_string(), SymbolKind::Function(arguments.clone()), Span { start: name.start, end: name.end });
             }
-            StatementKind::Class { name, .. } => {
+            ASTStatementKind::Class { variable: name, .. } => {
                 self.define(name.value.to_string(), SymbolKind::Class, Span { start: name.start, end: name.end });
             }
-            StatementKind::Import { specifiers, source } => {
+            ASTStatementKind::Import { specifiers, source } => {
                 for specifier in specifiers {
-                    if let ImportSpecifier { local: Expression { kind: ExpressionKind::Literal { value: ValueHolder::String(name), .. }, .. } } = specifier {
-                        self.define(name.to_string(), SymbolKind::Import(source.value.to_string()), Span { start: specifier.local.start, end: specifier.local.end });
-                    }
+                    self.define(specifier.value.to_string(), SymbolKind::Import(source.value.to_string()), Span { start: specifier.start, end: specifier.end });
                 }
             }
-            StatementKind::Export { declaration } => {
+            ASTStatementKind::Export { declaration } => {
                 match &declaration.kind {
-                    StatementKind::Function { name, arguments, .. } => {
+                    ASTStatementKind::Function { variable: name, arguments, .. } => {
                         let function_symbol = Symbol {
                             name: name.value.to_string(),
                             span: Span { start: name.start, end: name.end },
@@ -220,7 +218,7 @@ impl Visitor for ScopeBuilder {
                         };
                         self.exports.push(Export { name: name.value.to_string(), symbol: function_symbol });
                     }
-                    StatementKind::Class { name, .. } => {
+                    ASTStatementKind::Class { variable: name, .. } => {
                         let class_symbol = Symbol {
                             name: name.value.to_string(),
                             span: Span { start: name.start, end: name.end },
@@ -232,7 +230,7 @@ impl Visitor for ScopeBuilder {
                     _ => todo!()
                 }
             },
-            StatementKind::VariableDefinition { descriptor, .. } => {
+            ASTStatementKind::VariableDefinition { descriptor, .. } => {
                 fn get_identifiers(descriptor: &VariableDescriptor) -> Vec<Identifier> {
                     match descriptor {
                         VariableDescriptor::Identifier(identifier) => vec![identifier.clone()],
@@ -251,7 +249,7 @@ impl Visitor for ScopeBuilder {
                     self.define(identifier.value.to_string(), SymbolKind::Definition, Span { start: identifier.start, end: identifier.end });
                 }
             }
-            StatementKind::For { variable, .. } => {
+            ASTStatementKind::For { variable, .. } => {
                 self.define(variable.value.clone(), SymbolKind::Definition, Span { start: variable.start, end: variable.end });
             }
             _ => {}
@@ -267,9 +265,9 @@ impl Visitor for ScopeBuilder {
         }
     }
 
-    fn visit_argument(&mut self, argument: &Argument) {
+    fn visit_argument(&mut self, argument: &Identifier) {
         // TODO: fix span
-        self.define(argument.name.value.to_string(), SymbolKind::Definition, Span { start: argument.name.start, end: argument.name.end });
+        self.define(argument.value.to_string(), SymbolKind::Definition, Span { start: argument.start, end: argument.end });
     }
 
     fn enter_scope(&mut self, span: Span) -> ScopeId {

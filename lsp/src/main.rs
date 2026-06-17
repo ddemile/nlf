@@ -311,7 +311,7 @@ impl LanguageServer for Backend {
                                 format!("{}", symbol.name)
                             }
                         },
-                        SymbolKind::Function(args) => format!("fn {}({})", symbol.name, args.iter().map(|arg| arg.name.value.clone()).collect::<Vec<String>>().join(", ")),
+                        SymbolKind::Function(args) => format!("fn {}({})", symbol.name, args.iter().map(|arg| arg.value.clone()).collect::<Vec<String>>().join(", ")),
                         SymbolKind::Class => format!("class {}", symbol.name),
                         SymbolKind::Import(source_path) => {
                             let Some((source_symbol, _)) = backend.resolve_import(&symbol.name, source_path, uri).await else {

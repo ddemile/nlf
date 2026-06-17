@@ -1,6 +1,6 @@
 use nlf_shared::numbers::DynamicNumber;
 
-use crate::{errors::{LanguageError, LanguageResult}, expect_arguments_definition, expect_array, expect_boolean, expect_identifier, expect_number, expect_object, expect_string, expect_token, lexer::{Token, TokenKind}, parser::{Expression, ExpressionKind, LiteralExpressionKind, ParserError, Statement, ValueHolder}, parser::{Parser, expect_lambda}};
+use crate::{errors::{LanguageError, LanguageResult}, expect_arguments_definition, expect_array, expect_boolean, expect_identifier, expect_number, expect_object, expect_string, expect_token, lexer::{Token, TokenKind}, parser::{ASTStatement, Expression, ExpressionKind, LiteralExpressionKind, Parser, ParserError, StatementKindWrapper, ValueHolder, expect_lambda}};
 
 fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
     let token = match parser.peek() {
@@ -26,8 +26,8 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
     if matches!(token.kind, TokenKind::OpeningParenthesis) {
         let checkpoint = parser.cursor;
 
-        if let Ok(Statement { kind, start, end }) = expect_lambda(parser) {
-            return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(kind)), value: ValueHolder::Void }.into_expression(start, end))
+        if let Ok(ASTStatement { kind, start, end }) = expect_lambda(parser) {
+            return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKindWrapper::AST(kind))), value: ValueHolder::Void }.into_expression(start, end))
         }
 
         parser.cursor = checkpoint;

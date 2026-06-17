@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc, vec};
 
 use serde::Serialize;
 
-use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableDescriptor, VariableRef}};
+use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, LiteralExpressionKind, Program, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableRef}};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -104,7 +104,7 @@ impl Context {
     }
 }
 
-pub fn translate(program: Program) -> LanguageResult<Program> {
+pub fn translate(program: ASTProgram) -> LanguageResult<IRProgram> {
     let mut context = Context {
         stack: vec![Scope { kind: ScopeKind::Program, slot_index: 0, symbol_table: SymbolTable::new() }]
     };
@@ -112,8 +112,8 @@ pub fn translate(program: Program) -> LanguageResult<Program> {
     translate_body(program.body, &mut context).map(|statements| Program { body: statements })
 }
 
-fn translate_body(statements: Rc<[Statement]>, context: &mut Context) -> LanguageResult<Rc<[Statement]>> {
-    let mut inner_statements: Vec<Statement> = vec![];
+fn translate_body(statements: Rc<[ASTStatement]>, context: &mut Context) -> LanguageResult<Rc<[IRStatement]>> {
+    let mut inner_statements: Vec<IRStatement> = vec![];
     
     for statement in statements.iter() {
         inner_statements.push(translate_statement(statement.clone(), context)?);
@@ -122,13 +122,12 @@ fn translate_body(statements: Rc<[Statement]>, context: &mut Context) -> Languag
     Ok(inner_statements.into())
 }
 
-fn translate_statement(statement: Statement, context: &mut Context) -> LanguageResult<Statement> {
-    let mut new_statement = statement.clone();
-    new_statement.kind = match statement.kind {
-        StatementKind::Expression { expression } => {
+fn translate_statement(statement: ASTStatement, context: &mut Context) -> LanguageResult<IRStatement> {
+    let new_statement_kind = match statement.kind {
+        ASTStatementKind::Expression { expression } => {
             StatementKind::Expression { expression: translate_expression(expression, context)? }
         },
-        StatementKind::If { condition, block, alternate } => {
+        ASTStatementKind::If { condition, block, alternate } => {
             let condition = translate_expression(condition, context)?;
 
             context.enter_scope(ScopeKind::Conditional);
@@ -143,24 +142,24 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
 
             StatementKind::If { condition, block, alternate }
         },
-        StatementKind::Function { name, arguments, block } => {
-            let var_ref = context.set(&name.value);
+        ASTStatementKind::Function { variable, arguments, block } => {
+            let var_ref = context.set(&variable.value);
             context.enter_scope(ScopeKind::Function);
-            context.set(&name.value);
-            let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name.value)).collect();
+            context.set(&variable.value);
+            let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.value)).collect();
             let block = translate_block(block, context)?;
             context.exit_scope();
 
-            StatementKind::FunctionIR { var_ref, arguments: inner_arguements, block }
+            StatementKind::Function { variable: var_ref, arguments: inner_arguements, block }
         },
-        StatementKind::Block(block) => {
+        ASTStatementKind::Block(block) => {
             context.enter_scope(ScopeKind::Block);
             let block = translate_block(block, context)?;
             context.exit_scope();
 
             StatementKind::Block(block)
         }
-        StatementKind::For { variable, left, right, statements } => {
+        ASTStatementKind::For { variable, left, right, statements } => {
             let left = left.map(|left| translate_expression(left, context)).transpose()?;
             let right = right.map(|right| translate_expression(right, context)).transpose()?;
 
@@ -169,9 +168,9 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
             let statements = translate_body(statements, context)?;
             context.exit_scope();
 
-            StatementKind::ForIR { variable: var_ref, left, right, statements }
+            StatementKind::For { variable: var_ref, left, right, statements }
         }
-        StatementKind::While { condition, statements } => {
+        ASTStatementKind::While { condition, statements } => {
             context.enter_scope(ScopeKind::Loop);
             let condition = translate_expression(condition, context)?;
             let statements = translate_body(statements, context)?;
@@ -179,52 +178,48 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
 
             StatementKind::While { condition, statements }
         }
-        StatementKind::Return { expression } => {
+        ASTStatementKind::Return { expression } => {
             StatementKind::Return { expression: translate_expression(expression, context)? }
         }
-        StatementKind::Import { specifiers, source } => {
+        ASTStatementKind::Import { specifiers, source } => {
             let specifiers= specifiers.iter().map(|specifier| {
-                let ExpressionKind::Literal { value: ValueHolder::String(name), ..  } = &specifier.local.kind else {
-                    unreachable!()
-                };
-
-                context.set(name)
+                context.set(&specifier.value)
             }).collect();
 
-            StatementKind::ImportIR { specifiers, source }
+            StatementKind::Import { specifiers, source }
         }
-        StatementKind::Export { declaration } => {
+        ASTStatementKind::Export { declaration } => {
             StatementKind::Export { declaration: Box::new(translate_statement(*declaration, context)?) }
         }
-        StatementKind::Class { name: class_name, methods, fields, .. } => {
+        ASTStatementKind::Class { variable: class_name, methods, fields, body_start, body_end } => {
             let var_ref = context.set(&class_name.value);
 
             let mut translated_methods = vec![];
             for mut method in methods {
-                let StatementKind::Function { name, arguments, block } = method.kind else {
+                let ASTStatementKind::Function { variable, arguments, block } = method.kind else {
                     unreachable!()
                 };
 
                 context.enter_scope(ScopeKind::Function);
-                if name.value == class_name.value {
+                if variable.value == class_name.value {
                     // When accessing the method name in the constructor, return the class instead of the constructor
                     context.set("0");
                     context.set("self");
                 } else {
-                    context.set(&name.value);
+                    context.set(&variable.value);
                 }                
-                let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name.value)).collect();
+                let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.value)).collect();
                 let block = translate_block(block, context)?;
                 context.exit_scope();
 
-                method.kind = StatementKind::Method { name: name.value, arguments: inner_arguements, block };
+                method.kind = ASTStatementKind::Method { name: variable.value, arguments: inner_arguements, block };
 
                 translated_methods.push(method);
             }
         
-            StatementKind::ClassIR { var_ref, methods: translated_methods, fields }
+            StatementKind::Class { variable: var_ref, methods: translated_methods, fields, body_start, body_end }
         }
-        StatementKind::VariableDefinition { descriptor, expression } => {
+        ASTStatementKind::VariableDefinition { descriptor, expression } => {
             let variables = match descriptor {
                 VariableDescriptor::Identifier(identifier) => vec![identifier],
                 VariableDescriptor::Object(_) => todo!()
@@ -233,11 +228,17 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
                 .map(|identifier| context.set_with_position(&identifier.value, (identifier.start, identifier.end)))
                 .collect();
 
-            StatementKind::VariableDefinitionIR { variables, expression: translate_expression(expression, context)? }
+            StatementKind::VariableDefinition { descriptor: variables, expression: translate_expression(expression, context)? }
         }
-        _ => statement.kind
+        ASTStatementKind::Break => StatementKind::Break,
+        ASTStatementKind::Method { name, arguments, block } => StatementKind::Method { name, arguments, block },
+        ASTStatementKind::Field { visibility, name, value } => StatementKind::Field { visibility, name, value }
     };
-    Ok(new_statement)
+    Ok(IRStatement {
+        kind: new_statement_kind,
+        start: statement.start,
+        end: statement.end
+    })
 }
 
 fn translate_expression(mut expression: Expression, context: &mut Context) -> LanguageResult<Expression> {
@@ -257,7 +258,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                 }
             }
 
-            let ExpressionKind::Literal { value: ValueHolder::String(name), ..  } = &variable.kind else {
+            let ExpressionKind::Literal { value: ValueHolder::String(_name), ..  } = &variable.kind else {
                 return Err(LanguageError::from(TranslatorError::TODO("Cannot access property on type other than a variable".to_string())));
             };
 
@@ -284,22 +285,22 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                     return Ok(ExpressionKind::Variable(variable_ref).into_expression(expression.start, expression.end));
                 }
                 LiteralExpressionKind::Function(statement) => {
-                    let box StatementKind::Function { name, arguments, block } = statement.clone() else {
+                    let box StatementKindWrapper::AST(ASTStatementKind::Function { variable, arguments, block }) = statement.clone() else {
                         panic!()
                     };
 
-                    let var_ref = context.set(&name.value);
+                    let var_ref = context.set(&variable.value);
                     context.enter_scope(ScopeKind::Function);
-                    context.set(&name.value);
-                    let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.name.value)).collect();
+                    context.set(&variable.value);
+                    let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.value)).collect();
                     let block = translate_block(block, context)?;
                     context.exit_scope();
 
-                    return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKind::FunctionIR {
-                        var_ref,
+                    return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKindWrapper::IR(IRStatementKind::Function {
+                        variable: var_ref,
                         arguments: inner_arguements,
                         block
-                    })), value: value.clone() }.into_expression(expression.start, expression.end))
+                    }))), value: value.clone() }.into_expression(expression.start, expression.end))
                 }
                 LiteralExpressionKind::Array(array) => {
                     return Ok(ExpressionKind::Literal {
@@ -397,7 +398,11 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
     Ok(expression)
 }
 
-fn translate_block(mut block: Block, context: &mut Context) -> LanguageResult<Block> {
-    block.statements = translate_body(block.statements, context)?;
-    Ok(block)
+fn translate_block(block: Block<ASTStatement>, context: &mut Context) -> LanguageResult<Block<IRStatement>> {
+    let translated_block = Block {
+        statements: translate_body(block.statements, context)?,
+        start: block.start,
+        end: block.end
+    };
+    Ok(translated_block)
 }

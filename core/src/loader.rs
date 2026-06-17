@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use ron::ser::PrettyConfig;
 
 use crate::{
-    errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, interpret}, lexer, loader, parser, parser::{Program, Statement, StatementKind, ValueHolder, VariableRef}, stdlib::CoreModules, translator
+    errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, interpret}, lexer, loader, parser::{self, IRStatement, IRStatementKind, Program, ValueHolder, VariableRef}, stdlib::CoreModules, translator
 };
 
 #[derive(Debug, Clone)]
@@ -18,7 +18,7 @@ pub struct Module {
     pub source: String,
     pub exports: HashMap<String, ValueHolder>,
     pub context: Option<Rc<RefCell<ModuleContext>>>,
-    pub statements: Rc<[Statement]>,
+    pub statements: Rc<[IRStatement]>,
     pub imports: Vec<Import>,
     pub program: Rc<RefCell<ProgramContext>>,
     pub contents: Option<Arc<Mutex<String>>>,
@@ -135,22 +135,21 @@ impl Module {
             ron::ser::to_string_pretty(&ir, PrettyConfig::default()).unwrap(),
         );
 
-        let statements: Rc<[Statement]> = ir
+        let statements: Rc<[IRStatement]> = ir
             .body
             .iter()
             .map(|statement| match &statement.kind {
-                StatementKind::ImportIR { specifiers, source } => {
+                IRStatementKind::Import { specifiers, source } => {
                     module.lock().imports.push(Import {
                         specifiers: specifiers.clone(),
                         source: source.value.clone()
                     });
                     Ok(None) // We skip adding to statements
                 }
-
-                StatementKind::Export { declaration } => {
+                IRStatementKind::Export { declaration } => {
                     let var_ref = match declaration.kind.clone() {
-                        StatementKind::FunctionIR { var_ref, .. } => var_ref,
-                        StatementKind::ClassIR { var_ref, .. } => var_ref,
+                        IRStatementKind::Function { variable, .. } => variable,
+                        IRStatementKind::Class { variable, .. } => variable,
                         _ => panic!(),
                     };
 

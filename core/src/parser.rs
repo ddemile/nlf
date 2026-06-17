@@ -199,10 +199,10 @@ macro_rules! expect_object {
     }};
 }
 
-pub fn expect_block(parser: &mut Parser) -> LanguageResult<Block> {
+pub fn expect_block(parser: &mut Parser) -> LanguageResult<ASTBlock> {
     let Token { end: start, .. } = expect_token!(parser, TokenKind::OpeningBracket);
 
-    let mut statements: Vec<Statement> = vec![];
+    let mut statements: Vec<ASTStatement> = vec![];
 
     if let Some(Token { kind: TokenKind::ClosingBracket, start: end, .. }) = parser.peek().cloned() {
         parser.consume(|t| matches!(t.kind, TokenKind::ClosingBracket))?;
@@ -226,7 +226,7 @@ pub fn expect_block(parser: &mut Parser) -> LanguageResult<Block> {
     })
 }
 
-fn expect_lambda(parser: &mut Parser) -> LanguageResult<Statement> {
+fn expect_lambda(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let start_cursor = parser.cursor;
     let arguments = expect_arguments_definition!(parser);
     let start = parser.get_token_at(start_cursor).start;
@@ -237,23 +237,21 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<Statement> {
 
     let end = block.end;
 
-    Ok(StatementKind::Function {
-        name: Identifier { value: format!("<lambda:{start}-{end}>"), start: 0, end: 0 },
+    Ok(ASTStatementKind::Function {
+        variable: Identifier { value: format!("<lambda:{start}-{end}>"), start: 0, end: 0 },
         arguments: arguments.iter().map(|argument| {
-            Argument {
-                name: match argument {
-                    Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
-                        Identifier { value: value.to_string(), start: *start, end: *end }
-                    },
-                    _ => unreachable!()
-                }
+            match argument {
+                Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
+                    Identifier { value: value.to_string(), start: *start, end: *end }
+                },
+                _ => unreachable!()
             }
         }).collect(),
         block
     }.into_statement(start, end))
 }
 
-pub fn parse(tokens: Vec<Token>) -> LanguageResult<Program> {
+pub fn parse(tokens: Vec<Token>) -> LanguageResult<Program<ASTStatement>> {
     let mut parser = Parser::new(tokens);
 
     let mut statements = vec![];
@@ -265,7 +263,7 @@ pub fn parse(tokens: Vec<Token>) -> LanguageResult<Program> {
     Ok(Program { body: statements.into() })
 }
 
-fn match_statement(parser: &mut Parser) -> LanguageResult<Option<Statement>> {
+fn match_statement(parser: &mut Parser) -> LanguageResult<Option<ASTStatement>> {
     let start = parser.cursor;
 
     match parser.peek().map(|token| &token.kind) {
@@ -279,7 +277,7 @@ fn match_statement(parser: &mut Parser) -> LanguageResult<Option<Statement>> {
         Some(TokenKind::Keyword(KeywordKind::Break)) => {
             let Token { start, end, .. } = expect_keyword!(parser, KeywordKind::Break);
 
-            Ok(Some(StatementKind::Break.into_statement(start, end)))
+            Ok(Some(ASTStatementKind::Break.into_statement(start, end)))
         },
         Some(TokenKind::Keyword(KeywordKind::Return)) => {
             let Token { start, .. } = expect_keyword!(parser, KeywordKind::Return);
@@ -287,7 +285,7 @@ fn match_statement(parser: &mut Parser) -> LanguageResult<Option<Statement>> {
 
             let end = expression.end;
 
-            Ok(Some(StatementKind::Return { expression }.into_statement(start, end)))
+            Ok(Some(ASTStatementKind::Return { expression }.into_statement(start, end)))
         },
         Some(TokenKind::Keyword(KeywordKind::Class)) => Ok(Some(match_class(parser)?)),
         _ => {
@@ -296,12 +294,12 @@ fn match_statement(parser: &mut Parser) -> LanguageResult<Option<Statement>> {
             }
 
             let expression = match_expression(parser)?;
-            Ok(Some(StatementKind::Expression { expression }.into_statement(parser.get_token_at(start).start, parser.get_token_at(parser.cursor - 1).end)))
+            Ok(Some(ASTStatementKind::Expression { expression }.into_statement(parser.get_token_at(start).start, parser.get_token_at(parser.cursor - 1).end)))
         }
     }
 }
 
-fn match_import(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_import(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let start = parser.cursor;
 
     expect_keyword!(parser, KeywordKind::Import);
@@ -310,9 +308,7 @@ fn match_import(parser: &mut Parser) -> LanguageResult<Statement> {
         let Token { kind: TokenKind::Identifier { value }, start, end } = specifier else {
             unreachable!()
         };
-        ImportSpecifier {
-            local: Expression { kind: ExpressionKind::Literal { r#type: crate::parser::LiteralExpressionKind::Literal, value: ValueHolder::String(value.into()) }, start: *start, end: *end }
-        }
+        Identifier { value: value.to_string(), start: *start, end: *end }
     }).collect();
 
     expect_keyword!(parser, KeywordKind::From);
@@ -320,10 +316,10 @@ fn match_import(parser: &mut Parser) -> LanguageResult<Statement> {
 
     let Token { start, end, .. } = parser.get_token_at(start);
 
-    Ok(Statement { kind: StatementKind::Import { specifiers, source }, start, end })
+    Ok(ASTStatement { kind: ASTStatementKind::Import { specifiers, source }, start, end })
 }
 
-fn match_method(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_method(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let name = expect_identifier!(parser);
     let start = parser.get_token_at(parser.cursor - 1).start;
 
@@ -332,23 +328,21 @@ fn match_method(parser: &mut Parser) -> LanguageResult<Statement> {
 
     let end = block.end;
 
-    Ok(StatementKind::Function {
-        name,
+    Ok(ASTStatementKind::Function {
+        variable: name,
         arguments: arguments.iter().map(|argument| {
-            Argument {
-                name: match argument {
-                    Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
-                        Identifier { value: value.to_string(), start: *start, end: *end }
-                    },
-                    _ => unreachable!()
-                }
+            match argument {
+                Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
+                    Identifier { value: value.to_string(), start: *start, end: *end }
+                },
+                _ => unreachable!()
             }
         }).collect(),
         block
     }.into_statement(start, end))
 }
 
-fn match_function(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_function(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::Fn);
 
     let mut method = match_method(parser)?;
@@ -357,30 +351,30 @@ fn match_function(parser: &mut Parser) -> LanguageResult<Statement> {
     Ok(method)
 }
 
-fn match_if(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_if(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::If);
     let condition = match_expression(parser)?;
     let block = expect_block(parser)?;
 
-    let mut alternate: Option<Box<Statement>> = None;
+    let mut alternate: Option<Box<ASTStatement>> = None;
 
     if let Ok(_) = match_token!(parser, TokenKind::Keyword(KeywordKind::Else)) {
         if matches!(parser.peek(), Some(Token { kind: TokenKind::Keyword(KeywordKind::If), .. })) {
             alternate = Some(Box::new(match_if(parser)?))
         } else {
             let block = expect_block(parser)?;
-            alternate = Some(Box::new(StatementKind::Block(block.clone()).into_statement(block.start, block.end)));
+            alternate = Some(Box::new(ASTStatementKind::Block(block.clone()).into_statement(block.start, block.end)));
         }
     }
 
-    Ok(StatementKind::If {
+    Ok(ASTStatementKind::If {
         condition,
         block,
         alternate
     }.into_statement(start, parser.get_token_at(parser.cursor - 1).end))
 }
 
-fn match_let(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_let(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::Let);
 
     let descriptor = VariableDescriptor::Identifier(expect_identifier!(parser));
@@ -391,7 +385,7 @@ fn match_let(parser: &mut Parser) -> LanguageResult<Statement> {
     
     let end = expression.end;
 
-    Ok(StatementKind::VariableDefinition { descriptor, expression }.into_statement(start, end))
+    Ok(ASTStatementKind::VariableDefinition { descriptor, expression }.into_statement(start, end))
 
     // if let Expression { kind: ExpressionKind::Assignment { left, operator, right, .. }, end, .. } = match_expression(parser)? {
     //     Ok(StatementKind::Expression {
@@ -404,7 +398,7 @@ fn match_let(parser: &mut Parser) -> LanguageResult<Statement> {
     // }
 }
 
-fn match_export(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_export(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::Export);
 
     let Some(statement) = match_statement(parser)? else {
@@ -413,12 +407,12 @@ fn match_export(parser: &mut Parser) -> LanguageResult<Statement> {
 
     let end = statement.end;
 
-    Ok(StatementKind::Export {
+    Ok(ASTStatementKind::Export {
         declaration: Box::new(statement)
     }.into_statement(start, end))
 }
 
-fn match_for(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_for(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::For);
     let loop_variable = expect_identifier!(parser);
     expect_keyword!(parser, KeywordKind::In);
@@ -442,7 +436,7 @@ fn match_for(parser: &mut Parser) -> LanguageResult<Statement> {
         _ => ()
     }
 
-    Ok(StatementKind::For {
+    Ok(ASTStatementKind::For {
         variable: loop_variable,
         left,
         right,
@@ -450,18 +444,18 @@ fn match_for(parser: &mut Parser) -> LanguageResult<Statement> {
     }.into_statement(start, block.end))
 }
 
-fn match_while(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_while(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::While);
     let condition = match_expression(parser)?;
     let block = expect_block(parser)?;
 
-    Ok(StatementKind::While {
+    Ok(ASTStatementKind::While {
         condition,
         statements: block.statements
     }.into_statement(start, block.end))
 }
 
-fn match_class(parser: &mut Parser) -> LanguageResult<Statement> {
+fn match_class(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::Class);
     let name = expect_identifier!(parser);
     
@@ -496,7 +490,7 @@ fn match_class(parser: &mut Parser) -> LanguageResult<Statement> {
             let expression = parse_expression(parser, 0)?;
             let end = expression.end;
 
-            fields.push(StatementKind::Field {
+            fields.push(ASTStatementKind::Field {
                 name: field_name,
                 value: expression,
                 visibility
@@ -504,8 +498,8 @@ fn match_class(parser: &mut Parser) -> LanguageResult<Statement> {
         }
     }
 
-    Ok(StatementKind::Class {
-        name,
+    Ok(ASTStatementKind::Class {
+        variable: name,
         methods,
         fields,
         body_start,

@@ -11,7 +11,7 @@ use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{format::FormatOptions, prototypes::{
         ARRAY_PROTOTYPE, LocalMethodFunc, LocalPrototype, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }}, lexer::TokenKind, loader::Module, parser::{
-        ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, LiteralExpressionKind, ObjectRef, Program, RuntimeFunction, Statement, StatementKind, ValueHolder, VariableRef, Visibility
+        ASTStatementKind, ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, IRProgram, IRStatement, IRStatementKind, LiteralExpressionKind, ObjectRef, RuntimeFunction, StatementKind, StatementKindWrapper, ValueHolder, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE
 };
 
@@ -454,7 +454,7 @@ impl Environment {
 }
 
 pub fn interpret(
-    program: Program,
+    program: IRProgram,
     context: &mut ModuleContext,
 ) -> LanguageResult<()> {
     eval_body(program.body, context)?;
@@ -463,21 +463,21 @@ pub fn interpret(
 }
 
 fn hoist_declarations(
-    statements: Rc<[Statement]>,
+    statements: Rc<[IRStatement]>,
     context: &mut ModuleContext,
 ) -> LanguageResult<()> {
     for statement in statements
         .iter()
-        .filter(|statement| matches!(*statement, Statement { kind: StatementKind::FunctionIR { .. } | StatementKind::ClassIR { .. }, .. } ))
+        .filter(|statement| matches!(*statement, IRStatement { kind: StatementKind::Function { .. } | StatementKind::Class { .. }, .. } ))
     {
         match &statement.kind {
-            StatementKind::FunctionIR { var_ref, arguments, block } => {
+            IRStatementKind::Function { variable, arguments, block } => {
                 let scope = context.environment.scopes.last_mut().cloned().unwrap();
                 
                 let context_ptr = context as *mut ModuleContext;
 
                 context.environment.set(
-                    &var_ref,
+                    &variable,
                     ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                         arguments: arguments.to_vec(),
                         statements: block.statements.clone(),
@@ -487,19 +487,19 @@ fn hoist_declarations(
                     true,
                 )?
             }
-            StatementKind::ClassIR { var_ref, methods: raw_methods, fields: raw_fields } => {
+            IRStatementKind::Class { variable, methods: raw_methods, fields: raw_fields, .. } => {
                 let mut fields: Vec<Field> = vec![];
 
-                let mut prototype = LocalPrototype::new(var_ref.name.clone().unwrap().as_ref());
+                let mut prototype = LocalPrototype::new(variable.name.clone().unwrap().as_ref());
 
                 let mut static_methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)> = HashMap::new();
 
                 for method in raw_methods {
-                    let StatementKind::Method { name, arguments, block } = method.kind.clone() else {
+                    let ASTStatementKind::Method { name, arguments, block } = method.kind.clone() else {
                         unreachable!()
                     };
 
-                    let is_constructor = Some(name.clone()) == var_ref.name;
+                    let is_constructor = Some(name.clone()) == variable.name;
 
                     let is_method_static = !arguments
                         .get(0)
@@ -517,7 +517,7 @@ fn hoist_declarations(
 
                         let context = context_ref;
 
-                        let statements: Rc<[Statement]> = block.statements.clone();
+                        let statements: Rc<[IRStatement]> = block.statements.clone();
 
                         context
                             .environment
@@ -578,7 +578,7 @@ fn hoist_declarations(
                 }
 
                 for field in raw_fields {
-                    let StatementKind::Field { visibility, name, value } = field.kind.clone() else {
+                    let ASTStatementKind::Field { visibility, name, value } = field.kind.clone() else {
                         unreachable!()
                     };
 
@@ -590,7 +590,7 @@ fn hoist_declarations(
                 }
                 
                 context.environment.set(
-                    var_ref,
+                    variable,
                     ValueHolder::ClassDefinition(ClassDefinition {
                         fields,
                         prototype,
@@ -606,7 +606,7 @@ fn hoist_declarations(
     Ok(())
 }
 
-pub fn eval_body(statements: Rc<[Statement]>, context: &mut ModuleContext) -> RuntimeResult {
+pub fn eval_body(statements: Rc<[IRStatement]>, context: &mut ModuleContext) -> RuntimeResult {
     hoist_declarations(statements.clone(), context)?;
 
     for statement in statements.iter() {
@@ -617,7 +617,7 @@ pub fn eval_body(statements: Rc<[Statement]>, context: &mut ModuleContext) -> Ru
 
         for mut scope in context.environment.scopes.iter().rev().map(|scope| scope.borrow_mut()) {
             match (&statement.kind, &scope.kind) {
-                (StatementKind::Return { .. }, ScopeKind::Call(_)) => {
+                (IRStatementKind::Return { .. }, ScopeKind::Call(_)) => {
                     scope.interrupted = Some(value.clone());
 
                     return Ok(value);
@@ -625,7 +625,7 @@ pub fn eval_body(statements: Rc<[Statement]>, context: &mut ModuleContext) -> Ru
                 (_, ScopeKind::Call(_)) => {
                     break;
                 }
-                (StatementKind::Break, ScopeKind::Loop) => {
+                (IRStatementKind::Break, ScopeKind::Loop) => {
                     scope.interrupted = Some(ValueHolder::Void);
 
                     return Ok(value);
@@ -638,36 +638,36 @@ pub fn eval_body(statements: Rc<[Statement]>, context: &mut ModuleContext) -> Ru
     Ok(ValueHolder::Void)
 }
 
-fn eval_statement(statement: &Statement, context: &mut ModuleContext) -> RuntimeResult {
+fn eval_statement(statement: &IRStatement, context: &mut ModuleContext) -> RuntimeResult {
     match &statement.kind {
-        StatementKind::Expression { expression } => eval_expr(&expression, context),
-        StatementKind::If {
+        IRStatementKind::Expression { expression } => eval_expr(&expression, context),
+        IRStatementKind::If {
             condition,
             block,
             alternate,
         } => eval_if(&condition, block, alternate, context),
-        StatementKind::ForIR {
+        IRStatementKind::For {
             variable,
             left,
             right,
             statements,
         } => eval_for(variable, left, right, statements.clone(), context),
-        StatementKind::While {
+        IRStatementKind::While {
             condition,
             statements,
         } => eval_while(&condition, statements.clone(), context),
-        StatementKind::FunctionIR {
+        IRStatementKind::Function {
             ..
         } => Ok(ValueHolder::Void),
-        StatementKind::Return { expression } => eval_expr(&expression, context),
-        StatementKind::Break => Ok(ValueHolder::Void),
-        StatementKind::Block(_) => Ok(ValueHolder::Void),
-        StatementKind::ImportIR { .. } => Err(LanguageError::with_source(RuntimeError::Custom(
+        IRStatementKind::Return { expression } => eval_expr(&expression, context),
+        IRStatementKind::Break => Ok(ValueHolder::Void),
+        IRStatementKind::Block(_) => Ok(ValueHolder::Void),
+        IRStatementKind::Import { .. } => Err(LanguageError::with_source(RuntimeError::Custom(
             "Import declarations can only be at the top of modules".into(),
         ), 0, 0)),
-        StatementKind::Export { declaration } => eval_statement(declaration, context),
-        StatementKind::ClassIR { .. } => Ok(ValueHolder::Void),
-        StatementKind::VariableDefinitionIR { variables, expression } => eval_definition(variables, expression, context),
+        IRStatementKind::Export { declaration } => eval_statement(declaration, context),
+        IRStatementKind::Class { .. } => Ok(ValueHolder::Void),
+        IRStatementKind::VariableDefinition { descriptor, expression } => eval_definition(descriptor, expression, context),
         _ => panic!("Invalid statement : {:?}", statement),
     }
 }
@@ -676,7 +676,7 @@ fn eval_for(
     variable: &VariableRef,
     left: &Option<Expression>,
     right: &Option<Expression>,
-    statements: Rc<[Statement]>,
+    statements: Rc<[IRStatement]>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
     let mut iter: Box<dyn Iterator<Item = i32>> = Box::new(0..);
@@ -741,13 +741,13 @@ fn eval_for(
 
 fn eval_while(
     condition: &Expression,
-    statements: Rc<[Statement]>,
+    statements: Rc<[IRStatement]>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
     context.environment.enter_scope(ScopeKind::Loop);
 
     fn execute_loop_body(
-        statements: Rc<[Statement]>,
+        statements: Rc<[IRStatement]>,
         context: &mut ModuleContext
     ) -> LanguageResult<bool> {
         {
@@ -798,8 +798,8 @@ fn eval_while(
 
 fn eval_if(
     condition: &Expression,
-    block: &Block,
-    alternate: &Option<Box<Statement>>,
+    block: &Block<IRStatement>,
+    alternate: &Option<Box<IRStatement>>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
     let cond: bool = eval_expr(condition, context)?.into();
@@ -808,14 +808,14 @@ fn eval_if(
         context.environment.enter_scope(ScopeKind::Regular);
         eval_body(block.statements.clone(), context)?;
         context.environment.exit_scope();
-    } else if let Some(box Statement { kind: StatementKind::If {
+    } else if let Some(box IRStatement { kind: IRStatementKind::If {
         condition,
         block,
         alternate,
     }, .. }) = alternate
     {
         eval_if(&condition, block, alternate, context)?;
-    } else if let Some(box Statement { kind : StatementKind::Block(Block { statements, .. }), .. }) = alternate {
+    } else if let Some(box IRStatement { kind : IRStatementKind::Block(Block { statements, .. }), .. }) = alternate {
         context.environment.enter_scope(ScopeKind::Regular);
         eval_body(statements.clone(), context)?;
         context.environment.exit_scope();
@@ -931,7 +931,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                 // ArrayRef creation to be implemented
                 return Ok(ValueHolder::Array(ArrayRef::new(items))); // Placeholder
             } else if let LiteralExpressionKind::Function(statement) = r#type {
-                let box StatementKind::FunctionIR { var_ref: _, arguments, block } = statement.clone() else {
+                let box StatementKindWrapper::IR(IRStatementKind::Function { variable: _, arguments, block }) = statement.clone() else {
                     panic!()
                 };
 

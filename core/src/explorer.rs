@@ -1,25 +1,25 @@
-use crate::{analysis::{ScopeId, Span}, parser::{Argument, Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind}};
+use crate::{analysis::{ScopeId, Span}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, Expression, ExpressionKind, Identifier, LiteralExpressionKind, StatementKindWrapper}};
 
 pub trait Visitor {
     fn visit_expression(&mut self, _expression: &Expression) {}
-    fn visit_statement(&mut self, _statement: &Statement) {}
-    fn visit_argument(&mut self, _argument: &Argument) {}
+    fn visit_statement(&mut self, _statement: &ASTStatement) {}
+    fn visit_argument(&mut self, _argument: &Identifier) {}
 
     fn enter_scope(&mut self, _span: Span) -> ScopeId { ScopeId(0) }
     fn exit_scope(&mut self, _parent: ScopeId) {}
 }
 
-fn walk_block(visitor: &mut dyn Visitor, block: &Block) {
+fn walk_block(visitor: &mut dyn Visitor, block: &ASTBlock) {
     for statement in block.statements.iter() {
         walk_statement(visitor, statement);
     }
 }
 
-pub fn walk_statement(visitor: &mut dyn Visitor, statement: &Statement) {
+pub fn walk_statement(visitor: &mut dyn Visitor, statement: &ASTStatement) {
     visitor.visit_statement(statement);
 
     match &statement.kind {
-        StatementKind::Function { block, arguments, .. } => {
+        ASTStatementKind::Function { block, arguments, .. } => {
             let scope = visitor.enter_scope(block.get_span());
             
             for argument in arguments {
@@ -29,7 +29,7 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &Statement) {
             walk_block(visitor, block);
             visitor.exit_scope(scope);
         }
-        StatementKind::If { block, alternate, .. } => {
+        ASTStatementKind::If { block, alternate, .. } => {
             let scope = visitor.enter_scope(block.get_span());
             walk_block(visitor, block);
             visitor.exit_scope(scope);
@@ -39,20 +39,20 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &Statement) {
                 visitor.exit_scope(scope);
             }
         }
-        StatementKind::Block(block) => {
+        ASTStatementKind::Block(block) => {
             walk_block(visitor, block);
         }
-        StatementKind::While { statements, .. } => {
+        ASTStatementKind::While { statements, .. } => {
             for statement in statements.iter() {
                 walk_statement(visitor, statement);
             }
         }
-        StatementKind::For { statements, .. } => {
+        ASTStatementKind::For { statements, .. } => {
             for statement in statements.iter() {
                 walk_statement(visitor, statement);
             }
         }
-        StatementKind::Class { methods, fields, body_start, body_end, .. } => {
+        ASTStatementKind::Class { methods, fields, body_start, body_end, .. } => {
             let scope = visitor.enter_scope(Span { start: *body_start, end: *body_end });
             for method in methods.iter() {
                 walk_statement(visitor, method);
@@ -63,21 +63,22 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &Statement) {
             }
             visitor.exit_scope(scope);
         }
-        StatementKind::Method { block, .. } => {
+        ASTStatementKind::Method { block, .. } => {
             let scope = visitor.enter_scope(block.get_span());
-            walk_block(visitor, block);
+            // TODO: find where Method is instanciated
+            // walk_block(visitor, block);
             visitor.exit_scope(scope);
         }
-        StatementKind::Export { declaration } => {
+        ASTStatementKind::Export { declaration } => {
             walk_statement(visitor, declaration);
         }
-        StatementKind::Return { expression } => {
+        ASTStatementKind::Return { expression } => {
             walk_expression(visitor, expression);
         }
-        StatementKind::Expression { expression } => {
+        ASTStatementKind::Expression { expression } => {
             walk_expression(visitor, expression);
         }
-        StatementKind::VariableDefinition { expression, .. } => {
+        ASTStatementKind::VariableDefinition { expression, .. } => {
             walk_expression(visitor, expression);
         }
         _ => {}
@@ -125,7 +126,10 @@ fn walk_expression(visitor: &mut dyn Visitor, expression: &Expression) {
             match r#type {
                 LiteralExpressionKind::Function(block) => {
                     // TODO: This is a bit of a hack, but it works for now. We should probably refactor this to be more elegant.
-                    walk_statement(visitor, &block.clone().into_statement(0, 0));
+                    let box StatementKindWrapper::AST(statement_kind) = block else {
+                        unreachable!()
+                    };
+                    walk_statement(visitor, &statement_kind.clone().into_statement(0, 0));
                 }
                 LiteralExpressionKind::Array(values) => {
                     for value in values {
@@ -144,7 +148,7 @@ fn walk_expression(visitor: &mut dyn Visitor, expression: &Expression) {
     }
 }
 
-pub fn visit_program(program: &Program, visitor: &mut dyn Visitor) {
+pub fn visit_program(program: &ASTProgram, visitor: &mut dyn Visitor) {
     for statement in program.body.iter() {
         walk_statement(visitor, statement);
     }

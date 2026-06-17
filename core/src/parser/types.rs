@@ -42,7 +42,7 @@ pub struct ArrayRef {
 #[derive(Serialize, Debug, Clone)]
 pub struct RuntimeFunction {
     pub arguments: Vec<VariableRef>,
-    pub statements: Rc<[Statement]>,
+    pub statements: Rc<[IRStatement]>,
     #[serde(skip)]
     pub scope: Rc<RefCell<Scope>>,
     #[serde(skip)]
@@ -145,13 +145,16 @@ impl Into<i32> for ValueHolder {
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")] // "type" field will contain the variant name
-pub struct Block {
-    pub statements: Rc<[Statement]>,
+pub struct Block<T> {
+    pub statements: Rc<[T]>,
     pub start: usize,
     pub end: usize
 }
 
-impl Block {
+pub type ASTBlock = Block<ASTStatement>;
+pub type IRBlock = Block<IRStatement>;
+
+impl<T> Block<T> {
     pub fn get_span(&self) -> Span {
         Span { start: self.start, end: self.end }
     }
@@ -183,81 +186,58 @@ pub enum VariableDescriptor {
 }
 
 #[derive(Serialize, Debug, Clone)]
-pub struct Statement {
-    pub kind: StatementKind,
+pub struct Statement<T> {
+    pub kind: T,
     pub start: usize,
     pub end: usize,
 }
 
-impl StatementKind {
-    pub fn into_statement(self, start: usize, end: usize) -> Statement {
-        Statement { kind: self, start, end }
-    }
-}
+pub type ASTStatement = Statement<ASTStatementKind>;
+pub type IRStatement = Statement<IRStatementKind>;
 
 #[derive(Serialize, Debug, Clone)]
-pub enum StatementKind {
+pub enum StatementKind<T, Descriptor = VariableDescriptor> {
     Expression {
         expression: Expression,
     },
     If {
         condition: Expression,
-        block: Block,
-        alternate: Option<Box<Statement>>,
+        block: Block<Statement<Self>>,
+        alternate: Option<Box<Statement<Self>>>,
     },
     For {
-        variable: Identifier,
+        variable: T,
         left: Option<Expression>,
         right: Option<Expression>,
-        statements: Rc<[Statement]>,
-    },
-    ForIR {
-        variable: VariableRef,
-        left: Option<Expression>,
-        right: Option<Expression>,
-        statements: Rc<[Statement]>,
+        statements: Rc<[Statement<Self>]>,
     },
     Function {
-        name: Identifier,
-        arguments: Vec<Argument>,
-        block: Block,
-    },
-    FunctionIR {
-        var_ref: VariableRef,
-        arguments: Vec<VariableRef>,
-        block: Block
+        variable: T,
+        arguments: Vec<T>,
+        block: Block<Statement<Self>>,
     },
     While {
         condition: Expression,
-        statements: Rc<[Statement]>,
+        statements: Rc<[Statement<Self>]>,
     },
     Return {
         expression: Expression,
     },
     Break,
-    Block(Block),
+    Block(Block<Statement<Self>>),
     Import {
-        specifiers: Vec<ImportSpecifier>,
-        source: StringLiteral,
-    },
-    ImportIR {
-        specifiers: Vec<VariableRef>,
+        specifiers: Vec<T>,
         source: StringLiteral,
     },
     Export {
-        declaration: Box<Statement>,
+        declaration: Box<Statement<Self>>,
     },
     Class {
-        name: Identifier,
-        methods: Vec<Statement>,
-        fields: Vec<Statement>,
+        variable: T,
+        methods: Vec<ASTStatement>,
+        fields: Vec<ASTStatement>,
         body_start: usize,
         body_end: usize
-    },
-    ClassIR {
-        var_ref: VariableRef,
-        methods: Vec<Statement>,
-        fields: Vec<Statement>,
     },
     Field {
         visibility: Visibility,
@@ -267,16 +247,27 @@ pub enum StatementKind {
     Method {
         name: String,
         arguments: Vec<VariableRef>,
-        block: Block
+        block: Block<IRStatement>
     },
     VariableDefinition {
-        descriptor: VariableDescriptor,
-        expression: Expression
-    },
-    VariableDefinitionIR {
-        variables: Vec<VariableRef>,
+        descriptor: Descriptor,
         expression: Expression
     }
+}
+
+pub type ASTStatementKind = StatementKind<Identifier>;
+pub type IRStatementKind = StatementKind<VariableRef, Vec<VariableRef>>; 
+
+impl<T> StatementKind<T> {
+    pub fn into_statement(self, start: usize, end: usize) -> Statement<Self> {
+        Statement { kind: self, start, end }
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub enum StatementKindWrapper {
+    AST(ASTStatementKind),
+    IR(IRStatementKind)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -285,7 +276,7 @@ pub enum LiteralExpressionKind {
     Variable,
     Object(IndexMap<String, Expression>),
     Array(Vec<Expression>),
-    Function(Box<StatementKind>)
+    Function(Box<StatementKindWrapper>)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -376,6 +367,9 @@ impl Visibility {
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type")] // "type" field will contain the variant name
-pub struct Program {
-    pub body: Rc<[Statement]>,
+pub struct Program<T> {
+    pub body: Rc<[T]>,
 }
+
+pub type ASTProgram = Program<ASTStatement>;
+pub type IRProgram = Program<IRStatement>;
