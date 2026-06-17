@@ -1,8 +1,9 @@
 use std::collections::HashMap;
-use std::fmt::format;
+use std::fs;
 
-use nlf_core::analysis::{ScopeBuilder, ScopeId, SymbolIndex, SymbolKind};
+use nlf_core::analysis::{ScopeBuilder, Symbol, SymbolIndex, SymbolKind};
 use nlf_core::lexer::TokenKind;
+use nlf_core::loader::Module;
 use nlf_core::{explorer, lexer, parser, stdlib, translator};
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
@@ -18,10 +19,8 @@ struct Backend {
 const LINE_ENDING_LENGTH: usize = if cfg!(target_os = "windows") { 2 } else { 1 };
 
 impl Backend {
-    async fn get_symbol_index(&self, uri: Url) -> Option<SymbolIndex> {
-        let docs = self.documents.read().await;
-
-        let contents = docs.get(&uri).unwrap().to_string();
+    async fn get_symbol_index(&self, uri: &Url) -> Option<SymbolIndex> {
+        let contents = self.get_file_contents(uri).await;
         
         let tokens = match lexer::lex(contents) {
             Ok(tokens) => tokens,
@@ -43,6 +42,35 @@ impl Backend {
 
         Some(index)
     }
+
+    async fn get_file_contents(&self, uri: &Url) -> String {
+        let docs = self.documents.read().await;
+
+        if docs.contains_key(uri) {
+            return docs.get(uri).unwrap().to_string()
+        }
+        
+        fs::read_to_string(uri.to_file_path().unwrap()).unwrap()
+    }
+
+    async fn resolve_import(&self, name: &str, source: &str, uri: &Url) -> Option<(Symbol, Url)> {
+        let resolved_path = Module::resolve_path_internal(source.into(), Some(uri.to_file_path().unwrap().parent().unwrap().to_path_buf())).unwrap();
+        
+        let resolved_uri = Url::from_file_path(resolved_path).ok()?;
+
+        let imported_index = match self.get_symbol_index(&resolved_uri).await {
+            Some(index) => index,
+            None => return None
+        };
+
+        let source_symbol = imported_index.find_export(name);
+
+        let Some(source_symbol) = source_symbol else {
+            return None
+        };
+
+        Some((source_symbol, resolved_uri))
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -58,7 +86,7 @@ impl LanguageServer for Backend {
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
-                document_highlight_provider: Some(OneOf::Left(true)),
+                // document_highlight_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: None,
@@ -68,6 +96,15 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         self.client
             .log_message(MessageType::INFO, "server initialized!")
+            .await;
+
+        self.client
+            .send_notification::<tower_lsp::lsp_types::notification::ShowMessage>(
+                tower_lsp::lsp_types::ShowMessageParams {
+                    typ: MessageType::INFO,
+                    message: "NLF Language Server initialized".into(),
+                },
+            )
             .await;
     }
 
@@ -80,13 +117,12 @@ impl LanguageServer for Backend {
 
         let items = {
             let uri = params.text_document_position.text_document.uri;
-            let docs = self.documents.read().await;
 
-            let contents = docs.get(&uri).unwrap().to_string();
+            let contents = self.get_file_contents(&uri).await;
             let position = params.text_document_position.position;
             let source = line_to_source(&contents, position);
 
-            let index = match self.get_symbol_index(uri).await {
+            let index = match self.get_symbol_index(&uri).await {
                 Some(index) => index,
                 None => return Ok(None)
             };
@@ -103,8 +139,12 @@ impl LanguageServer for Backend {
                     continue;
                 }
 
+                if matches!(symbol.kind, SymbolKind::Variable) {
+                    continue;
+                }
+
                 let kind: CompletionItemKind = match symbol.kind {
-                    SymbolKind::Variable => CompletionItemKind::VARIABLE,
+                    SymbolKind::Definition | SymbolKind::Import(_) => CompletionItemKind::VARIABLE,
                     SymbolKind::Function(_) => CompletionItemKind::FUNCTION,
                     SymbolKind::Class => CompletionItemKind::CLASS,
                     _ => todo!()
@@ -246,11 +286,9 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        let docs = self.documents.read().await;
+        let contents = self.get_file_contents(&uri).await;
 
-        let contents = docs.get(&uri).unwrap().to_string();
-
-        let index = match self.get_symbol_index(uri).await {
+        let index = match self.get_symbol_index(&uri).await {
             Some(index) => index,
             None => return Ok(None)
         };
@@ -260,12 +298,35 @@ impl LanguageServer for Backend {
         let symbol = index.symbol_at(source);
 
         if let Some(symbol) = symbol {
-            let hover_text = match &symbol.kind {
-                SymbolKind::Variable => format!("let {};", symbol.name),
-                SymbolKind::Function(args) => format!("fn {}({}) {{}}", symbol.name, args.iter().map(|arg| arg.name.value.clone()).collect::<Vec<String>>().join(", ")),
-                SymbolKind::Class => format!("class {} {{}}", symbol.name),
-                _ => todo!()
-            };
+            fn get_hover_text<'a>(symbol: &'a Symbol, index: &'a SymbolIndex, source: usize, uri: &'a Url, backend: &'a Backend) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>> {
+                Box::pin(async move {
+                    match &symbol.kind {
+                        SymbolKind::Definition => format!("let {};", symbol.name),
+                        SymbolKind::Variable => {
+                            let definition = index.find_definition(&symbol.name, source);
+                            
+                            if let Some(definition) = definition {
+                                get_hover_text(definition, index, source, uri, backend).await
+                            } else {
+                                format!("{}", symbol.name)
+                            }
+                        },
+                        SymbolKind::Function(args) => format!("fn {}({})", symbol.name, args.iter().map(|arg| arg.name.value.clone()).collect::<Vec<String>>().join(", ")),
+                        SymbolKind::Class => format!("class {}", symbol.name),
+                        SymbolKind::Import(source_path) => {
+                            let Some((source_symbol, _)) = backend.resolve_import(&symbol.name, source_path, uri).await else {
+                                return format!("// Failed to resolve {}", symbol.name)
+                            };
+
+                            get_hover_text(&source_symbol, index, source, uri, backend).await
+                        },
+                        _ => todo!()
+                    }
+                })
+            }
+
+            let hover_text = get_hover_text(symbol, &index, source, &uri, &self).await;
+
             let contents = HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: format!("```nlf\n{}\n```", hover_text),
@@ -277,18 +338,13 @@ impl LanguageServer for Backend {
         Ok(None)
     }
 
-    async fn document_highlight(
-        &self,
-        params: DocumentHighlightParams,
-    ) -> Result<Option<Vec<DocumentHighlight>>> {
-       let uri = params.text_document_position_params.text_document.uri;
+    async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        let docs = self.documents.read().await;
+        let contents = self.get_file_contents(&uri).await;
 
-        let contents = docs.get(&uri).unwrap().to_string();
-
-        let index = match self.get_symbol_index(uri).await {
+        let index = match self.get_symbol_index(&uri).await {
             Some(index) => index,
             None => return Ok(None)
         };
@@ -297,19 +353,76 @@ impl LanguageServer for Backend {
 
         let symbol = index.symbol_at(source);
 
-        if let Some(symbol) = symbol {
-            let mut highlights = vec![];
+        let Some(symbol) = symbol else {
+            return Ok(None) 
+        };
 
-            highlights.push(DocumentHighlight {
-                range: Range { start: source_to_line(&contents, symbol.span.start), end: source_to_line(&contents, symbol.span.end) },
-                kind: Some(DocumentHighlightKind::TEXT),
-            });
-            
-            return Ok(Some(highlights))
+        if !matches!(symbol.kind, SymbolKind::Variable) {
+            return Ok(None)
         }
 
-        Ok(None)
+        let source_symbol = index.find_definition(&symbol.name, source).cloned();
+
+        let Some(mut source_symbol) = source_symbol else {
+            return Ok(None)
+        };
+
+        let mut uri = uri;
+
+        if let SymbolKind::Import(source_path) = &source_symbol.kind {
+            let resolved_symbol = self.resolve_import(&symbol.name, source_path, &uri).await;
+
+            let Some((resolved_symbol, resolved_uri)) = resolved_symbol else {
+                return Ok(None)
+            };
+
+            uri = resolved_uri;
+            source_symbol = resolved_symbol.clone();
+        }
+
+        let contents = self.get_file_contents(&uri).await;
+
+        let location = Location {
+            uri,
+            range: Range { start: source_to_line(&contents, source_symbol.span.start), end: source_to_line(&contents, source_symbol.span.end) }
+        };
+
+        Ok(Some(GotoDefinitionResponse::Scalar(location)))
     }
+
+    // async fn document_highlight(
+    //     &self,
+    //     params: DocumentHighlightParams,
+    // ) -> Result<Option<Vec<DocumentHighlight>>> {
+    //    let uri = params.text_document_position_params.text_document.uri;
+    //     let position = params.text_document_position_params.position;
+
+    //     let docs = self.documents.read().await;
+
+    //     let contents = docs.get(&uri).unwrap().to_string();
+
+    //     let index = match self.get_symbol_index(uri).await {
+    //         Some(index) => index,
+    //         None => return Ok(None)
+    //     };
+
+    //     let source = line_to_source(&contents, position);
+
+    //     let symbol = index.symbol_at(source);
+
+    //     if let Some(symbol) = symbol {
+    //         let mut highlights = vec![];
+
+    //         highlights.push(DocumentHighlight {
+    //             range: Range { start: source_to_line(&contents, symbol.span.start), end: source_to_line(&contents, symbol.span.end) },
+    //             kind: Some(DocumentHighlightKind::TEXT),
+    //         });
+            
+    //         return Ok(Some(highlights))
+    //     }
+
+    //     Ok(None)
+    // }
 }
 
 fn source_to_line(contents: &String, position: usize) -> Position {

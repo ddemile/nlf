@@ -88,7 +88,7 @@ impl Module {
         Self::resolve_path_internal(path.into(), None)
     }
 
-    fn resolve_path_internal(path: PathBuf, current_path: Option<PathBuf>) -> LanguageResult<String> {
+    pub fn resolve_path_internal(path: PathBuf, current_path: Option<PathBuf>) -> LanguageResult<String> {
         let current_dir = env::current_dir().unwrap();
 
         let resolver = PathResovler {

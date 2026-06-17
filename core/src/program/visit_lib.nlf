@@ -1,0 +1,7 @@
+export fn sum(arr) {
+    let result = 0
+    for i in ..arr.len() {
+        result += arr[i]
+    }
+    return result
+}

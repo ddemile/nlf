@@ -74,7 +74,7 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
 
 fn make_expression_kind(operator: TokenKind, left: Box<Expression>, right: Box<Expression>) -> ExpressionKind {
     match operator {
-        TokenKind::Assign | TokenKind::PlusEqual | TokenKind::MinusEqual | TokenKind::AsteriskEqual | TokenKind::SlashEqual | TokenKind::PercentEqual => ExpressionKind::Assignment { left, operator, right, is_definition: false },
+        TokenKind::Assign | TokenKind::PlusEqual | TokenKind::MinusEqual | TokenKind::AsteriskEqual | TokenKind::SlashEqual | TokenKind::PercentEqual => ExpressionKind::Assignment { left, operator, right },
         TokenKind::And | TokenKind::Or => ExpressionKind::Logical { left, operator, right },
         TokenKind::EQ | TokenKind::NE => ExpressionKind::Equality { left, operator, right },
         TokenKind::GT | TokenKind::GTE | TokenKind::LT | TokenKind::LTE => ExpressionKind::Relational { left, operator, right },

@@ -1,9 +1,19 @@
+import { sum } from "./visit_lib.nlf"
+
 fn function(a, b) {
     let nested = true
 }
 
-let value = 10
+let value = 4
 
-class Miami {
-
+class Paris {
+    fn country(self) {
+        return "France"
+    }
 }
+
+let city = Miami()
+
+print(function, Miami, value, city.country())
+
+print(sum([1, 2, 3, 4, 5]))

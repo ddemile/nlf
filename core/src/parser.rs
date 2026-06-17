@@ -200,11 +200,11 @@ macro_rules! expect_object {
 }
 
 pub fn expect_block(parser: &mut Parser) -> LanguageResult<Block> {
-    let Token { start, .. } = expect_token!(parser, TokenKind::OpeningBracket);
+    let Token { end: start, .. } = expect_token!(parser, TokenKind::OpeningBracket);
 
     let mut statements: Vec<Statement> = vec![];
 
-    if let Some(Token { kind: TokenKind::ClosingBracket, end, .. }) = parser.peek().cloned() {
+    if let Some(Token { kind: TokenKind::ClosingBracket, start: end, .. }) = parser.peek().cloned() {
         parser.consume(|t| matches!(t.kind, TokenKind::ClosingBracket))?;
         return Ok(Block { statements: statements.into(), start, end });
     }
@@ -383,15 +383,25 @@ fn match_if(parser: &mut Parser) -> LanguageResult<Statement> {
 fn match_let(parser: &mut Parser) -> LanguageResult<Statement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::Let);
 
-    if let Expression { kind: ExpressionKind::Assignment { left, operator, right, .. }, end, .. } = match_expression(parser)? {
-        Ok(StatementKind::Expression {
-            expression: ExpressionKind::Assignment { left, operator, right, is_definition: true }.into_expression(start, end)
-        }.into_statement(start, end))
-    } else {
-        let Token { start, end, .. } = parser.get_token_at(parser.cursor - 1);
+    let descriptor = VariableDescriptor::Identifier(expect_identifier!(parser));
+
+    expect_token!(parser, TokenKind::Assign);
+
+    let expression = match_expression(parser)?;
+    
+    let end = expression.end;
+
+    Ok(StatementKind::VariableDefinition { descriptor, expression }.into_statement(start, end))
+
+    // if let Expression { kind: ExpressionKind::Assignment { left, operator, right, .. }, end, .. } = match_expression(parser)? {
+    //     Ok(StatementKind::Expression {
+    //         expression: ExpressionKind::Assignment { left, operator, right, is_definition: true }.into_expression(start, end)
+    //     }.into_statement(start, end))
+    // } else {
+    //     let Token { start, end, .. } = parser.get_token_at(parser.cursor - 1);
         
-        Err(LanguageError::with_source(ParserError::UnexpectedToken("'identifier'".into()), start, end))
-    }
+    //     Err(LanguageError::with_source(ParserError::UnexpectedToken("'identifier'".into()), start, end))
+    // }
 }
 
 fn match_export(parser: &mut Parser) -> LanguageResult<Statement> {
@@ -410,9 +420,7 @@ fn match_export(parser: &mut Parser) -> LanguageResult<Statement> {
 
 fn match_for(parser: &mut Parser) -> LanguageResult<Statement> {
     let Token { start, .. } = expect_keyword!(parser, KeywordKind::For);
-    let Token { kind: TokenKind::Identifier { value: loop_variable }, start: loop_variable_start, end: loop_variable_end } = expect_token!(parser, TokenKind::Identifier { .. }) else {
-        unreachable!()
-    };
+    let loop_variable = expect_identifier!(parser);
     expect_keyword!(parser, KeywordKind::In);
 
     let left = match parser.peek() {
@@ -435,7 +443,7 @@ fn match_for(parser: &mut Parser) -> LanguageResult<Statement> {
     }
 
     Ok(StatementKind::For {
-        variable: ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(loop_variable) }.into_expression(loop_variable_start, loop_variable_end),
+        variable: loop_variable,
         left,
         right,
         statements: block.statements
@@ -460,13 +468,16 @@ fn match_class(parser: &mut Parser) -> LanguageResult<Statement> {
     let mut methods: Vec<_> = vec![];
     let mut fields: Vec<_> = vec![];
 
-    expect_token!(parser, TokenKind::OpeningBracket);
+    let Token { end: body_start, .. } = expect_token!(parser, TokenKind::OpeningBracket);
     
+    let body_end: usize;
+
     loop {
-        if let Ok(_) = match_token!(parser, TokenKind::ClosingBracket) {
+        if let Ok(Token { start, .. }) = match_token!(parser, TokenKind::ClosingBracket) {
+            body_end = start;
             break;
         }
-
+ 
         if let Ok(_) = match_token!(parser, TokenKind::Keyword(KeywordKind::Fn)) {
             parser.cursor -= 1;
             methods.push(match_function(parser)?);
@@ -496,7 +507,9 @@ fn match_class(parser: &mut Parser) -> LanguageResult<Statement> {
     Ok(StatementKind::Class {
         name,
         methods,
-        fields
+        fields,
+        body_start,
+        body_end
     }.into_statement(start, parser.get_token_at(parser.cursor - 1).end))
 }
 

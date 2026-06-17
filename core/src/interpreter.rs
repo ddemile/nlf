@@ -667,6 +667,7 @@ fn eval_statement(statement: &Statement, context: &mut ModuleContext) -> Runtime
         ), 0, 0)),
         StatementKind::Export { declaration } => eval_statement(declaration, context),
         StatementKind::ClassIR { .. } => Ok(ValueHolder::Void),
+        StatementKind::VariableDefinitionIR { variables, expression } => eval_definition(variables, expression, context),
         _ => panic!("Invalid statement : {:?}", statement),
     }
 }
@@ -819,6 +820,22 @@ fn eval_if(
         eval_body(statements.clone(), context)?;
         context.environment.exit_scope();
     }
+    Ok(ValueHolder::Void)
+}
+
+fn eval_definition(variables: &Vec<VariableRef>, expression: &Expression, context: &mut ModuleContext) -> RuntimeResult {
+    // TODO: use proper values
+
+    let value = eval_expr(expression, context)?;
+
+    for variable in variables {
+        context.environment.set(
+            variable,
+            value.clone(),
+            true
+        )?;
+    }
+
     Ok(ValueHolder::Void)
 }
 
@@ -992,8 +1009,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
         ExpressionKind::Assignment {
             left,
             operator,
-            right,
-            is_definition,
+            right
         } => {
             macro_rules! compute_value {
                 ($right:expr, $left_block:block) => {
@@ -1022,11 +1038,11 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
 
                 context.environment.set(
                     var_ref,
-                    value,
-                    *is_definition
+                    value.clone(),
+                    false
                 )?;
 
-                return Ok(ValueHolder::Void);
+                return Ok(value);
             } else if let ExpressionKind::Member { object, property } = &left.kind {
                 let value = eval_expr(&object, context)?;
 

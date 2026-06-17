@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc, vec};
 
 use serde::Serialize;
 
-use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableRef}};
+use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, ValueHolder, VariableDescriptor, VariableRef}};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -160,12 +160,12 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
 
             StatementKind::Block(block)
         }
-        StatementKind::For { variable: Expression { kind: ExpressionKind::Literal { value: ValueHolder::String(value), .. }, .. }, left, right, statements } => {
+        StatementKind::For { variable, left, right, statements } => {
             let left = left.map(|left| translate_expression(left, context)).transpose()?;
             let right = right.map(|right| translate_expression(right, context)).transpose()?;
 
             context.enter_scope(ScopeKind::Loop);
-            let var_ref = context.set(&value);
+            let var_ref = context.set(&variable.value);
             let statements = translate_body(statements, context)?;
             context.exit_scope();
 
@@ -196,7 +196,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
         StatementKind::Export { declaration } => {
             StatementKind::Export { declaration: Box::new(translate_statement(*declaration, context)?) }
         }
-        StatementKind::Class { name: class_name, methods, fields } => {
+        StatementKind::Class { name: class_name, methods, fields, .. } => {
             let var_ref = context.set(&class_name.value);
 
             let mut translated_methods = vec![];
@@ -224,6 +224,17 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
         
             StatementKind::ClassIR { var_ref, methods: translated_methods, fields }
         }
+        StatementKind::VariableDefinition { descriptor, expression } => {
+            let variables = match descriptor {
+                VariableDescriptor::Identifier(identifier) => vec![identifier],
+                VariableDescriptor::Object(_) => todo!()
+            }
+                .iter()
+                .map(|identifier| context.set_with_position(&identifier.value, (identifier.start, identifier.end)))
+                .collect();
+
+            StatementKind::VariableDefinitionIR { variables, expression: translate_expression(expression, context)? }
+        }
         _ => statement.kind
     };
     Ok(new_statement)
@@ -231,7 +242,7 @@ fn translate_statement(statement: Statement, context: &mut Context) -> LanguageR
 
 fn translate_expression(mut expression: Expression, context: &mut Context) -> LanguageResult<Expression> {
     expression.kind = match &expression.kind {
-        ExpressionKind::Assignment { left, operator, right, is_definition } => {
+        ExpressionKind::Assignment { left, operator, right } => {
             let mut variable = *left.clone();
 
             // Find the innermost literal variable name
@@ -250,11 +261,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                 return Err(LanguageError::from(TranslatorError::TODO("Cannot access property on type other than a variable".to_string())));
             };
 
-            if *is_definition {
-                context.set(name);
-            }
-
-            ExpressionKind::Assignment { left: Box::new(translate_expression(*left.clone(), context)?), operator: operator.clone(), right: Box::new(translate_expression(*right.clone(), context)?), is_definition: *is_definition }
+            ExpressionKind::Assignment { left: Box::new(translate_expression(*left.clone(), context)?), operator: operator.clone(), right: Box::new(translate_expression(*right.clone(), context)?) }
         }
         ExpressionKind::Member { object, property } => {
             let object = translate_expression(*object.clone(), context)?;

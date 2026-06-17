@@ -52,7 +52,8 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &Statement) {
                 walk_statement(visitor, statement);
             }
         }
-        StatementKind::Class { methods, fields, ..} => {
+        StatementKind::Class { methods, fields, body_start, body_end, .. } => {
+            let scope = visitor.enter_scope(Span { start: *body_start, end: *body_end });
             for method in methods.iter() {
                 walk_statement(visitor, method);
             }
@@ -60,6 +61,7 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &Statement) {
             for field in fields.iter() {
                 walk_statement(visitor, field);
             }
+            visitor.exit_scope(scope);
         }
         StatementKind::Method { block, .. } => {
             let scope = visitor.enter_scope(block.get_span());
@@ -73,6 +75,9 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &Statement) {
             walk_expression(visitor, expression);
         }
         StatementKind::Expression { expression } => {
+            walk_expression(visitor, expression);
+        }
+        StatementKind::VariableDefinition { expression, .. } => {
             walk_expression(visitor, expression);
         }
         _ => {}
@@ -117,9 +122,22 @@ fn walk_expression(visitor: &mut dyn Visitor, expression: &Expression) {
             walk_expression(visitor, property);
         }
         ExpressionKind::Literal { r#type, .. } => {
-            if let LiteralExpressionKind::Function(block) = r#type {
-                // TODO: This is a bit of a hack, but it works for now. We should probably refactor this to be more elegant.
-                walk_statement(visitor, &block.clone().into_statement(0, 0));
+            match r#type {
+                LiteralExpressionKind::Function(block) => {
+                    // TODO: This is a bit of a hack, but it works for now. We should probably refactor this to be more elegant.
+                    walk_statement(visitor, &block.clone().into_statement(0, 0));
+                }
+                LiteralExpressionKind::Array(values) => {
+                    for value in values {
+                        walk_expression(visitor, value);
+                    }
+                }
+                LiteralExpressionKind::Object(map) => {
+                    for value in map.values() {
+                        walk_expression(visitor, value);
+                    }
+                }
+                _ => {}
             }
         }
         _ => {}

@@ -1,4 +1,4 @@
-use crate::{explorer::Visitor, parser::{Argument, Expression, ExpressionKind, ImportSpecifier, LiteralExpressionKind, Statement, StatementKind, ValueHolder}};
+use crate::{explorer::Visitor, parser::{Argument, Expression, ExpressionKind, Identifier, ImportSpecifier, LiteralExpressionKind, Statement, StatementKind, ValueHolder, VariableDescriptor}};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
@@ -16,14 +16,18 @@ pub struct Scope {
     pub span: Option<Span>
 }
 
+#[derive(Debug, Clone)]
 pub enum SymbolKind {
+    Definition,
     Variable,
     Function(Vec<Argument>),
     Class,
     Method,
-    Constant
+    Constant,
+    Import(String)
 }
 
+#[derive(Debug, Clone)]
 pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
@@ -33,16 +37,23 @@ pub struct Symbol {
 
 pub type SymbolId = usize;
 
+pub struct Export {
+    pub name: String,
+    pub symbol: Symbol
+}
+
 pub struct SymbolIndex {
     pub scopes: Vec<Scope>,
     pub symbols: Vec<Symbol>,
+    pub exports: Vec<Export>
 }
 
 impl From<ScopeBuilder> for SymbolIndex {
     fn from(builder: ScopeBuilder) -> Self {
         Self {
             scopes: builder.scopes,
-            symbols: builder.symbols
+            symbols: builder.symbols,
+            exports: builder.exports
         }
     }
 }
@@ -104,12 +115,49 @@ impl SymbolIndex {
         }
         deepest_symbol
     }
+
+    pub fn find_definition(&self, name: &str, pos: usize) -> Option<&Symbol> {
+        let scope = self.scope_at_position(pos);
+
+        let mut current = Some(scope);
+
+        while let Some(scope_id) = current {
+            let scope = &self.scopes[scope_id.0];
+
+            for &symbol_id in &scope.symbols {
+                let symbol = &self.symbols[symbol_id];
+                
+                if matches!(symbol.kind, SymbolKind::Variable) {
+                    continue;
+                }
+
+                if symbol.name == name {
+                    return Some(symbol)
+                }
+            }
+
+            current = scope.parent;
+        }
+
+        None
+    }
+
+    pub fn find_export(&self, name: &str) -> Option<Symbol> {
+        for export in self.exports.iter() {
+            if export.name == name {
+                return Some(export.symbol.clone())
+            }
+        }
+
+        None
+    }
 }
 
 pub struct ScopeBuilder {
     pub scopes: Vec<Scope>,
     pub current: ScopeId,
-    pub symbols: Vec<Symbol>
+    pub symbols: Vec<Symbol>,
+    pub exports: Vec<Export>
 }
 
 impl ScopeBuilder {
@@ -122,7 +170,8 @@ impl ScopeBuilder {
                 span: None
             }],
             current: ScopeId(0),
-            symbols: vec![]
+            symbols: vec![],
+            exports: vec![]
         }
     }
 
@@ -153,12 +202,57 @@ impl Visitor for ScopeBuilder {
             StatementKind::Class { name, .. } => {
                 self.define(name.value.to_string(), SymbolKind::Class, Span { start: name.start, end: name.end });
             }
-            StatementKind::Import { specifiers, .. } => {
+            StatementKind::Import { specifiers, source } => {
                 for specifier in specifiers {
                     if let ImportSpecifier { local: Expression { kind: ExpressionKind::Literal { value: ValueHolder::String(name), .. }, .. } } = specifier {
-                        self.define(name.to_string(), SymbolKind::Variable, Span { start: statement.start, end: statement.end });
+                        self.define(name.to_string(), SymbolKind::Import(source.value.to_string()), Span { start: specifier.local.start, end: specifier.local.end });
                     }
                 }
+            }
+            StatementKind::Export { declaration } => {
+                match &declaration.kind {
+                    StatementKind::Function { name, arguments, .. } => {
+                        let function_symbol = Symbol {
+                            name: name.value.to_string(),
+                            span: Span { start: name.start, end: name.end },
+                            kind: SymbolKind::Function(arguments.clone()),
+                            scope: self.current
+                        };
+                        self.exports.push(Export { name: name.value.to_string(), symbol: function_symbol });
+                    }
+                    StatementKind::Class { name, .. } => {
+                        let class_symbol = Symbol {
+                            name: name.value.to_string(),
+                            span: Span { start: name.start, end: name.end },
+                            kind: SymbolKind::Class,
+                            scope: self.current
+                        };
+                        self.exports.push(Export { name: name.value.to_string(), symbol: class_symbol });
+                    }
+                    _ => todo!()
+                }
+            },
+            StatementKind::VariableDefinition { descriptor, .. } => {
+                fn get_identifiers(descriptor: &VariableDescriptor) -> Vec<Identifier> {
+                    match descriptor {
+                        VariableDescriptor::Identifier(identifier) => vec![identifier.clone()],
+                        VariableDescriptor::Object(descriptors) => {
+                            let mut identifiers = vec![];
+                            for descriptor in descriptors {
+                                let mut inner_identifiers = get_identifiers(descriptor);
+                                identifiers.append(&mut inner_identifiers);
+                            }
+                            identifiers
+                        }
+                    }
+                }
+
+                for identifier in get_identifiers(descriptor) {
+                    self.define(identifier.value.to_string(), SymbolKind::Definition, Span { start: identifier.start, end: identifier.end });
+                }
+            }
+            StatementKind::For { variable, .. } => {
+                self.define(variable.value.clone(), SymbolKind::Definition, Span { start: variable.start, end: variable.end });
             }
             _ => {}
         }
@@ -166,10 +260,8 @@ impl Visitor for ScopeBuilder {
 
     fn visit_expression(&mut self, expression: &Expression) {
         match &expression.kind {
-            ExpressionKind::Assignment { left, .. } => {
-                if let ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } = &left.kind {
-                    self.define(name.to_string(), SymbolKind::Variable, Span { start: expression.start, end: expression.end });
-                }
+            ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } => {
+                self.define(name.to_string(), SymbolKind::Variable, Span { start: expression.start, end: expression.end });
             }
             _ => {}
         }
@@ -177,7 +269,7 @@ impl Visitor for ScopeBuilder {
 
     fn visit_argument(&mut self, argument: &Argument) {
         // TODO: fix span
-        self.define(argument.name.value.to_string(), SymbolKind::Variable, Span { start: argument.name.start, end: argument.name.end });
+        self.define(argument.name.value.to_string(), SymbolKind::Definition, Span { start: argument.name.start, end: argument.name.end });
     }
 
     fn enter_scope(&mut self, span: Span) -> ScopeId {

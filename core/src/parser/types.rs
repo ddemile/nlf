@@ -177,6 +177,12 @@ pub struct Identifier {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub enum VariableDescriptor {
+    Identifier(Identifier),
+    Object(Vec<VariableDescriptor>)
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
     pub start: usize,
@@ -200,7 +206,7 @@ pub enum StatementKind {
         alternate: Option<Box<Statement>>,
     },
     For {
-        variable: Expression,
+        variable: Identifier,
         left: Option<Expression>,
         right: Option<Expression>,
         statements: Rc<[Statement]>,
@@ -245,6 +251,8 @@ pub enum StatementKind {
         name: Identifier,
         methods: Vec<Statement>,
         fields: Vec<Statement>,
+        body_start: usize,
+        body_end: usize
     },
     ClassIR {
         var_ref: VariableRef,
@@ -261,6 +269,14 @@ pub enum StatementKind {
         arguments: Vec<VariableRef>,
         block: Block
     },
+    VariableDefinition {
+        descriptor: VariableDescriptor,
+        expression: Expression
+    },
+    VariableDefinitionIR {
+        variables: Vec<VariableRef>,
+        expression: Expression
+    }
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -330,8 +346,7 @@ pub enum ExpressionKind {
     Assignment {
         left: Box<Expression>,
         operator: TokenKind,
-        right: Box<Expression>,
-        is_definition: bool,
+        right: Box<Expression>
     },
 }
 
