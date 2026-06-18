@@ -4,7 +4,7 @@ use std::fs;
 use nlf_core::analysis::{ScopeBuilder, Symbol, SymbolIndex, SymbolKind};
 use nlf_core::lexer::TokenKind;
 use nlf_core::loader::Module;
-use nlf_core::{explorer, lexer, parser, stdlib, translator};
+use nlf_core::{explorer, lexer, parser, stdlib, translator, type_checker};
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
@@ -32,10 +32,15 @@ impl Backend {
             Err(_) => return None
         };
 
+        let typed_program = match type_checker::check_types(program) {
+            Ok(program) => program,
+            Err(_) => return None
+        };
+
         let index = {
             let mut scope_builder = ScopeBuilder::new();
 
-            explorer::visit_program(&program, &mut scope_builder);
+            explorer::visit_program(&typed_program, &mut scope_builder);
 
             SymbolIndex::from(scope_builder)
         };
@@ -144,8 +149,8 @@ impl LanguageServer for Backend {
                 }
 
                 let kind: CompletionItemKind = match symbol.kind {
-                    SymbolKind::Definition | SymbolKind::Import(_) => CompletionItemKind::VARIABLE,
-                    SymbolKind::Function(_) => CompletionItemKind::FUNCTION,
+                    SymbolKind::Definition(_) | SymbolKind::Import(_) => CompletionItemKind::VARIABLE,
+                    SymbolKind::Function { .. } => CompletionItemKind::FUNCTION,
                     SymbolKind::Class => CompletionItemKind::CLASS,
                     _ => todo!()
                 };
@@ -301,7 +306,7 @@ impl LanguageServer for Backend {
             fn get_hover_text<'a>(symbol: &'a Symbol, index: &'a SymbolIndex, source: usize, uri: &'a Url, backend: &'a Backend) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>> {
                 Box::pin(async move {
                     match &symbol.kind {
-                        SymbolKind::Definition => format!("let {};", symbol.name),
+                        SymbolKind::Definition(ty) => format!("let {}: {}", symbol.name, ty.to_string()),
                         SymbolKind::Variable => {
                             let definition = index.find_definition(&symbol.name, source);
                             
@@ -311,7 +316,12 @@ impl LanguageServer for Backend {
                                 format!("{}", symbol.name)
                             }
                         },
-                        SymbolKind::Function(args) => format!("fn {}({})", symbol.name, args.iter().map(|arg| arg.value.clone()).collect::<Vec<String>>().join(", ")),
+                        SymbolKind::Function { arguments: args, return_ty } => format!(
+                            "fn {}({}): {}",
+                            symbol.name,
+                            args.iter().map(|arg| format!("{}: {}", arg.variable.value.clone(), arg.ty.to_string())).collect::<Vec<String>>().join(", "),
+                            return_ty.to_string()
+                        ),
                         SymbolKind::Class => format!("class {}", symbol.name),
                         SymbolKind::Import(source_path) => {
                             let Some((source_symbol, _)) = backend.resolve_import(&symbol.name, source_path, uri).await else {

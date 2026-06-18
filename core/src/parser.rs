@@ -168,7 +168,23 @@ macro_rules! expect_destructuring_pattern {
 macro_rules! expect_arguments_definition {
     ($parser:expr) => {{
         crate::expect_comma_separated_group!($parser, TokenKind::OpeningParenthesis, TokenKind::ClosingParenthesis, {
-            parse_expression($parser, 0)?
+            let identifier = expect_identifier!($parser);
+
+            let mut type_ref = None;
+
+            if matches!($parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
+                $parser.advance();
+
+                let type_ident = expect_identifier!($parser);
+
+                type_ref = Some(crate::parser::types::TypeRef::Named(type_ident));
+            }
+            
+            crate::parser::types::Argument {
+                variable: identifier,
+                type_ref,
+                ty: ()
+            }
         })
     }};
 }
@@ -228,7 +244,19 @@ pub fn expect_block(parser: &mut Parser) -> LanguageResult<ASTBlock> {
 
 fn expect_lambda(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let start_cursor = parser.cursor;
+
     let arguments = expect_arguments_definition!(parser);
+
+    let mut return_type_ref = None;
+
+    if matches!(parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
+        parser.advance();
+
+        let type_ident = expect_identifier!(parser);
+
+        return_type_ref = Some(TypeRef::Named(type_ident));
+    }
+
     let start = parser.get_token_at(start_cursor).start;
 
     expect_token!(parser, TokenKind::Arrow);
@@ -239,15 +267,10 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<ASTStatement> {
 
     Ok(ASTStatementKind::Function {
         variable: Identifier { value: format!("<lambda:{start}-{end}>"), start: 0, end: 0 },
-        arguments: arguments.iter().map(|argument| {
-            match argument {
-                Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
-                    Identifier { value: value.to_string(), start: *start, end: *end }
-                },
-                _ => unreachable!()
-            }
-        }).collect(),
-        block
+        arguments,
+        block,
+        return_type_ref: return_type_ref,
+        return_ty: ()
     }.into_statement(start, end))
 }
 
@@ -324,21 +347,27 @@ fn match_method(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let start = parser.get_token_at(parser.cursor - 1).start;
 
     let arguments = expect_arguments_definition!(parser);
+
+    let mut return_type_ref = None;
+
+    if matches!(parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
+        parser.advance();
+
+        let type_ident = expect_identifier!(parser);
+
+        return_type_ref = Some(TypeRef::Named(type_ident));
+    }
+
     let block = expect_block(parser)?;
 
     let end = block.end;
 
     Ok(ASTStatementKind::Function {
         variable: name,
-        arguments: arguments.iter().map(|argument| {
-            match argument {
-                Expression { kind: ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(value) }, start, end } => {
-                    Identifier { value: value.to_string(), start: *start, end: *end }
-                },
-                _ => unreachable!()
-            }
-        }).collect(),
-        block
+        arguments,
+        block,
+        return_type_ref,
+        return_ty: ()
     }.into_statement(start, end))
 }
 
@@ -379,13 +408,23 @@ fn match_let(parser: &mut Parser) -> LanguageResult<ASTStatement> {
 
     let descriptor = VariableDescriptor::Identifier(expect_identifier!(parser));
 
+    let mut type_ref = None;
+
+    if matches!(parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
+        parser.advance();
+
+        let type_ident = expect_identifier!(parser);
+
+        type_ref = Some(TypeRef::Named(type_ident));
+    }
+
     expect_token!(parser, TokenKind::Assign);
 
     let expression = match_expression(parser)?;
     
     let end = expression.end;
 
-    Ok(ASTStatementKind::VariableDefinition { descriptor, expression }.into_statement(start, end))
+    Ok(ASTStatementKind::VariableDefinition { descriptor, expression, type_ref, ty: () }.into_statement(start, end))
 
     // if let Expression { kind: ExpressionKind::Assignment { left, operator, right, .. }, end, .. } = match_expression(parser)? {
     //     Ok(StatementKind::Expression {

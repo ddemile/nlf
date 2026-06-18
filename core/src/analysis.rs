@@ -1,4 +1,4 @@
-use crate::{explorer::Visitor, parser::{Expression, ExpressionKind, Identifier, LiteralExpressionKind, ASTStatement, ASTStatementKind, ValueHolder, VariableDescriptor}};
+use crate::{explorer::Visitor, parser::{Argument, Expression, ExpressionKind, Identifier, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, ValueHolder, VariableDescriptor}};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
@@ -18,9 +18,12 @@ pub struct Scope {
 
 #[derive(Debug, Clone)]
 pub enum SymbolKind {
-    Definition,
+    Definition(Type),
     Variable,
-    Function(Vec<Identifier>),
+    Function {
+        arguments: Vec<Argument<Identifier, Type>>,
+        return_ty: Type
+    },
     Class,
     Method,
     Constant,
@@ -194,31 +197,31 @@ impl ScopeBuilder {
 }
 
 impl Visitor for ScopeBuilder {
-    fn visit_statement(&mut self, statement: &ASTStatement) {
+    fn visit_statement(&mut self, statement: &TypedStatement) {
         match &statement.kind {
-            ASTStatementKind::Function { variable: name, arguments, .. } => {
-                self.define(name.value.to_string(), SymbolKind::Function(arguments.clone()), Span { start: name.start, end: name.end });
+            TypedStatementKind::Function { variable: name, arguments, return_ty, .. } => {
+                self.define(name.value.to_string(), SymbolKind::Function { arguments: arguments.clone(), return_ty: *return_ty }, Span { start: name.start, end: name.end });
             }
-            ASTStatementKind::Class { variable: name, .. } => {
+            TypedStatementKind::Class { variable: name, .. } => {
                 self.define(name.value.to_string(), SymbolKind::Class, Span { start: name.start, end: name.end });
             }
-            ASTStatementKind::Import { specifiers, source } => {
+            TypedStatementKind::Import { specifiers, source } => {
                 for specifier in specifiers {
                     self.define(specifier.value.to_string(), SymbolKind::Import(source.value.to_string()), Span { start: specifier.start, end: specifier.end });
                 }
             }
-            ASTStatementKind::Export { declaration } => {
+            TypedStatementKind::Export { declaration } => {
                 match &declaration.kind {
-                    ASTStatementKind::Function { variable: name, arguments, .. } => {
+                    TypedStatementKind::Function { variable: name, arguments, return_ty, .. } => {
                         let function_symbol = Symbol {
                             name: name.value.to_string(),
                             span: Span { start: name.start, end: name.end },
-                            kind: SymbolKind::Function(arguments.clone()),
+                            kind: SymbolKind::Function { arguments: arguments.clone(), return_ty: *return_ty },
                             scope: self.current
                         };
                         self.exports.push(Export { name: name.value.to_string(), symbol: function_symbol });
                     }
-                    ASTStatementKind::Class { variable: name, .. } => {
+                    TypedStatementKind::Class { variable: name, .. } => {
                         let class_symbol = Symbol {
                             name: name.value.to_string(),
                             span: Span { start: name.start, end: name.end },
@@ -230,7 +233,7 @@ impl Visitor for ScopeBuilder {
                     _ => todo!()
                 }
             },
-            ASTStatementKind::VariableDefinition { descriptor, .. } => {
+            TypedStatementKind::VariableDefinition { descriptor, ty, .. } => {
                 fn get_identifiers(descriptor: &VariableDescriptor) -> Vec<Identifier> {
                     match descriptor {
                         VariableDescriptor::Identifier(identifier) => vec![identifier.clone()],
@@ -246,11 +249,11 @@ impl Visitor for ScopeBuilder {
                 }
 
                 for identifier in get_identifiers(descriptor) {
-                    self.define(identifier.value.to_string(), SymbolKind::Definition, Span { start: identifier.start, end: identifier.end });
+                    self.define(identifier.value.to_string(), SymbolKind::Definition(*ty), Span { start: identifier.start, end: identifier.end });
                 }
             }
-            ASTStatementKind::For { variable, .. } => {
-                self.define(variable.value.clone(), SymbolKind::Definition, Span { start: variable.start, end: variable.end });
+            TypedStatementKind::For { variable, .. } => {
+                self.define(variable.value.clone(), SymbolKind::Definition(Type::Number), Span { start: variable.start, end: variable.end });
             }
             _ => {}
         }
@@ -265,9 +268,9 @@ impl Visitor for ScopeBuilder {
         }
     }
 
-    fn visit_argument(&mut self, argument: &Identifier) {
+    fn visit_argument(&mut self, argument: &Argument<Identifier, Type>) {
         // TODO: fix span
-        self.define(argument.value.to_string(), SymbolKind::Definition, Span { start: argument.start, end: argument.end });
+        self.define(argument.variable.value.to_string(), SymbolKind::Definition(argument.ty), Span { start: argument.variable.start, end: argument.variable.end });
     }
 
     fn enter_scope(&mut self, span: Span) -> ScopeId {
@@ -295,41 +298,3 @@ impl Visitor for ScopeBuilder {
         self.current = parent;
     }
 }
-
-// use crate::{explorer::{Visitor, visit_program}, parser::{Expression, ExpressionKind, Program, Statement, StatementKind}};
-
-// pub enum SymbolType {
-//     Variable,
-//     Function,
-//     Class,
-//     Method,
-//     Constant
-// }
-
-// struct SymbolCollector {
-//     symbols: Vec<(String, SymbolType)>,
-//     position: u32
-// }
-
-// impl SymbolCollector {
-//     fn new(position: u32) -> Self {
-//         Self {
-//             symbols: Vec::new(),
-//             position
-//         }
-//     }
-// }
-
-// impl Visitor for SymbolCollector {
-//     fn visit_expression(&self, expression: &crate::parser::Expression) {
-
-//     }
-// }
-
-// pub fn find_symbols_before(position: u32, program: &Program) -> Vec<(String, SymbolType)> {
-//     let visitor = SymbolCollector::new(position);
-
-//     visit_program(program, &visitor);
-
-//     return visitor.symbols;
-// }

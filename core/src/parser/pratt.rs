@@ -1,6 +1,6 @@
 use nlf_shared::numbers::DynamicNumber;
 
-use crate::{errors::{LanguageError, LanguageResult}, expect_arguments_definition, expect_array, expect_boolean, expect_identifier, expect_number, expect_object, expect_string, expect_token, lexer::{Token, TokenKind}, parser::{ASTStatement, Expression, ExpressionKind, LiteralExpressionKind, Parser, ParserError, StatementKindWrapper, ValueHolder, expect_lambda}};
+use crate::{errors::{LanguageError, LanguageResult}, expect_array, expect_boolean, expect_comma_separated_group, expect_identifier, expect_number, expect_object, expect_string, expect_token, lexer::{Token, TokenKind}, parser::{ASTStatement, Expression, ExpressionKind, LiteralExpressionKind, Parser, ParserError, StatementKindWrapper, ValueHolder, expect_lambda}};
 
 fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
     let token = match parser.peek() {
@@ -109,7 +109,9 @@ pub fn parse_expression(parser: &mut Parser, min_bp: u8) -> LanguageResult<Expre
                 break;
             }
 
-            let arguments = expect_arguments_definition!(parser);
+            let arguments = expect_comma_separated_group!(parser, TokenKind::OpeningParenthesis, TokenKind::ClosingParenthesis, {
+                parse_expression(parser, 0)?
+            });
 
             lhs = ExpressionKind::Call {
                 callee: Box::new(lhs),

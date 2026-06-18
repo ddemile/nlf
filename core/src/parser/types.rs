@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, fmt::{self, Debug}, rc::Rc
+    cell::RefCell, fmt::{self, Debug}, rc::Rc, str::FromStr
 };
 
 use indexmap::IndexMap;
@@ -7,7 +7,7 @@ use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
-    analysis::Span, errors::LanguageErrorTrait, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
+    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
 };
 
 #[derive(Debug)]
@@ -19,11 +19,6 @@ pub enum ParserError {
 }
 
 impl LanguageErrorTrait for ParserError {}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct Argument {
-    pub name: Identifier,
-}
 
 #[derive(Serialize, Debug, Clone)]
 pub struct ObjectRef {
@@ -153,6 +148,7 @@ pub struct Block<T> {
 
 pub type ASTBlock = Block<ASTStatement>;
 pub type IRBlock = Block<IRStatement>;
+pub type TypedBlock = Block<TypedStatement>;
 
 impl<T> Block<T> {
     pub fn get_span(&self) -> Span {
@@ -186,6 +182,13 @@ pub enum VariableDescriptor {
 }
 
 #[derive(Serialize, Debug, Clone)]
+pub struct Argument<T, TypeFormat> {
+    pub variable: T,
+    pub type_ref: Option<TypeRef>,
+    pub ty: TypeFormat
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub struct Statement<T> {
     pub kind: T,
     pub start: usize,
@@ -194,9 +197,10 @@ pub struct Statement<T> {
 
 pub type ASTStatement = Statement<ASTStatementKind>;
 pub type IRStatement = Statement<IRStatementKind>;
+pub type TypedStatement = Statement<TypedStatementKind>;
 
 #[derive(Serialize, Debug, Clone)]
-pub enum StatementKind<T, Descriptor = VariableDescriptor> {
+pub enum StatementKind<T, Descriptor, TypeFormat, Arg> {
     Expression {
         expression: Expression,
     },
@@ -213,8 +217,10 @@ pub enum StatementKind<T, Descriptor = VariableDescriptor> {
     },
     Function {
         variable: T,
-        arguments: Vec<T>,
+        arguments: Vec<Arg>,
         block: Block<Statement<Self>>,
+        return_type_ref: Option<TypeRef>,
+        return_ty: TypeFormat
     },
     While {
         condition: Expression,
@@ -234,7 +240,7 @@ pub enum StatementKind<T, Descriptor = VariableDescriptor> {
     },
     Class {
         variable: T,
-        methods: Vec<ASTStatement>,
+        methods: Vec<Statement<Self>>,
         fields: Vec<ASTStatement>,
         body_start: usize,
         body_end: usize
@@ -251,14 +257,17 @@ pub enum StatementKind<T, Descriptor = VariableDescriptor> {
     },
     VariableDefinition {
         descriptor: Descriptor,
-        expression: Expression
+        expression: Expression,
+        type_ref: Option<TypeRef>,
+        ty: TypeFormat
     }
 }
 
-pub type ASTStatementKind = StatementKind<Identifier>;
-pub type IRStatementKind = StatementKind<VariableRef, Vec<VariableRef>>; 
+pub type ASTStatementKind = StatementKind<Identifier, VariableDescriptor, (), Argument<Identifier, ()>>;
+pub type IRStatementKind = StatementKind<VariableRef, Vec<VariableRef>, (), VariableRef>; 
+pub type TypedStatementKind = StatementKind<Identifier, VariableDescriptor, Type, Argument<Identifier, Type>>; 
 
-impl<T> StatementKind<T> {
+impl<T, Descriptor, TypeFormat, Arg> StatementKind<T, Descriptor, TypeFormat, Arg> {
     pub fn into_statement(self, start: usize, end: usize) -> Statement<Self> {
         Statement { kind: self, start, end }
     }
@@ -267,6 +276,7 @@ impl<T> StatementKind<T> {
 #[derive(Serialize, Debug, Clone)]
 pub enum StatementKindWrapper {
     AST(ASTStatementKind),
+    Typed(TypedStatementKind),
     IR(IRStatementKind)
 }
 
@@ -373,3 +383,66 @@ pub struct Program<T> {
 
 pub type ASTProgram = Program<ASTStatement>;
 pub type IRProgram = Program<IRStatement>;
+pub type TypedProgram = Program<TypedStatement>;
+
+// Typing
+#[derive(Serialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct TypeId(pub u32);
+
+#[derive(Serialize, Debug, Clone)]
+pub enum TypeRef {
+    Named(Identifier)
+}
+
+#[derive(Serialize, Debug, Clone, Copy)]
+pub enum Type {
+    String,
+    Number,
+    Bool,
+    Unknown
+}
+
+impl ToString for Type {
+    fn to_string(&self) -> String {
+        match self {
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Bool => "bool",
+            Self::Unknown => "unknown"
+        }.to_string()
+    }
+}
+
+impl FromStr for Type {
+    type Err = LanguageError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "string" => Ok(Type::String),
+            "number" => Ok(Type::Number),
+            "bool" => Ok(Type::Bool),
+            "unknown" => Ok(Type::Unknown),
+            _ => Err(LanguageError::from(RuntimeError::Custom("Failed to convert str to Type".to_string())))
+        }
+    }
+}
+
+pub struct TypeArena {
+    types: Vec<Type>
+}
+
+impl TypeArena {
+    pub fn new() -> Self {
+        Self { types: vec![] }
+    }
+
+    pub fn alloc(&mut self, ty: Type) -> TypeId {
+        let id = self.types.len() as u32;
+        self.types.push(ty);
+        TypeId(id)
+    }
+
+    pub fn get(&self, id: TypeId) -> &Type {
+        &self.types[id.0 as usize]
+    }
+}

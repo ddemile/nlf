@@ -1,6 +1,6 @@
 let native_addon = addon("/home/ddemile/Documents/Programming/Rust/papangue-bindings/target/release/libpapangue_bindings.so")
 
-let last_time = now()
+let last_time: number = now()
 let total = 0
 let samples = 0
 
@@ -17,7 +17,7 @@ class RendererContext {
 }
 
 class Window {
-    Window(handle, app_handle) {
+    Window(handle: number, app_handle: number) {
         self.handle = handle
         self.app_handle = app_handle
         self.renderer_context = RendererContext(native_addon.get_renderer_handle(handle), native_addon.get_behaviour_handle(handle))

@@ -1,25 +1,27 @@
-use crate::{analysis::{ScopeId, Span}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, Expression, ExpressionKind, Identifier, LiteralExpressionKind, StatementKindWrapper}};
+use std::{fmt::format, fs};
+
+use crate::{analysis::{ScopeId, Span}, parser::{Argument, Expression, ExpressionKind, Identifier, LiteralExpressionKind, Statement, StatementKind, StatementKindWrapper, Type, TypedBlock, TypedProgram, TypedStatement, TypedStatementKind}};
 
 pub trait Visitor {
     fn visit_expression(&mut self, _expression: &Expression) {}
-    fn visit_statement(&mut self, _statement: &ASTStatement) {}
-    fn visit_argument(&mut self, _argument: &Identifier) {}
+    fn visit_statement(&mut self, _statement: &TypedStatement) {}
+    fn visit_argument(&mut self, _argument: &Argument<Identifier, Type>) {}
 
     fn enter_scope(&mut self, _span: Span) -> ScopeId { ScopeId(0) }
     fn exit_scope(&mut self, _parent: ScopeId) {}
 }
 
-fn walk_block(visitor: &mut dyn Visitor, block: &ASTBlock) {
+fn walk_block(visitor: &mut dyn Visitor, block: &TypedBlock) {
     for statement in block.statements.iter() {
         walk_statement(visitor, statement);
     }
 }
 
-pub fn walk_statement(visitor: &mut dyn Visitor, statement: &ASTStatement) {
+pub fn walk_statement(visitor: &mut dyn Visitor, statement: &TypedStatement) {
     visitor.visit_statement(statement);
 
     match &statement.kind {
-        ASTStatementKind::Function { block, arguments, .. } => {
+        TypedStatementKind::Function { block, arguments, .. } => {
             let scope = visitor.enter_scope(block.get_span());
             
             for argument in arguments {
@@ -29,7 +31,7 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &ASTStatement) {
             walk_block(visitor, block);
             visitor.exit_scope(scope);
         }
-        ASTStatementKind::If { block, alternate, .. } => {
+        TypedStatementKind::If { block, alternate, .. } => {
             let scope = visitor.enter_scope(block.get_span());
             walk_block(visitor, block);
             visitor.exit_scope(scope);
@@ -39,46 +41,64 @@ pub fn walk_statement(visitor: &mut dyn Visitor, statement: &ASTStatement) {
                 visitor.exit_scope(scope);
             }
         }
-        ASTStatementKind::Block(block) => {
+        TypedStatementKind::Block(block) => {
             walk_block(visitor, block);
         }
-        ASTStatementKind::While { statements, .. } => {
+        TypedStatementKind::While { statements, .. } => {
             for statement in statements.iter() {
                 walk_statement(visitor, statement);
             }
         }
-        ASTStatementKind::For { statements, .. } => {
+        TypedStatementKind::For { statements, left, right, .. } => {
+            if let Some(left) = left {
+                walk_expression(visitor, left);
+            }
+            
+            if let Some(right) = right {
+                walk_expression(visitor, right);
+            }
+
             for statement in statements.iter() {
                 walk_statement(visitor, statement);
             }
         }
-        ASTStatementKind::Class { methods, fields, body_start, body_end, .. } => {
+        TypedStatementKind::Class { methods, fields, body_start, body_end, .. } => {
             let scope = visitor.enter_scope(Span { start: *body_start, end: *body_end });
+            // TODO: fix that
             for method in methods.iter() {
                 walk_statement(visitor, method);
             }
 
             for field in fields.iter() {
-                walk_statement(visitor, field);
+                let Statement { kind: StatementKind::Field { visibility, name, value }, start, end } = field else {
+                    unreachable!()
+                };
+                
+                walk_statement(visitor, &Statement { kind: TypedStatementKind::Field {
+                    name: name.clone(),
+                    visibility: visibility.clone(),
+                    value: value.clone()
+                }, start: *start, end: *end });
             }
+
             visitor.exit_scope(scope);
         }
-        ASTStatementKind::Method { block, .. } => {
+        TypedStatementKind::Method { block, .. } => {
             let scope = visitor.enter_scope(block.get_span());
             // TODO: find where Method is instanciated
             // walk_block(visitor, block);
             visitor.exit_scope(scope);
         }
-        ASTStatementKind::Export { declaration } => {
+        TypedStatementKind::Export { declaration } => {
             walk_statement(visitor, declaration);
         }
-        ASTStatementKind::Return { expression } => {
+        TypedStatementKind::Return { expression } => {
             walk_expression(visitor, expression);
         }
-        ASTStatementKind::Expression { expression } => {
+        TypedStatementKind::Expression { expression } => {
             walk_expression(visitor, expression);
         }
-        ASTStatementKind::VariableDefinition { expression, .. } => {
+        TypedStatementKind::VariableDefinition { expression, .. } => {
             walk_expression(visitor, expression);
         }
         _ => {}
@@ -129,7 +149,11 @@ fn walk_expression(visitor: &mut dyn Visitor, expression: &Expression) {
                     let box StatementKindWrapper::AST(statement_kind) = block else {
                         unreachable!()
                     };
-                    walk_statement(visitor, &statement_kind.clone().into_statement(0, 0));
+                    // walk_statement(visitor, &TypedStatement {
+                    //     kind: &statement_kind.clone(),
+                    //     start: 0,
+                    //     end: 0
+                    // });
                 }
                 LiteralExpressionKind::Array(values) => {
                     for value in values {
@@ -148,7 +172,7 @@ fn walk_expression(visitor: &mut dyn Visitor, expression: &Expression) {
     }
 }
 
-pub fn visit_program(program: &ASTProgram, visitor: &mut dyn Visitor) {
+pub fn visit_program(program: &TypedProgram, visitor: &mut dyn Visitor) {
     for statement in program.body.iter() {
         walk_statement(visitor, statement);
     }

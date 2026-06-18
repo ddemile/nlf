@@ -471,7 +471,7 @@ fn hoist_declarations(
         .filter(|statement| matches!(*statement, IRStatement { kind: StatementKind::Function { .. } | StatementKind::Class { .. }, .. } ))
     {
         match &statement.kind {
-            IRStatementKind::Function { variable, arguments, block } => {
+            IRStatementKind::Function { variable, arguments, block, .. } => {
                 let scope = context.environment.scopes.last_mut().cloned().unwrap();
                 
                 let context_ptr = context as *mut ModuleContext;
@@ -495,7 +495,7 @@ fn hoist_declarations(
                 let mut static_methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)> = HashMap::new();
 
                 for method in raw_methods {
-                    let ASTStatementKind::Method { name, arguments, block } = method.kind.clone() else {
+                    let StatementKind::Method { name, arguments, block } = method.kind.clone() else {
                         unreachable!()
                     };
 
@@ -578,7 +578,7 @@ fn hoist_declarations(
                 }
 
                 for field in raw_fields {
-                    let ASTStatementKind::Field { visibility, name, value } = field.kind.clone() else {
+                    let StatementKind::Field { visibility, name, value } = field.kind.clone() else {
                         unreachable!()
                     };
 
@@ -667,7 +667,7 @@ fn eval_statement(statement: &IRStatement, context: &mut ModuleContext) -> Runti
         ), 0, 0)),
         IRStatementKind::Export { declaration } => eval_statement(declaration, context),
         IRStatementKind::Class { .. } => Ok(ValueHolder::Void),
-        IRStatementKind::VariableDefinition { descriptor, expression } => eval_definition(descriptor, expression, context),
+        IRStatementKind::VariableDefinition { descriptor, expression, .. } => eval_definition(descriptor, expression, context),
         _ => panic!("Invalid statement : {:?}", statement),
     }
 }
@@ -931,7 +931,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                 // ArrayRef creation to be implemented
                 return Ok(ValueHolder::Array(ArrayRef::new(items))); // Placeholder
             } else if let LiteralExpressionKind::Function(statement) = r#type {
-                let box StatementKindWrapper::IR(IRStatementKind::Function { variable: _, arguments, block }) = statement.clone() else {
+                let box StatementKindWrapper::IR(IRStatementKind::Function { variable: _, arguments, block, .. }) = statement.clone() else {
                     panic!()
                 };
 

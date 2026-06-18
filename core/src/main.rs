@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nlf_core::{analysis::{ScopeBuilder, ScopeId, SymbolIndex}, explorer::{self}, lexer, loader::{Module, run_main}, parser, tests};
+use nlf_core::{analysis::{ScopeBuilder, ScopeId, SymbolIndex}, explorer::{self}, lexer, loader::{Module, run_main}, parser, tests, type_checker};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -32,8 +32,10 @@ fn main() {
 
         let tokens = lexer::lex(code).unwrap();
         let program = parser::parse(tokens).unwrap();
+        
+        let typed_program = type_checker::check_types(program).unwrap();
 
-        explorer::visit_program(&program, &mut scope_builder);
+        explorer::visit_program(&typed_program, &mut scope_builder);
 
         let index = SymbolIndex::from(scope_builder);
 

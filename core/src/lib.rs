@@ -12,3 +12,4 @@ pub mod stdlib;
 pub mod addons;
 pub mod explorer;
 pub mod analysis;
+pub mod type_checker;
