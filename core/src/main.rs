@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use nlf_core::{analysis::{ScopeBuilder, ScopeId, SymbolIndex}, explorer::{self}, lexer, loader::{Module, run_main}, parser, tests, type_checker};
+use nlf_core::{analysis::{TypedScopeBuilder, SymbolIndex}, explorer::{self}, lexer, loader::{Module, run_main}, parser, tests, type_checker};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -24,7 +24,7 @@ fn main() {
     }
 
     if args.visit {
-        let mut scope_builder = ScopeBuilder::new();
+        let mut scope_builder = TypedScopeBuilder::new();
 
         let path = Module::resolve_path("core/src/program/visit.nlf").unwrap();
 

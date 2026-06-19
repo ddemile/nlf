@@ -4,7 +4,7 @@ let mark = "!"
 
 let key = "value"
 
-export fn concat(a, b) {
+export fn concat(a: string, b: string) {
     return a + " " + b + mark
 }
 

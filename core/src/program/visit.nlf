@@ -4,15 +4,25 @@ let a = "string"
 let b = true
 let c: number = 454.5
 
-fn function(my_str: string, e) {
+fn function(my_str: string, e): string {
     let nested = true
 
     my_str
 }
 
-let value = 4
+let add = (a: number, b: number): number => {
+    return a + b
+}
+
+let value = add(8, 2)
+
+let func = function("a", "b")
 
 class Paris {
+    Paris(): number {
+
+    }
+
     fn country(self): string {
         return "France"
     }
@@ -20,6 +30,11 @@ class Paris {
 
 let city = Paris()
 
-print(function, Paris, value, city.country())
+let country = city.country()
+let should_be_unknown = city.Paris()
 
-print(sum([1, 2, 3, 4, 5]))
+print(function, Paris, value, country)
+
+let result = sum([1, 2, 3, 4, 5])
+
+print(result)

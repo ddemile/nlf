@@ -1,0 +1,17 @@
+class Dog {
+    fn age(self): number {
+        return 7
+    }
+}
+
+let dog = Dog()
+
+let age = dog.age()
+
+let double = (arg: number): number => {
+    return arg * 2
+}
+
+let result = double(2)
+
+print(result)

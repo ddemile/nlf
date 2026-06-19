@@ -1,4 +1,4 @@
-export fn sum(arr) {
+export fn sum(arr): number {
     let result = 0
     for i in ..arr.len() {
         result += arr[i]

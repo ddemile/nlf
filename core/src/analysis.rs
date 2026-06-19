@@ -1,4 +1,4 @@
-use crate::{explorer::Visitor, parser::{Argument, Expression, ExpressionKind, Identifier, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, ValueHolder, VariableDescriptor}};
+use crate::{explorer::Visitor, parser::{ASTStatement, ASTStatementKind, Argument, ClassType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
@@ -20,11 +20,8 @@ pub struct Scope {
 pub enum SymbolKind {
     Definition(Type),
     Variable,
-    Function {
-        arguments: Vec<Argument<Identifier, Type>>,
-        return_ty: Type
-    },
-    Class,
+    Function(FunctionType),
+    Class(ClassType),
     Method,
     Constant,
     Import(String)
@@ -35,7 +32,7 @@ pub struct Symbol {
     pub name: String,
     pub kind: SymbolKind,
     pub span: Span,
-    pub scope: ScopeId,
+    pub scope: ScopeId
 }
 
 pub type SymbolId = usize;
@@ -51,8 +48,8 @@ pub struct SymbolIndex {
     pub exports: Vec<Export>
 }
 
-impl From<ScopeBuilder> for SymbolIndex {
-    fn from(builder: ScopeBuilder) -> Self {
+impl From<TypedScopeBuilder> for SymbolIndex {
+    fn from(builder: TypedScopeBuilder) -> Self {
         Self {
             scopes: builder.scopes,
             symbols: builder.symbols,
@@ -156,14 +153,14 @@ impl SymbolIndex {
     }
 }
 
-pub struct ScopeBuilder {
+pub struct TypedScopeBuilder {
     pub scopes: Vec<Scope>,
     pub current: ScopeId,
     pub symbols: Vec<Symbol>,
     pub exports: Vec<Export>
 }
 
-impl ScopeBuilder {
+impl TypedScopeBuilder {
     pub fn new() -> Self {
         Self {
             scopes: vec![Scope {
@@ -196,15 +193,15 @@ impl ScopeBuilder {
     }
 }
 
-impl Visitor for ScopeBuilder {
+impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
     fn visit_statement(&mut self, statement: &TypedStatement) {
         match &statement.kind {
             TypedStatementKind::Function { variable: name, arguments, return_ty, .. } => {
-                self.define(name.value.to_string(), SymbolKind::Function { arguments: arguments.clone(), return_ty: *return_ty }, Span { start: name.start, end: name.end });
+                self.define(name.value.to_string(), SymbolKind::Function(FunctionType { arguments: arguments.clone(), return_ty: return_ty.clone() }), Span { start: name.start, end: name.end });
             }
-            TypedStatementKind::Class { variable: name, .. } => {
-                self.define(name.value.to_string(), SymbolKind::Class, Span { start: name.start, end: name.end });
-            }
+            TypedStatementKind::Class { variable: name, methods, fields, .. } => {
+                self.define(name.value.to_string(), SymbolKind::Class(get_class_type(name, methods, fields)), Span { start: name.start, end: name.end });
+            },
             TypedStatementKind::Import { specifiers, source } => {
                 for specifier in specifiers {
                     self.define(specifier.value.to_string(), SymbolKind::Import(source.value.to_string()), Span { start: specifier.start, end: specifier.end });
@@ -216,16 +213,18 @@ impl Visitor for ScopeBuilder {
                         let function_symbol = Symbol {
                             name: name.value.to_string(),
                             span: Span { start: name.start, end: name.end },
-                            kind: SymbolKind::Function { arguments: arguments.clone(), return_ty: *return_ty },
+                            kind: SymbolKind::Function(FunctionType { arguments: arguments.clone(), return_ty: return_ty.clone() }),
                             scope: self.current
                         };
                         self.exports.push(Export { name: name.value.to_string(), symbol: function_symbol });
                     }
-                    TypedStatementKind::Class { variable: name, .. } => {
+                    TypedStatementKind::Class { variable: name, methods, fields, .. } => {
+                        let class_type = get_class_type(name, methods, fields);
+
                         let class_symbol = Symbol {
                             name: name.value.to_string(),
                             span: Span { start: name.start, end: name.end },
-                            kind: SymbolKind::Class,
+                            kind: SymbolKind::Class(class_type),
                             scope: self.current
                         };
                         self.exports.push(Export { name: name.value.to_string(), symbol: class_symbol });
@@ -249,7 +248,7 @@ impl Visitor for ScopeBuilder {
                 }
 
                 for identifier in get_identifiers(descriptor) {
-                    self.define(identifier.value.to_string(), SymbolKind::Definition(*ty), Span { start: identifier.start, end: identifier.end });
+                    self.define(identifier.value.to_string(), SymbolKind::Definition(ty.clone()), Span { start: identifier.start, end: identifier.end });
                 }
             }
             TypedStatementKind::For { variable, .. } => {
@@ -270,7 +269,7 @@ impl Visitor for ScopeBuilder {
 
     fn visit_argument(&mut self, argument: &Argument<Identifier, Type>) {
         // TODO: fix span
-        self.define(argument.variable.value.to_string(), SymbolKind::Definition(argument.ty), Span { start: argument.variable.start, end: argument.variable.end });
+        self.define(argument.variable.value.to_string(), SymbolKind::Definition(argument.ty.clone()), Span { start: argument.variable.start, end: argument.variable.end });
     }
 
     fn enter_scope(&mut self, span: Span) -> ScopeId {
@@ -297,4 +296,34 @@ impl Visitor for ScopeBuilder {
     fn exit_scope(&mut self, parent: ScopeId) {
         self.current = parent;
     }
+}
+
+fn get_class_type(name: &Identifier, methods: &Vec<TypedStatement>, fields: &Vec<ASTStatement>) -> ClassType {
+    let method_types = methods.iter().map(|method| {
+        let TypedStatementKind::Function { variable, arguments, return_ty, .. } = &method.kind else {
+            unreachable!()
+        };
+
+        (
+            variable.value.clone(),
+            FunctionType {
+                arguments: arguments.clone(),
+                return_ty: return_ty.clone()
+            }
+        )
+    }).collect();
+
+    let field_types = fields.iter().map(|field| {
+        let ASTStatementKind::Field { name, visibility, .. } = &field.kind else {
+            unreachable!()
+        };
+        
+        FieldType {
+            name: name.clone(),
+            visibility: visibility.clone(),
+            ty: Type::Unknown
+        }
+    }).collect();
+
+    ClassType { name: name.value.to_string(), methods: method_types, fields: field_types }
 }

@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
 
-use nlf_core::analysis::{ScopeBuilder, Symbol, SymbolIndex, SymbolKind};
+use nlf_core::analysis::{TypedScopeBuilder, Symbol, SymbolIndex, SymbolKind};
 use nlf_core::lexer::TokenKind;
 use nlf_core::loader::Module;
+use nlf_core::parser::FunctionType;
+use nlf_core::stdlib::FUNCTION_TABLE;
 use nlf_core::{explorer, lexer, parser, stdlib, translator, type_checker};
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
@@ -38,7 +40,7 @@ impl Backend {
         };
 
         let index = {
-            let mut scope_builder = ScopeBuilder::new();
+            let mut scope_builder = TypedScopeBuilder::new();
 
             explorer::visit_program(&typed_program, &mut scope_builder);
 
@@ -151,7 +153,7 @@ impl LanguageServer for Backend {
                 let kind: CompletionItemKind = match symbol.kind {
                     SymbolKind::Definition(_) | SymbolKind::Import(_) => CompletionItemKind::VARIABLE,
                     SymbolKind::Function { .. } => CompletionItemKind::FUNCTION,
-                    SymbolKind::Class => CompletionItemKind::CLASS,
+                    SymbolKind::Class(_) => CompletionItemKind::CLASS,
                     _ => todo!()
                 };
 
@@ -312,17 +314,19 @@ impl LanguageServer for Backend {
                             
                             if let Some(definition) = definition {
                                 get_hover_text(definition, index, source, uri, backend).await
+                            } else if let Some(_) = FUNCTION_TABLE.lock().get(symbol.name.as_str()) {
+                                format!("// Native function\nfn {}(): unknown", symbol.name)
                             } else {
                                 format!("{}", symbol.name)
                             }
                         },
-                        SymbolKind::Function { arguments: args, return_ty } => format!(
+                        SymbolKind::Function(FunctionType { arguments: args, return_ty }) => format!(
                             "fn {}({}): {}",
                             symbol.name,
                             args.iter().map(|arg| format!("{}: {}", arg.variable.value.clone(), arg.ty.to_string())).collect::<Vec<String>>().join(", "),
                             return_ty.to_string()
                         ),
-                        SymbolKind::Class => format!("class {}", symbol.name),
+                        SymbolKind::Class(_) => format!("class {}", symbol.name),
                         SymbolKind::Import(source_path) => {
                             let Some((source_symbol, _)) = backend.resolve_import(&symbol.name, source_path, uri).await else {
                                 return format!("// Failed to resolve {}", symbol.name)

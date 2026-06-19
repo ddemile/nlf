@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell, fmt::{self, Debug}, rc::Rc, str::FromStr
+    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, str::FromStr
 };
 
 use indexmap::IndexMap;
@@ -199,8 +199,19 @@ pub type ASTStatement = Statement<ASTStatementKind>;
 pub type IRStatement = Statement<IRStatementKind>;
 pub type TypedStatement = Statement<TypedStatementKind>;
 
+pub trait SyntaxTree: Clone {
+    type Variable: Serialize + Clone;
+    type Descriptor: Serialize + Clone;
+    type Type: Serialize + Clone;
+    type Argument: Serialize + Clone;
+    
+    fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper;
+
+    fn unwrap_statement_kind_wrapper(statement_kind_wrapper: StatementKindWrapper) -> StatementKind<Self>;
+}
+
 #[derive(Serialize, Debug, Clone)]
-pub enum StatementKind<T, Descriptor, TypeFormat, Arg> {
+pub enum StatementKind<A: SyntaxTree> {
     Expression {
         expression: Expression,
     },
@@ -210,17 +221,17 @@ pub enum StatementKind<T, Descriptor, TypeFormat, Arg> {
         alternate: Option<Box<Statement<Self>>>,
     },
     For {
-        variable: T,
+        variable: A::Variable,
         left: Option<Expression>,
         right: Option<Expression>,
         statements: Rc<[Statement<Self>]>,
     },
     Function {
-        variable: T,
-        arguments: Vec<Arg>,
+        variable: A::Variable,
+        arguments: Vec<A::Argument>,
         block: Block<Statement<Self>>,
         return_type_ref: Option<TypeRef>,
-        return_ty: TypeFormat
+        return_ty: A::Type
     },
     While {
         condition: Expression,
@@ -232,14 +243,14 @@ pub enum StatementKind<T, Descriptor, TypeFormat, Arg> {
     Break,
     Block(Block<Statement<Self>>),
     Import {
-        specifiers: Vec<T>,
+        specifiers: Vec<A::Variable>,
         source: StringLiteral,
     },
     Export {
         declaration: Box<Statement<Self>>,
     },
     Class {
-        variable: T,
+        variable: A::Variable,
         methods: Vec<Statement<Self>>,
         fields: Vec<ASTStatement>,
         body_start: usize,
@@ -256,18 +267,84 @@ pub enum StatementKind<T, Descriptor, TypeFormat, Arg> {
         block: Block<IRStatement>
     },
     VariableDefinition {
-        descriptor: Descriptor,
+        descriptor: A::Descriptor,
         expression: Expression,
         type_ref: Option<TypeRef>,
-        ty: TypeFormat
+        ty: A::Type
     }
 }
 
-pub type ASTStatementKind = StatementKind<Identifier, VariableDescriptor, (), Argument<Identifier, ()>>;
-pub type IRStatementKind = StatementKind<VariableRef, Vec<VariableRef>, (), VariableRef>; 
-pub type TypedStatementKind = StatementKind<Identifier, VariableDescriptor, Type, Argument<Identifier, Type>>; 
+#[derive(Debug, Clone, Serialize)]
+pub struct ASTSyntaxTree;
 
-impl<T, Descriptor, TypeFormat, Arg> StatementKind<T, Descriptor, TypeFormat, Arg> {
+impl SyntaxTree for ASTSyntaxTree {
+    type Argument = Argument<Self::Variable, Self::Type>;
+    type Descriptor = VariableDescriptor;
+    type Type = ();
+    type Variable = Identifier;
+
+    fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper {
+        StatementKindWrapper::AST(statement_kind)
+    }
+
+    fn unwrap_statement_kind_wrapper(statement_kind_wrapper: StatementKindWrapper) -> StatementKind<Self> {
+        let StatementKindWrapper::AST(statement_kind) = statement_kind_wrapper else {
+            unreachable!()
+        };
+
+        statement_kind
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct IRSyntaxTree;
+
+impl SyntaxTree for IRSyntaxTree {
+    type Argument = Self::Variable;
+    type Descriptor = Vec<Self::Variable>;
+    type Type = ();
+    type Variable = VariableRef;
+
+    fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper {
+        StatementKindWrapper::IR(statement_kind)
+    }
+
+    fn unwrap_statement_kind_wrapper(statement_kind_wrapper: StatementKindWrapper) -> StatementKind<Self> {
+        let StatementKindWrapper::IR(statement_kind) = statement_kind_wrapper else {
+            unreachable!()
+        };
+
+        statement_kind
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TypedSyntaxTree;
+
+impl SyntaxTree for TypedSyntaxTree {
+    type Argument = Argument<Identifier, Self::Type>;
+    type Descriptor = VariableDescriptor;
+    type Type = Type;
+    type Variable = Identifier;
+
+    fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper {
+        StatementKindWrapper::Typed(statement_kind)
+    }
+
+    fn unwrap_statement_kind_wrapper(statement_kind_wrapper: StatementKindWrapper) -> StatementKind<Self> {
+        let StatementKindWrapper::Typed(statement_kind) = statement_kind_wrapper else {
+            unreachable!()
+        };
+
+        statement_kind
+    }
+}
+
+pub type ASTStatementKind = StatementKind<ASTSyntaxTree>;
+pub type IRStatementKind = StatementKind<IRSyntaxTree>; 
+pub type TypedStatementKind = StatementKind<TypedSyntaxTree>; 
+
+impl<A: SyntaxTree> StatementKind<A> {
     pub fn into_statement(self, start: usize, end: usize) -> Statement<Self> {
         Statement { kind: self, start, end }
     }
@@ -394,22 +471,59 @@ pub enum TypeRef {
     Named(Identifier)
 }
 
-#[derive(Serialize, Debug, Clone, Copy)]
+#[derive(Serialize, Debug, Clone)]
+pub struct FunctionType {
+    pub arguments: Vec<Argument<Identifier, Type>>,
+    pub return_ty: Type
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct FieldType {
+    pub name: String,
+    pub visibility: Visibility,
+    pub ty: Type
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct ClassType {
+    pub name: String,
+    pub methods: HashMap<String, FunctionType>,
+    pub fields: Vec<FieldType>
+}
+
+#[derive(Serialize, Debug, Clone)]
 pub enum Type {
     String,
     Number,
     Bool,
+    Function(Box<FunctionType>),
+    Class(Box<ClassType>),
+    Instance {
+        class: Box<ClassType>
+    },
     Unknown
 }
 
 impl ToString for Type {
     fn to_string(&self) -> String {
         match self {
-            Self::String => "string",
-            Self::Number => "number",
-            Self::Bool => "bool",
-            Self::Unknown => "unknown"
-        }.to_string()
+            Self::String => "string".to_string(),
+            Self::Number => "number".to_string(),
+            Self::Bool => "bool".to_string(),
+            Self::Function(function_type) => {
+                format!("({}) => {}",
+                    function_type.arguments
+                        .iter()
+                        .map(|argument| format!("{}: {}", argument.variable.value, argument.ty.to_string()))
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                    function_type.return_ty.to_string()
+                )
+            },
+            Self::Class(box ClassType { name, .. }) => format!("class {}", name),
+            Self::Instance { class: box ClassType { name, .. }, .. } => format!("{}", name),
+            Self::Unknown => "unknown".to_string()
+        }
     }
 }
 

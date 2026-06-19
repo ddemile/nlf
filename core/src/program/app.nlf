@@ -18,7 +18,7 @@ export fn launch() {
 
     let count = 50
 
-    window.set_draw_callback((context, delta_time) => {
+    window.set_draw_callback((context, delta_time: number) => {
         let window_size = window.get_size()
 
         let size_vec = [(sin(value) + 1) * window_size[0] / 4, (sin(value) + 1) * window_size[1] / 4]
