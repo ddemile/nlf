@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 use std::fs;
+use std::str::FromStr;
 
 use nlf_core::analysis::{TypedScopeBuilder, Symbol, SymbolIndex, SymbolKind};
 use nlf_core::lexer::TokenKind;
 use nlf_core::loader::Module;
-use nlf_core::parser::FunctionType;
-use nlf_core::stdlib::FUNCTION_TABLE;
+use nlf_core::parser::{FunctionType, RuntimeFunction};
+use nlf_core::stdlib::{CoreModules, FUNCTION_TABLE};
 use nlf_core::{explorer, lexer, parser, stdlib, translator, type_checker};
+use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::RwLock;
-use tower_lsp::jsonrpc::Result;
+use tower_lsp::jsonrpc::{self, Result};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -20,10 +23,13 @@ struct Backend {
 
 const LINE_ENDING_LENGTH: usize = if cfg!(target_os = "windows") { 2 } else { 1 };
 
+#[derive(Debug, Deserialize)]
+struct TextDocumentContentParams {
+    uri: Url,
+}
+
 impl Backend {
-    async fn get_symbol_index(&self, uri: &Url) -> Option<SymbolIndex> {
-        let contents = self.get_file_contents(uri).await;
-        
+    async fn get_symbol_index(&self, contents: String) -> Option<SymbolIndex> {
         let tokens = match lexer::lex(contents) {
             Ok(tokens) => tokens,
             Err(_) => return None
@@ -60,12 +66,18 @@ impl Backend {
         fs::read_to_string(uri.to_file_path().unwrap()).unwrap()
     }
 
-    async fn resolve_import(&self, name: &str, source: &str, uri: &Url) -> Option<(Symbol, Url)> {
-        let resolved_path = Module::resolve_path_internal(source.into(), Some(uri.to_file_path().unwrap().parent().unwrap().to_path_buf())).unwrap();
-        
-        let resolved_uri = Url::from_file_path(resolved_path).ok()?;
+    async fn resolve_import(&self, name: &str, source: &str, uri: &Url) -> Option<(Symbol, Url, String)> {
+        let (uri, contents) = if let Some(core_module) = source.strip_prefix("core:") {
+            (Url::from_str(&format!("nlf://core/{}.nlf", core_module)).ok()?, String::from_utf8(CoreModules::get(&format!("{}.nlf", core_module))?.data.to_vec()).ok()?)
+        } else {
+            let resolved_path = Module::resolve_path_internal(source.into(), Some(uri.to_file_path().unwrap().parent().unwrap().to_path_buf())).unwrap();
+            
+            let resolved_uri = Url::from_file_path(resolved_path).ok()?;
 
-        let imported_index = match self.get_symbol_index(&resolved_uri).await {
+            (resolved_uri.clone(), self.get_file_contents(&resolved_uri).await)
+        };
+
+        let imported_index = match self.get_symbol_index(contents.clone()).await {
             Some(index) => index,
             None => return None
         };
@@ -76,7 +88,50 @@ impl Backend {
             return None
         };
 
-        Some((source_symbol, resolved_uri))
+        Some((source_symbol, uri, contents))
+    }
+
+    async fn handle_content_request(
+        &self,
+        params: TextDocumentContentParams,
+    ) -> jsonrpc::Result<Value> {
+        let uri = params.uri;
+
+        let Some(host) = uri.host_str() else {
+            return Err(jsonrpc::Error {
+                code: jsonrpc::ErrorCode::InvalidParams,
+                message: format!("Failed to get url host").into(),
+                data: None,
+            })
+        };
+
+        if host != "core" {
+            return Err(jsonrpc::Error {
+                code: jsonrpc::ErrorCode::InvalidParams,
+                message: format!("{} host is not allowed", host).into(),
+                data: None,
+            })
+        }
+        
+        let module_name = uri.path().trim_start_matches("/");
+
+        let Some(file) = CoreModules::get(module_name) else {
+            return Err(jsonrpc::Error {
+                code: jsonrpc::ErrorCode::InvalidParams,
+                message: format!("Core file not found: {}", module_name).into(),
+                data: None,
+            })
+        };
+
+        let contents = String::from_utf8(file.data.to_vec()).or_else(|_| {
+            Err(jsonrpc::Error {
+                code: jsonrpc::ErrorCode::InvalidParams,
+                message: format!("Failed to convert file data to text").into(),
+                data: None,
+            })
+        })?;
+
+        Ok(serde_json::json!({ "text": contents }))
     }
 }
 
@@ -96,7 +151,10 @@ impl LanguageServer for Backend {
                 // document_highlight_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
-            server_info: None,
+            server_info: Some(ServerInfo {
+                name: "nlf".to_string(),
+                version: None,
+            })
         })
     }
 
@@ -129,7 +187,7 @@ impl LanguageServer for Backend {
             let position = params.text_document_position.position;
             let source = line_to_source(&contents, position);
 
-            let index = match self.get_symbol_index(&uri).await {
+            let index = match self.get_symbol_index(contents).await {
                 Some(index) => index,
                 None => return Ok(None)
             };
@@ -295,7 +353,7 @@ impl LanguageServer for Backend {
 
         let contents = self.get_file_contents(&uri).await;
 
-        let index = match self.get_symbol_index(&uri).await {
+        let index = match self.get_symbol_index(contents.clone()).await {
             Some(index) => index,
             None => return Ok(None)
         };
@@ -328,7 +386,7 @@ impl LanguageServer for Backend {
                         ),
                         SymbolKind::Class(_) => format!("class {}", symbol.name),
                         SymbolKind::Import(source_path) => {
-                            let Some((source_symbol, _)) = backend.resolve_import(&symbol.name, source_path, uri).await else {
+                            let Some((source_symbol, _, _)) = backend.resolve_import(&symbol.name, source_path, uri).await else {
                                 return format!("// Failed to resolve {}", symbol.name)
                             };
 
@@ -358,7 +416,7 @@ impl LanguageServer for Backend {
 
         let contents = self.get_file_contents(&uri).await;
 
-        let index = match self.get_symbol_index(&uri).await {
+        let index = match self.get_symbol_index(contents.clone()).await {
             Some(index) => index,
             None => return Ok(None)
         };
@@ -382,19 +440,19 @@ impl LanguageServer for Backend {
         };
 
         let mut uri = uri;
+        let mut contents = contents;
 
         if let SymbolKind::Import(source_path) = &source_symbol.kind {
             let resolved_symbol = self.resolve_import(&symbol.name, source_path, &uri).await;
 
-            let Some((resolved_symbol, resolved_uri)) = resolved_symbol else {
+            let Some((resolved_symbol, resolved_uri, resolved_contents)) = resolved_symbol else {
                 return Ok(None)
             };
 
             uri = resolved_uri;
+            contents = resolved_contents;
             source_symbol = resolved_symbol.clone();
         }
-
-        let contents = self.get_file_contents(&uri).await;
 
         let location = Location {
             uri,
@@ -403,40 +461,6 @@ impl LanguageServer for Backend {
 
         Ok(Some(GotoDefinitionResponse::Scalar(location)))
     }
-
-    // async fn document_highlight(
-    //     &self,
-    //     params: DocumentHighlightParams,
-    // ) -> Result<Option<Vec<DocumentHighlight>>> {
-    //    let uri = params.text_document_position_params.text_document.uri;
-    //     let position = params.text_document_position_params.position;
-
-    //     let docs = self.documents.read().await;
-
-    //     let contents = docs.get(&uri).unwrap().to_string();
-
-    //     let index = match self.get_symbol_index(uri).await {
-    //         Some(index) => index,
-    //         None => return Ok(None)
-    //     };
-
-    //     let source = line_to_source(&contents, position);
-
-    //     let symbol = index.symbol_at(source);
-
-    //     if let Some(symbol) = symbol {
-    //         let mut highlights = vec![];
-
-    //         highlights.push(DocumentHighlight {
-    //             range: Range { start: source_to_line(&contents, symbol.span.start), end: source_to_line(&contents, symbol.span.end) },
-    //             kind: Some(DocumentHighlightKind::TEXT),
-    //         });
-            
-    //         return Ok(Some(highlights))
-    //     }
-
-    //     Ok(None)
-    // }
 }
 
 fn source_to_line(contents: &String, position: usize) -> Position {
@@ -477,6 +501,8 @@ async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) = LspService::new(|client| Backend { client, documents: RwLock::new(HashMap::new()) });
+    let (service, socket) = LspService::build(|client| Backend { client, documents: RwLock::new(HashMap::new()) })
+        .custom_method("textDocument/content", Backend::handle_content_request)
+        .finish();
     Server::new(stdin, stdout, socket).serve(service).await;
 }

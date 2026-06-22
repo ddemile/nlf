@@ -1,17 +1,17 @@
 let fs = binding("fs")
 
-export fn read(path) {
+export fn read(path: string): string {
     return fs.read(path)
 }
 
-export fn write(path) {
-    return fs.write(path)
+export fn write(path: string) {
+    fs.write(path)
 }
 
-export fn rm(path) {
-    return fs.rm(path)
+export fn rm(path: string) {
+    fs.rm(path)
 }
 
-export fn rmdir(path) {
-    return fs.rmdir(path)
+export fn rmdir(path: string) {
+    fs.rmdir(path)
 }

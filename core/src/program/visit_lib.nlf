@@ -5,3 +5,13 @@ export fn sum(arr): number {
     }
     return result
 }
+
+export class Madrid {
+    Madrid() {
+
+    }
+
+    fn country(self): string {
+        return "Spain"
+    }
+}

@@ -1,53 +1,53 @@
 let math = binding("math")
 
-export fn sqrt(x) {
+export fn sqrt(x: number): number {
     return math.sqrt(x)
 }
 
-export fn pow(a, b) {
+export fn pow(a: number, b: number) {
     return math.pow(a, b)
 }
 
-export fn abs(x) {
+export fn abs(x: number): number {
     return math.abs(x)
 }
 
-export fn sign(x) {
+export fn sign(x: number): number {
     return math.sign(x)
 }
 
-export fn sin(x) {
+export fn sin(x: number): number {
     return math.sin(x)
 }
 
-export fn cos(x) {
+export fn cos(x: number): number {
     return math.cos(x)
 }
 
-export fn tan(x) {
+export fn tan(x: number): number {
     return math.tan(x)
 }
 
-export fn round(x) {
+export fn round(x: number): number {
     return math.round(x)
 }
 
-export fn floor(x) {
+export fn floor(x: number): number {
     return math.floor(x)
 }
 
-export fn ceil(x) {
+export fn ceil(x: number): number {
     return math.ceil(x)
 }
 
-export fn pi() {
+export fn pi(): number {
     return math.pi()
 }
 
-export fn min(a, b) {
+export fn min(a: number, b: number): number {
     return math.min(a, b)
 }
 
-export fn max(a, b) {
+export fn max(a: number, b: number): number {
     return math.max(a, b)
 }

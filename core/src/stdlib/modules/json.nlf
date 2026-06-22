@@ -1,9 +1,9 @@
 let json = binding("json")
 
-export fn parse(text) {
+export fn parse(text: string): any {
     return json.parse(text)
 }
 
-export fn stringify(value) {
+export fn stringify(value: any): string {
     return json.stringify(value)
 }

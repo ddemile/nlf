@@ -501,7 +501,8 @@ pub enum Type {
     Instance {
         class: Box<ClassType>
     },
-    Unknown
+    Unknown,
+    Any
 }
 
 impl ToString for Type {
@@ -522,7 +523,8 @@ impl ToString for Type {
             },
             Self::Class(box ClassType { name, .. }) => format!("class {}", name),
             Self::Instance { class: box ClassType { name, .. }, .. } => format!("{}", name),
-            Self::Unknown => "unknown".to_string()
+            Self::Unknown => "unknown".to_string(),
+            Self::Any => "any".to_string()
         }
     }
 }
@@ -536,6 +538,7 @@ impl FromStr for Type {
             "number" => Ok(Type::Number),
             "bool" => Ok(Type::Bool),
             "unknown" => Ok(Type::Unknown),
+            "any" => Ok(Type::Any),
             _ => Err(LanguageError::from(RuntimeError::Custom("Failed to convert str to Type".to_string())))
         }
     }

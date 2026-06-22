@@ -124,12 +124,6 @@ impl Visitor<TypedSyntaxTree> for TypedTreeSyntaxTransformer {
 
         statement
     }
-
-    fn transform_expression(&mut self, expression: &Expression) -> Expression {
-        let expression = expression.clone();
-
-        expression
-    }
 }
 
 pub fn check_types(program: ASTProgram) -> LanguageResult<TypedProgram> {

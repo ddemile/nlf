@@ -1,4 +1,4 @@
-import { sum } from "./visit_lib.nlf"
+import { sum, Madrid } from "./visit_lib.nlf"
 
 let a = "string"
 let b = true
@@ -28,10 +28,11 @@ class Paris {
     }
 }
 
-let city = Paris()
+let paris = Paris()
+let madrid = Madrid()
 
-let country = city.country()
-let should_be_unknown = city.Paris()
+let country = paris.country()
+let should_be_string = madrid.country()
 
 print(function, Paris, value, country)
 

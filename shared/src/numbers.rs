@@ -445,14 +445,7 @@ impl fmt::Display for DynamicNumber {
 
 impl PartialEq for DynamicNumber {
     fn eq(&self, other: &Self) -> bool {
-        let mut a = *self;
-        let mut b = *other;
-
-        if a.inner.get_weight() > b.inner.get_weight() {
-            b = other.convert_to_type_of(&a);
-        } else if b.inner.get_weight() > a.inner.get_weight() {
-            a = self.convert_to_type_of(&b);
-        }
+        let (a, b) = align_types(*self, *other);
 
         a.inner == b.inner
     }
@@ -468,14 +461,7 @@ impl PartialOrd for DynamicNumber {
 
 impl Ord for DynamicNumber {
     fn cmp(&self, other: &Self) -> Ordering {
-        let mut a = *self;
-        let mut b = *other;
-
-        if a.inner.get_weight() > b.inner.get_weight() {
-            b = other.convert_to_type_of(&a);
-        } else if b.inner.get_weight() > a.inner.get_weight() {
-            a = self.convert_to_type_of(&b);
-        }
+        let (a, b) = align_types(*self, *other);
 
         a.inner.cmp(&b.inner)
     }
