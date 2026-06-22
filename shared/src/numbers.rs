@@ -21,6 +21,7 @@ pub enum NumberHolder {
 }
 
 impl NumberHolder {
+    #[inline(always)]
     pub fn get_weight(&self) -> u8 {
         match self {
             NumberHolder::Unsigned8(_) => 0,
@@ -202,28 +203,8 @@ pub struct DynamicNumber {
     inner: NumberHolder,
 }
 
-macro_rules! try_convert_from {
-    ($type:ident, $this:expr, $other:expr, $converted:expr) => {
-        match (&$this, $other) {
-            (NumberHolder::$type(v), NumberHolder::Integer8(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Integer8(*v as i8) }),
-            (NumberHolder::$type(v), NumberHolder::Integer16(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Integer16(*v as i16) }),
-            (NumberHolder::$type(v), NumberHolder::Integer32(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Integer32(*v as i32) }),
-            (NumberHolder::$type(v), NumberHolder::Integer64(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Integer64(*v as i64) }),
-            (NumberHolder::$type(v), NumberHolder::Integer128(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Integer128(*v as i128) }),
-            (NumberHolder::$type(v), NumberHolder::Unsigned8(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Unsigned8(*v as u8) }),
-            (NumberHolder::$type(v), NumberHolder::Unsigned16(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Unsigned16(*v as u16) }),
-            (NumberHolder::$type(v), NumberHolder::Unsigned32(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Unsigned32(*v as u32) }),
-            (NumberHolder::$type(v), NumberHolder::Unsigned64(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Unsigned64(*v as u64) }),
-            (NumberHolder::$type(v), NumberHolder::Unsigned128(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Unsigned128(*v as u128) }),
-            (NumberHolder::$type(v), NumberHolder::Float32(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Float32(*v as f32) }),
-            (NumberHolder::$type(v), NumberHolder::Float64(_)) => $converted = Some(DynamicNumber { inner: NumberHolder::Float64(*v as f64) }),
-            _ => ()
-        }
-    };
-}
-
 impl DynamicNumber {
-    #[inline]
+    #[inline(always)]
     pub fn new(inner: NumberHolder) -> Self {
         Self {
             inner
@@ -231,21 +212,39 @@ impl DynamicNumber {
     }
 
     pub fn convert_to_type_of(&self, other: &DynamicNumber) -> DynamicNumber {
-        let mut converted_number: Option<DynamicNumber> = None;
-        try_convert_from!(Integer8, self.inner, &other.inner, converted_number);
-        try_convert_from!(Integer16, self.inner, &other.inner, converted_number);
-        try_convert_from!(Integer32, self.inner, &other.inner, converted_number);
-        try_convert_from!(Integer64, self.inner, &other.inner, converted_number);
-        try_convert_from!(Integer128, self.inner, &other.inner, converted_number);
-        try_convert_from!(Unsigned8, self.inner, &other.inner, converted_number);
-        try_convert_from!(Unsigned16, self.inner, &other.inner, converted_number);
-        try_convert_from!(Unsigned32, self.inner, &other.inner, converted_number);
-        try_convert_from!(Unsigned64, self.inner, &other.inner, converted_number);
-        try_convert_from!(Unsigned128, self.inner, &other.inner, converted_number);
-        try_convert_from!(Float32, self.inner, &other.inner, converted_number);
-        try_convert_from!(Float64, self.inner, &other.inner, converted_number);
+        macro_rules! cast_to {
+            ($v:expr) => {
+                match other.inner {
+                    NumberHolder::Unsigned8(_) => DynamicNumber::new(NumberHolder::Unsigned8($v as u8)),
+                    NumberHolder::Unsigned16(_) => DynamicNumber::new(NumberHolder::Unsigned16($v as u16)),
+                    NumberHolder::Unsigned32(_) => DynamicNumber::new(NumberHolder::Unsigned32($v as u32)),
+                    NumberHolder::Unsigned64(_) => DynamicNumber::new(NumberHolder::Unsigned64($v as u64)),
+                    NumberHolder::Unsigned128(_) => DynamicNumber::new(NumberHolder::Unsigned128($v as u128)),
+                    NumberHolder::Integer8(_) => DynamicNumber::new(NumberHolder::Integer8($v as i8)),
+                    NumberHolder::Integer16(_) => DynamicNumber::new(NumberHolder::Integer16($v as i16)),
+                    NumberHolder::Integer32(_) => DynamicNumber::new(NumberHolder::Integer32($v as i32)),
+                    NumberHolder::Integer64(_) => DynamicNumber::new(NumberHolder::Integer64($v as i64)),
+                    NumberHolder::Integer128(_) => DynamicNumber::new(NumberHolder::Integer128($v as i128)),
+                    NumberHolder::Float32(_) => DynamicNumber::new(NumberHolder::Float32($v as f32)),
+                    NumberHolder::Float64(_) => DynamicNumber::new(NumberHolder::Float64($v as f64))
+                }
+            };
+        }
 
-        converted_number.unwrap()
+        match self.inner {
+            NumberHolder::Unsigned8(v) => cast_to!(v),
+            NumberHolder::Unsigned16(v) => cast_to!(v),
+            NumberHolder::Unsigned32(v) => cast_to!(v),
+            NumberHolder::Unsigned64(v) => cast_to!(v),
+            NumberHolder::Unsigned128(v) => cast_to!(v),
+            NumberHolder::Integer8(v) => cast_to!(v),
+            NumberHolder::Integer16(v) => cast_to!(v),
+            NumberHolder::Integer32(v) => cast_to!(v),
+            NumberHolder::Integer64(v) => cast_to!(v),
+            NumberHolder::Integer128(v) => cast_to!(v),
+            NumberHolder::Float32(v) => cast_to!(v),
+            NumberHolder::Float64(v) => cast_to!(v)
+        }
     }
 
     pub fn get_str_repr(&self) -> String {
@@ -260,19 +259,21 @@ fn remove_numbers(s: &str) -> String {
 fn get_digits(s: &str) -> String {
     s.chars().filter(|c| c.is_ascii_digit()).collect()
 }
+
+#[inline(always)]
+fn align_types(a: DynamicNumber, b: DynamicNumber) -> (DynamicNumber, DynamicNumber) {
+    match a.inner.get_weight().cmp(&b.inner.get_weight()) {
+        Ordering::Greater => (a, b.convert_to_type_of(&a)),
+        Ordering::Less    => (a.convert_to_type_of(&b), b),
+        Ordering::Equal   => (a, b),
+    }
+}
  
 impl ops::Add for DynamicNumber {
     type Output = DynamicNumber;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let mut a = self;
-        let mut b = rhs;
-
-        if a.inner.get_weight() > b.inner.get_weight() {
-            b = b.convert_to_type_of(&a);
-        } else if b.inner.get_weight() > a.inner.get_weight() {
-            a = a.convert_to_type_of(&b);
-        }
+        let (mut a, mut b) = align_types(self, rhs);
 
         let mut result = a.inner + b.inner;
         if result.is_none() {
@@ -302,14 +303,7 @@ impl ops::Sub for DynamicNumber {
     type Output = DynamicNumber;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        let mut a = self;
-        let mut b = rhs;
-
-        if a.inner.get_weight() > b.inner.get_weight() {
-            b = b.convert_to_type_of(&a);
-        } else if b.inner.get_weight() > a.inner.get_weight() {
-            a = a.convert_to_type_of(&b);
-        }
+        let (mut a, mut b) = align_types(self, rhs);
 
         let mut result = a.inner - b.inner;
         if result.is_none() {
@@ -354,14 +348,7 @@ impl ops::Mul for DynamicNumber {
     type Output = DynamicNumber;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        let mut a = self;
-        let mut b = rhs;
-
-        if a.inner.get_weight() > b.inner.get_weight() {
-            b = b.convert_to_type_of(&a);
-        } else if b.inner.get_weight() > a.inner.get_weight() {
-            a = a.convert_to_type_of(&b);
-        }
+        let (mut a, mut b) = align_types(self, rhs);
 
         let mut result = a.inner * b.inner;
         while result.is_none() {
@@ -391,14 +378,7 @@ impl ops::Div for DynamicNumber {
     type Output = DynamicNumber;
 
     fn div(self, rhs: Self) -> Self::Output {
-        let mut a = self;
-        let mut b = rhs;
-
-        if a.inner.get_weight() > b.inner.get_weight() {
-            b = b.convert_to_type_of(&a);
-        } else if b.inner.get_weight() > a.inner.get_weight() {
-            a = a.convert_to_type_of(&b);
-        }
+        let (mut a, mut b) = align_types(self, rhs);
 
         if a.inner.as_ref() != "Float32" && a.inner.as_ref() != "Float64"  {
             let new_type = DynamicNumber::new(NumberHolder::Float32(0.0));
@@ -434,14 +414,7 @@ impl ops::Rem for DynamicNumber {
     type Output = DynamicNumber;
 
     fn rem(self, rhs: Self) -> Self::Output {
-        let mut a = self;
-        let mut b = rhs;
-
-        if a.inner.get_weight() > b.inner.get_weight() {
-            b = b.convert_to_type_of(&a);
-        } else if b.inner.get_weight() > a.inner.get_weight() {
-            a = a.convert_to_type_of(&b);
-        }
+        let (a, b) = align_types(self, rhs);
 
         let result = a.inner % b.inner;
 

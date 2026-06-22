@@ -399,57 +399,61 @@ impl Environment {
         value: ValueHolder,
         define: bool,
     ) -> LanguageResult<()> {
-        if !define {
-            // Traverse up the parent chain to find the correct scope
-            let mut current_scope = self.scopes.last().unwrap().clone();
-            for _ in 0..var_ref.depth {
-                let next_scope = {
-                    let scope = current_scope.borrow();
-                    match &scope.kind {
-                        ScopeKind::Call(inner_scope) => inner_scope.clone(),
-                        _ => scope.parent.clone().ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(format!(
-                            "Parent scope not found for slot {} at depth {}",
-                            var_ref.slot, var_ref.depth
-                        ))))?
-                    }
-                };
+        if define {
+            let mut scope = self.scopes
+                .last()
+                .ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(
+                    format!("No active scope for slot {}", var_ref.slot)
+                )))?
+                .borrow_mut();
 
-                current_scope = next_scope;
-            }
-            current_scope.borrow_mut()
-                .slots
-                .get_mut(var_ref.slot)
-                .map(|v| *v = value)
-                .ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(format!(
-                    "Slot {} at depth {} not found",
-                    var_ref.slot, var_ref.depth
-                ))))?;
-            return Ok(());
-        } else if let Some(mut scope) = self.scopes.last_mut().map(|scope| scope.borrow_mut()) {
             if scope.slots.len() <= var_ref.slot {
                 scope.slots.resize(var_ref.slot + 1, ValueHolder::Void);
             }
             scope.slots[var_ref.slot] = value;
             return Ok(());
         }
-        unreachable!()
+
+        // Traverse up the parent chain to find the correct scope
+        let target_scope = (0..var_ref.depth).try_fold(
+            self.scopes.last()
+                .ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(
+                    format!("No active scope for slot {} at depth {}", var_ref.slot, var_ref.depth)
+                )))?
+                .clone(),
+            |scope, _| {
+                let borrowed = scope.borrow();
+                match &borrowed.kind {
+                    ScopeKind::Call(inner_scope) => Some(inner_scope.clone()),
+                    _ => borrowed.parent.clone(),
+                }
+                .ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(
+                    format!("Parent scope not found for slot {} at depth {}", var_ref.slot, var_ref.depth)
+                )))
+            },
+        )?;
+
+        target_scope.borrow_mut()
+            .slots
+            .get_mut(var_ref.slot)
+            .map(|v| *v = value)
+            .ok_or_else(|| LanguageError::from(RuntimeError::VariableNotFound(
+                format!("Slot {} at depth {} not found", var_ref.slot, var_ref.depth)
+            )))
     }
 
     pub fn get(&self, var_ref: &VariableRef) -> Option<ValueHolder> {
-        // Traverse up the parent chain to find the correct scope
-        let mut current_scope = self.scopes.last().unwrap().clone();
-        for _ in 0..var_ref.depth {
-            let next_scope = {
-                let scope = current_scope.borrow();
-                match &scope.kind {
-                    ScopeKind::Call(inner_scope) => inner_scope.clone(),
-                    _ => scope.parent.clone()?
-                }
-            };
+        let current_scope = self.scopes.last()?;
 
-            current_scope = next_scope;
-        }
-        current_scope.borrow().slots.get(var_ref.slot).cloned()
+        let target_scope = (0..var_ref.depth).try_fold(current_scope.clone(), |scope, _| {
+            let borrowed = scope.borrow();
+            match &borrowed.kind {
+                ScopeKind::Call(inner_scope) => Some(inner_scope.clone()),
+                _ => borrowed.parent.clone(),
+            }
+        })?;
+
+        target_scope.borrow().slots.get(var_ref.slot).cloned()
     }
 }
 

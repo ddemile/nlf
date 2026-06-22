@@ -19,7 +19,7 @@ let value = add(8, 2)
 let func = function("a", "b")
 
 class Paris {
-    Paris(): number {
+    Paris() {
 
     }
 

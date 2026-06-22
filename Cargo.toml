@@ -8,5 +8,6 @@ members = [
     "addon-maker"
 ]
 
-[profile.release]
+[profile.profiling]
+inherits = "release"
 debug = true
