@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 
-use nlf_core::analysis::{self, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder};
+use nlf_core::analysis::{self, CompletionResolver, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder};
+use nlf_core::interpreter::prototypes::{self, BuiltInPrototype};
 use nlf_core::lexer::TokenKind;
-use nlf_core::loader::{self, Module, ModuleKind};
-use nlf_core::parser::{FunctionType, RuntimeFunction};
+use nlf_core::loader::{self, ModuleKind};
+use nlf_core::parser::{FunctionType, Type};
 use nlf_core::stdlib::{CoreModules, FUNCTION_TABLE};
 use nlf_core::{explorer, lexer, parser, stdlib, translator, type_checker};
 use serde::Deserialize;
@@ -48,23 +50,16 @@ impl Backend {
             ModuleKind::Standard => Url::from_file_path(module_source.path.clone()).ok()?.clone(),
             ModuleKind::Library => todo!()
         };
-
+        
         let contents = if self.documents.read().await.contains_key(&uri) {
             self.get_file_contents(&uri).await
         } else {
             loader::read_module(&module_source).ok()?
         };
 
-        let imported_index = match analysis::get_symbol_index(uri.to_file_path().ok()?, contents.clone()) {
-            Some(index) => index,
-            None => return None
-        };
+        let imported_index = analysis::get_symbol_index(module_source.path.into(), contents.clone())?;
 
-        let source_symbol = imported_index.find_export(name);
-
-        let Some(source_symbol) = source_symbol else {
-            return None
-        };
+        let source_symbol = imported_index.find_export(name)?;
 
         Some((source_symbol, uri, contents))
     }
@@ -159,17 +154,107 @@ impl LanguageServer for Backend {
         let scope_id;
 
         let items = {
+            let mut completion_resolver = CompletionResolver::default();
+
             let uri = params.text_document_position.text_document.uri;
 
             let contents = self.get_file_contents(&uri).await;
+
             let position = params.text_document_position.position;
             let source = line_to_source(&contents, position);
 
-            let index = match analysis::get_symbol_index(uri.to_file_path().unwrap(), contents) {
-                Some(index) => index,
-                None => return Ok(None)
+            let tokens = match lexer::lex(contents) {
+                Ok(tokens) => tokens,
+                Err(_) => return Ok(None)
             };
-            
+
+            let index = {
+                let program = match parser::lax_parse(tokens) {
+                    Ok(program) => program,
+                    Err(_) => return Ok(None)
+                };
+                
+                let typed_program = match type_checker::check_types(program, uri.to_file_path().unwrap()) {
+                    Ok(typed_program) => typed_program,
+                    Err(_) => return Ok(None)
+                };
+
+                explorer::visit_program(&typed_program, &mut completion_resolver);
+
+                let mut scope_builder = TypedScopeBuilder::new();
+
+                explorer::visit_program(&typed_program, &mut scope_builder);
+
+                let index = SymbolIndex::from(scope_builder);
+
+                index
+            };
+
+            fn get_completion<'a>(backend: &'a Backend, definition: &'a Symbol, uri: &'a Url) -> Pin<Box<dyn Future<Output = CompletionResponse> + Send + 'a>> {
+                Box::pin(async move {
+                    let mut items = vec![];
+                    match &definition.kind {
+                        SymbolKind::Definition(ty) => {
+                            fn get_prototype_completions(prototype: &BuiltInPrototype) -> CompletionResponse {
+                                CompletionResponse::Array(prototype.methods.iter().map(|(name, _)| {
+                                    CompletionItem {
+                                        label: name.clone(),
+                                        kind: Some(CompletionItemKind::METHOD),
+                                        ..Default::default()
+                                    }
+                                }).collect())
+                            }
+
+                            match ty {
+                                Type::Instance { class: class_type } => {
+                                    for (method_name, _) in class_type.methods.iter() {
+                                        if *method_name == class_type.name {
+                                            continue;
+                                        }
+                                        
+                                        items.push(CompletionItem {
+                                            label: method_name.clone(),
+                                            kind: Some(CompletionItemKind::METHOD),
+                                            ..Default::default()
+                                        });
+                                    }
+
+                                    for field in class_type.fields.iter() {
+                                        items.push(CompletionItem {
+                                            label: field.name.clone(),
+                                            kind: Some(CompletionItemKind::FIELD),
+                                            ..Default::default()
+                                        });
+                                    }
+                                }
+                                Type::String => return get_prototype_completions(&prototypes::STRING_PROTOTYPE),
+                                Type::Number => return get_prototype_completions(&prototypes::NUMBER_PROTOTYPE),
+                                _ => {}
+                            }
+                        }
+                        SymbolKind::Import(source_path) => {
+                            let Some((source_symbol, _, _)) = backend.resolve_import(&definition.name, source_path, &uri).await else {
+                                panic!()
+                            };
+
+                            return get_completion(backend, &source_symbol, uri).await
+                        }
+                        _ => {}
+                    }
+                    CompletionResponse::Array(items)
+                })
+            }
+
+            for candidate in completion_resolver.candidates {
+                if source >= candidate.completion_span.start && source <= candidate.completion_span.end {
+                    if let Some(Symbol { name, kind: SymbolKind::Variable, .. }) = index.symbol_at(candidate.object_span.start) {
+                        if let Some(definition) = index.find_definition(name, candidate.object_span.start) {
+                            return Ok(Some(get_completion(&self, definition, &uri).await))
+                        }
+                    }
+                }
+            }
+
             let scope = index.scope_at_position(source);
             scope_id = scope;
             let symbols = index.visible_symbols(scope);

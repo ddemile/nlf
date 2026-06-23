@@ -1193,7 +1193,7 @@ fn eval_call(
         return Ok(class);
     }
 
-    panic!("Tried to call invalid function expression: {:?}", *callee);
+    Err(LanguageError::with_source(RuntimeError::InvalidType("Tried to call invalid function expression".to_string()), callee.start, callee.end))
 }
 
 pub fn eval_runtime_function(function: RuntimeFunction, evaluated_args: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {

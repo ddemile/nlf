@@ -1,8 +1,12 @@
+import { sign } from "core:math"
+
 class Dog {
     fn age(self): number {
         return 7
     }
 }
+
+let d = sign("test")
 
 let dog = Dog()
 

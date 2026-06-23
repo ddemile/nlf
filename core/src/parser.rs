@@ -8,14 +8,16 @@ pub use types::*;
 
 pub struct Parser {
     pub cursor: usize,
-    pub tokens: Vec<Token>
+    pub tokens: Vec<Token>,
+    pub strict: bool
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<Token>, strict: bool) -> Self {
         Self {
             cursor: 0,
-            tokens
+            tokens,
+            strict
         }
     }
 
@@ -275,7 +277,19 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<ASTStatement> {
 }
 
 pub fn parse(tokens: Vec<Token>) -> LanguageResult<Program<ASTStatement>> {
-    let mut parser = Parser::new(tokens);
+    let mut parser = Parser::new(tokens, true);
+
+    let mut statements = vec![];
+
+    while let Some(statement) = match_statement(&mut parser)? {
+        statements.push(statement);
+    }
+
+    Ok(Program { body: statements.into() })
+}
+
+pub fn lax_parse(tokens: Vec<Token>) -> LanguageResult<Program<ASTStatement>> {
+    let mut parser = Parser::new(tokens, false);
 
     let mut statements = vec![];
 
@@ -516,7 +530,19 @@ fn match_class(parser: &mut Parser) -> LanguageResult<ASTStatement> {
             methods.push(match_function(parser)?);
         } else if let Ok(_) = match_token!(parser, TokenKind::Identifier { .. }) {
             parser.cursor -= 1;
-            methods.push(match_method(parser)?);
+
+            let method = match_method(parser)?;
+
+            let ASTStatement { kind: ASTStatementKind::Function { return_type_ref, .. }, .. } = &method else {
+                unreachable!()
+            };
+
+            if let Some(return_type_ref) = return_type_ref {
+                let span = return_type_ref.get_span();
+                return Err(LanguageError::with_source(ParserError::InvalidUsage("Constructor cannot have a return type annotation".to_string()), span.start, span.end))
+            }
+
+            methods.push(method);
         } else {
             let (start, visibility) = match expect_token!(parser, TokenKind::Keyword(KeywordKind::Public | KeywordKind::Protected | KeywordKind::Private)) {
                 Token { kind: TokenKind::Keyword(keyword), start, .. } => (start, Visibility::from(&TokenKind::Keyword(keyword))),

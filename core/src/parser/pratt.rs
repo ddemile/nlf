@@ -121,7 +121,9 @@ pub fn parse_expression(parser: &mut Parser, min_bp: u8) -> LanguageResult<Expre
             continue;
         }
 
-        if matches!(parser.peek(), Some(Token { kind: TokenKind::Period | TokenKind::OpeningSquareBracket, .. })) {
+        let separation_token = parser.peek().cloned();
+
+        if matches!(separation_token, Some(Token { kind: TokenKind::Period | TokenKind::OpeningSquareBracket, .. })) {
             let bracket_notation = matches!(parser.peek(), Some(Token { kind: TokenKind::OpeningSquareBracket, .. }));
 
             let member_bp = 9;
@@ -131,14 +133,24 @@ pub fn parse_expression(parser: &mut Parser, min_bp: u8) -> LanguageResult<Expre
             }
 
             parser.advance();
-            
-            let token = parser.peek().ok_or_else(|| {
-                LanguageError::with_source(
-                    ParserError::UnexpectedEndOfInput,
-                    lhs.start,
-                    parser.tokens.last().map(|t| t.end).unwrap_or(lhs.start),
-                )
-            })?.clone();
+
+            let token = match parser.peek().cloned() {
+                Some(token) => token,
+                None => {
+                    if parser.strict {
+                        return Err(LanguageError::with_source(
+                            ParserError::UnexpectedEndOfInput,
+                            lhs.start,
+                            parser.tokens.last().map(|t| t.end).unwrap_or(lhs.start),
+                        ))
+                    }
+
+                    let rhs = ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String("<lax>".to_string()) }.into_expression(separation_token.as_ref().unwrap().end, separation_token.as_ref().unwrap().end);
+                    let start = lhs.start;
+                    let end = rhs.end;
+                    return Ok(ExpressionKind::Member { object: Box::new(lhs), property: Box::new(rhs) }.into_expression(start, end))
+                }
+            };
 
             let property = if bracket_notation {
                 parse_expression(parser, 0)?
@@ -146,17 +158,30 @@ pub fn parse_expression(parser: &mut Parser, min_bp: u8) -> LanguageResult<Expre
                 let name = match &token.kind {
                     TokenKind::Identifier { value } => value.clone(),
                     _ => {
-                        return Err(LanguageError::with_source(
-                            ParserError::UnexpectedToken("identifier after '.'".into()),
-                            token.start,
-                            token.end,
-                        ))
+                        if parser.strict {
+                            return Err(LanguageError::with_source(
+                                ParserError::UnexpectedToken("identifier after '.'".into()),
+                                token.start,
+                                token.end,
+                            ))
+                        }
+
+                        let rhs = ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String("<lax>".to_string()) }.into_expression(separation_token.unwrap().end, token.start);
+                        let start = lhs.start;
+                        let end = rhs.end;
+                        return Ok(ExpressionKind::Member { object: Box::new(lhs), property: Box::new(rhs) }.into_expression(start, end))
                     }
                 };
 
                 parser.advance();
+
+                let start = if parser.strict {
+                    token.start
+                } else {
+                    separation_token.unwrap().end
+                };
                 
-                ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(name) }.into_expression(token.start, token.end)
+                ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(name) }.into_expression(start, token.end)
             };
 
             if bracket_notation {

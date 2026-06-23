@@ -1,5 +1,5 @@
 import { sin, cos } from "core:math"
-import { App } from "./papangue.nlf"
+import { App, RendererContext } from "./papangue.nlf"
 
 export fn launch() {
     let app = App()
@@ -12,13 +12,13 @@ export fn launch() {
 
     window.set_clear_color([0, 0, 0])
 
-    window2.set_draw_callback((context, _) => {
+    window2.set_draw_callback((context: RendererContext, _) => {
         context.draw_rect([100, 100], [100, (sin(value) + 1) / 2 * 500], [0.5, 0.5, 1])
     })
 
     let count = 50
 
-    window.set_draw_callback((context, delta_time: number) => {
+    window.set_draw_callback((context: RendererContext, delta_time: number) => {
         let window_size = window.get_size()
 
         let size_vec = [(sin(value) + 1) * window_size[0] / 4, (sin(value) + 1) * window_size[1] / 4]

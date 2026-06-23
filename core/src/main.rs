@@ -1,6 +1,6 @@
 use std::{fs, path::{Path, PathBuf}, str::FromStr};
 
-use nlf_core::{analysis::{SymbolIndex, TypedScopeBuilder}, explorer::{self}, lexer, loader::{self, Module, run_main}, parser, tests, type_checker};
+use nlf_core::{analysis::{SymbolIndex, TypedScopeBuilder}, explorer::{self}, lexer, loader::{self, run_main}, parser, tests, type_checker};
 use clap::Parser;
 
 #[derive(Parser, Debug)]

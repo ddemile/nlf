@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use lazy_static::lazy_static;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, Scope}, parser::ValueHolder};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, Scope}, parser::{ArrayRef, ValueHolder}};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub enum Operation {
@@ -37,8 +37,8 @@ pub trait Prototype {
 #[derive(Clone)]
 pub struct LocalPrototype {
     pub _name: String,
-    operators: Vec<Option<LocalOperatorFunc>>,
-    methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)>
+    pub operators: Vec<Option<LocalOperatorFunc>>,
+    pub methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)>
 }
 
 impl std::fmt::Debug for LocalPrototype {
@@ -146,8 +146,8 @@ impl LocalPrototype {
 #[derive(Clone)]
 pub struct BuiltInPrototype {
     pub _name: String,
-    operators: Vec<Option<BuiltInOperatorFunc>>,
-    methods: HashMap<String, BuiltInMethodFunc>
+    pub operators: Vec<Option<BuiltInOperatorFunc>>,
+    pub methods: HashMap<String, BuiltInMethodFunc>
 }
 
 impl Prototype for BuiltInPrototype {
@@ -262,6 +262,17 @@ lazy_static! {
                 array.reverse();
 
                 Ok(ValueHolder::Void)
+            }))
+            .with_method("join", Arc::new(|instance, args, _context| {
+                let Some(ValueHolder::String(separator)) = args.get(0) else {
+                    return Err(LanguageError::from(RuntimeError::Custom("Expected string at index 0".into())));
+                };
+
+                let ValueHolder::Array(array) = instance else {
+                    unreachable!()
+                };
+                
+                Ok(ValueHolder::String(array.fetch().iter().map(|arg| arg.to_string()).collect::<Vec<String>>().join(separator)))
             }));
         prototype
     };
@@ -301,6 +312,17 @@ lazy_static! {
                 }
 
                 Ok(ValueHolder::String(string.to_lowercase()))
+            }))
+            .with_method("split", Arc::new(|instance, args, _| {
+                let Some(ValueHolder::String(separator)) = args.get(0) else {
+                    return Err(LanguageError::from(RuntimeError::Custom("Expected string at index 0".into())));
+                };
+
+                let ValueHolder::String(string) = instance else {
+                    unreachable!()
+                };
+
+                Ok(ValueHolder::Array(ArrayRef::new(string.split(separator).map(|item| ValueHolder::String(item.to_string())).collect())))
             }));
         prototype
     };

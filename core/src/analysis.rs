@@ -39,6 +39,7 @@ pub struct Symbol {
 
 pub type SymbolId = usize;
 
+#[derive(Debug, Clone)]
 pub struct Export {
     pub name: String,
     pub symbol: Symbol
@@ -161,7 +162,7 @@ pub fn get_symbol_index(path: PathBuf, contents: String) -> Option<SymbolIndex> 
         Err(_) => return None
     };
 
-    let program = match parser::parse(tokens) {
+    let program = match parser::lax_parse(tokens) {
         Ok(program) => program,
         Err(_) => return None
     };
@@ -327,7 +328,7 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
     }
 }
 
-fn get_class_type(name: &Identifier, methods: &Vec<TypedStatement>, fields: &Vec<ASTStatement>) -> ClassType {
+pub fn get_class_type(name: &Identifier, methods: &Vec<TypedStatement>, fields: &Vec<ASTStatement>) -> ClassType {
     let method_types = methods.iter().map(|method| {
         let TypedStatementKind::Function { variable, arguments, return_ty, .. } = &method.kind else {
             unreachable!()
@@ -355,4 +356,27 @@ fn get_class_type(name: &Identifier, methods: &Vec<TypedStatement>, fields: &Vec
     }).collect();
 
     ClassType { name: name.value.to_string(), methods: method_types, fields: field_types }
+}
+
+pub struct CompletionCandidate {
+    pub completion_span: Span,
+    pub object_span: Span
+}
+
+#[derive(Default)]
+pub struct CompletionResolver {
+    pub candidates: Vec<CompletionCandidate>
+}
+
+impl Visitor<TypedSyntaxTree> for CompletionResolver {
+    fn visit_expression(&mut self, expression: &Expression) {
+        match &expression.kind {
+            ExpressionKind::Member { object, property } => {
+                if let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(_value) } = &property.kind {
+                    self.candidates.push(CompletionCandidate { completion_span: Span { start: property.start, end: property.end }, object_span: Span { start: object.start, end: object.end } });
+                }
+            }
+            _ => {}
+        }
+    }
 }

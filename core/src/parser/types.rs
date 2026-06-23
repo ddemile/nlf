@@ -7,7 +7,7 @@ use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
-    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}, loader::ModuleSource
+    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
 };
 
 #[derive(Debug)]
@@ -469,6 +469,14 @@ pub struct TypeId(pub u32);
 #[derive(Serialize, Debug, Clone)]
 pub enum TypeRef {
     Named(Identifier)
+}
+
+impl TypeRef {
+    pub fn get_span(&self) -> Span {
+        match self {
+            Self::Named(ident) => Span { start: ident.start, end: ident.end }
+        }
+    }
 }
 
 #[derive(Serialize, Debug, Clone)]

@@ -4,8 +4,8 @@ let last_time: number = now()
 let total = 0
 let samples = 0
 
-class RendererContext {
-    RendererContext(handle, behaviour_handle) {
+export class RendererContext {
+    RendererContext(handle: number, behaviour_handle: number) {
         self.handle = handle
         self.behaviour_handle = behaviour_handle
         self.size = 50
@@ -16,7 +16,7 @@ class RendererContext {
     }
 }
 
-class Window {
+export class Window {
     Window(handle: number, app_handle: number) {
         self.handle = handle
         self.app_handle = app_handle
@@ -53,7 +53,7 @@ export class App {
         self.handle = native_addon.create_app()
     }
 
-    fn create_window(self, title) {
+    fn create_window(self, title): Window {
         let window_handle = native_addon.create_window(self.handle, title)
 
         return Window(window_handle, self.handle)

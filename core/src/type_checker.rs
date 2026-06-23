@@ -1,19 +1,152 @@
-use std::{fs, path::PathBuf, rc::Rc, str::FromStr};
+use std::{path::PathBuf, rc::Rc, str::FromStr};
 
 
-use crate::{analysis::{self, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder}, errors::LanguageResult, explorer::{self, Visitor}, loader::{self, ModuleSource}, parser::{ASTBlock, ASTProgram, ASTStatement, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, LiteralExpressionKind, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
+use crate::{analysis::{self, Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, loader::{self}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
 
 struct TypeChecker {
     pub program: ASTProgram,
     pub arena: TypeArena,
-    pub symbol_index: Option<SymbolIndex>
+    pub symbol_index: Option<SymbolIndex>,
+    pub type_collector: TypeCollector,
+    pub hoisted_types: Vec<LocatedType>
 }
 
 impl TypeChecker {
-    pub fn new(program: ASTProgram) -> Self {
+    pub fn new(program: ASTProgram, type_collector: TypeCollector) -> Self {
         let arena = TypeArena::new();
 
-        Self { program, arena, symbol_index: None }
+        Self { program, arena, symbol_index: None, type_collector, hoisted_types: vec![] }
+    }
+}
+
+pub struct CollectedType {
+    pub name: String,
+    pub span: Span,
+    pub scope: ScopeId
+}
+
+pub struct TypeCollector {
+    pub scopes: Vec<Scope>,
+    pub current: ScopeId,
+    pub types: Vec<CollectedType>,
+    pub path: PathBuf
+}
+
+impl TypeCollector {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            scopes: vec![Scope {
+                parent: None,
+                children: vec![],
+                symbols: vec![],
+                span: None
+            }],
+            current: ScopeId(0),
+            types: vec![],
+            path
+        }
+    }
+
+    fn define(&mut self, name: String, span: Span) {
+        let id = self.types.len();
+
+        self.types.push(CollectedType {
+            name,
+            span,
+            scope: self.current
+        });
+
+        self.scopes[self.current.0]
+            .symbols
+            .push(id);
+    }
+
+    pub fn scope_at_position(&self, pos: usize) -> ScopeId {
+        let mut best = ScopeId(0); // global scope
+        let mut best_size = usize::MAX;
+
+        for (i, scope) in self.scopes.iter().enumerate() {
+            let Some(span) = scope.span else {
+                continue;
+            };
+
+            if pos >= span.start && pos <= span.end {
+                let size = span.end - span.start;
+
+                // Smaller span = deeper scope
+                if size < best_size {
+                    best = ScopeId(i);
+                    best_size = size;
+                }
+            }
+        }
+
+        best
+    }
+
+    pub fn find_definition(&self, name: &str, pos: usize) -> Option<&CollectedType> {
+        let scope = self.scope_at_position(pos);
+
+        let mut current = Some(scope);
+
+        while let Some(scope_id) = current {
+            let scope = &self.scopes[scope_id.0];
+
+            for &symbol_id in &scope.symbols {
+                let ty = &self.types[symbol_id];
+                
+                if ty.name == name {
+                    return Some(ty)
+                }
+            }
+
+            current = scope.parent;
+        }
+
+        None
+    }
+}
+
+impl Visitor<ASTSyntaxTree> for TypeCollector {
+    fn transform_statement(&mut self, statement: &ASTStatement) -> ASTStatement {
+        match &statement.kind {
+            ASTStatementKind::Class { variable, .. } => {
+                self.define(variable.value.clone(), Span { start: statement.start, end: statement.end });
+            }
+            ASTStatementKind::Import { specifiers, .. } => {
+                for ident in specifiers {
+                    self.define(ident.value.to_string(), Span { start: statement.start, end: statement.end });
+                }
+            }
+            _ => {} 
+        };
+
+        statement.clone()
+    }
+
+    fn enter_scope(&mut self, span: Span) -> ScopeId {
+        let parent = self.current;
+
+        let id = ScopeId(self.scopes.len());
+
+        self.scopes.push(Scope {
+            parent: Some(self.current),
+            children: vec![],
+            symbols: vec![],
+            span: Some(span)
+        });
+
+        self.scopes[self.current.0]
+            .children
+            .push(id);
+
+        self.current = id;
+
+        parent
+    }
+
+    fn exit_scope(&mut self, parent: ScopeId) {
+        self.current = parent;
     }
 }
 
@@ -67,6 +200,11 @@ impl TypedTreeSyntaxTransformer {
                 }
                 _ => {}
             }
+        }
+
+        // Tries to get the type of an argument
+        if let SymbolKind::Definition(definition) = kind {
+            return Some(definition.clone())
         }
 
         match kind {
@@ -147,7 +285,11 @@ impl Visitor<TypedSyntaxTree> for TypedTreeSyntaxTransformer {
 }
 
 pub fn check_types(program: ASTProgram, path: PathBuf) -> LanguageResult<TypedProgram> {
-    let mut checker = TypeChecker::new(program);
+    let mut type_collector = TypeCollector::new(path.clone());
+
+    explorer::visit_program(&program, &mut type_collector);
+
+    let mut checker = TypeChecker::new(program, type_collector);
     
     let typed_program = check_body(checker.program.body.clone(), &mut checker).map(|statements| TypedProgram { body: statements })?;
 
@@ -164,7 +306,70 @@ pub fn check_types(program: ASTProgram, path: PathBuf) -> LanguageResult<TypedPr
     Ok(checked_program)
 }
 
+pub struct LocatedType {
+    pub ty: Type,
+    pub span: Span
+}
+
+fn hoist_types(statements: &Rc<[ASTStatement]>, checker: &mut TypeChecker) -> LanguageResult<()> {
+    fn hoist_class(statement: &ASTStatement, checker: &mut TypeChecker) -> LanguageResult<()> {
+        let statement = check_statement(statement.clone(), checker)?;
+
+        let StatementKind::Class { variable, methods, fields, .. } = statement.kind else {
+            unreachable!()
+        };
+
+        let class_type = get_class_type(&variable, &methods, &fields);
+
+        checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type)}, span: Span { start: statement.start, end: statement.end } });
+    
+        Ok(())
+    }
+
+    for statement in statements.iter() {
+        match &statement.kind {
+            StatementKind::Class { .. } => {
+                hoist_class(statement, checker)?
+            }
+            StatementKind::Export { declaration } => {
+                if let StatementKind::Class { .. } = &declaration.kind {
+                    hoist_class(&declaration, checker)?
+                }
+            }
+            StatementKind::Import { specifiers, source } => {
+                let parent = checker.type_collector.path.parent().unwrap().to_path_buf();
+
+                let module_source = loader::resolve_module(&source.value, Some(parent))?;
+
+                let contents = loader::read_module(&module_source)?;
+
+                let symbol_index = analysis::get_symbol_index(module_source.path.into(), contents).unwrap();
+
+                for ident in specifiers {
+                    let source_symbol = symbol_index.find_export(&ident.value);
+
+                    let Some(source_symbol) = source_symbol else {
+                        return Err(LanguageError::with_source(ParserError::InvalidType(format!("Type not found: {}", ident.value)), ident.start, ident.end))
+                    };
+                    
+                    match source_symbol.kind {
+                        SymbolKind::Class(class_type) => {
+                            checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type) }, span: Span { start: statement.start, end: statement.end } });
+                        },
+                        _ => {}
+                    }  
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 fn check_body(statements: Rc<[ASTStatement]>, checker: &mut TypeChecker) -> LanguageResult<Rc<[TypedStatement]>> {
+    hoist_types(&statements, checker)?;
+
     statements.iter().map(|statement| {
         check_statement(statement.clone(), checker)
     }).collect()
@@ -179,11 +384,11 @@ fn check_statement(statement: ASTStatement, checker: &mut TypeChecker) -> Langua
         StatementKind::Function { variable, arguments, block, return_type_ref, return_ty: _ty } => {
             let mut typed_arguments= vec![];
             for argument in arguments {
-                typed_arguments.push(check_argument(argument)?);
+                typed_arguments.push(check_argument(argument, checker)?);
             }
 
             let return_ty = if let Some(type_ref) = &return_type_ref {
-                resolve_type_ref(type_ref)?
+                resolve_type_ref(type_ref, checker)?
             } else {
                 Type::Unknown
             };
@@ -308,9 +513,9 @@ fn check_block(block: ASTBlock, checker: &mut TypeChecker) -> LanguageResult<Blo
     Ok(checked_block)
 }
 
-fn check_argument(argument: Argument<Identifier, ()>) -> LanguageResult<Argument<Identifier, Type>> {
+fn check_argument(argument: Argument<Identifier, ()>, checker: &mut TypeChecker) -> LanguageResult<Argument<Identifier, Type>> {
     let ty = if let Some(type_ref) = &argument.type_ref {
-        resolve_type_ref(type_ref)?
+        resolve_type_ref(type_ref, checker)?
     } else {
         Type::Unknown
     };
@@ -326,7 +531,7 @@ fn check_definition(descriptor: VariableDescriptor, expression: Expression, type
     let expression = check_expression(expression, checker)?;
     
     let ty = if let Some(type_ref) = &type_ref {
-        resolve_type_ref(type_ref)?
+        resolve_type_ref(type_ref, checker)?
     } else {
         resolve_expression_type(&expression)?
     };
@@ -334,12 +539,26 @@ fn check_definition(descriptor: VariableDescriptor, expression: Expression, type
     Ok(TypedStatementKind::VariableDefinition { descriptor, expression, type_ref, ty })
 }
 
-fn resolve_type_ref(type_ref: &TypeRef) -> LanguageResult<Type> {
-    Ok(match type_ref {
+fn resolve_type_ref(type_ref: &TypeRef, checker: &mut TypeChecker) -> LanguageResult<Type> {
+    match type_ref {
         TypeRef::Named(ident) => {
-            Type::from_str(&ident.value)?
+            if let Ok(ty) = Type::from_str(&ident.value) {
+                return Ok(ty)
+            }
+
+            if let Some(CollectedType { name, span, .. }) = checker.type_collector.find_definition(&ident.value, ident.start) {
+                for located_type in checker.hoisted_types.iter() {
+                    if located_type.span.start != span.start || located_type.span.end != span.end || *name != ident.value {
+                        continue;
+                    }
+
+                    return Ok(located_type.ty.clone())
+                }
+            }
+
+            return Err(LanguageError::with_source(ParserError::InvalidType(format!("Type not found: {}", ident.value)), ident.start, ident.end))
         }
-    })
+    }
 }
 
 fn resolve_expression_type(expression: &Expression) -> LanguageResult<Type> {
