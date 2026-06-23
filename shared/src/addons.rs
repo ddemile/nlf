@@ -4,13 +4,32 @@ use crate::numbers::DynamicNumber;
 
 pub type AddonCall = extern "Rust" fn(Vec<AddonValue>) -> AddonValue;
 
+#[derive(Clone)]
 pub struct AddonFn {
     pub name: &'static str,
     pub call: AddonCall
 }
 
-#[cfg(feature = "addon")]
-inventory::collect!(AddonFn);
+#[derive(Clone)]
+pub struct AddonMetadata {
+    pub nlf_version: &'static str
+}
+
+pub struct Registry {
+    pub functions: Vec<AddonFn>
+}
+
+impl Registry {
+    pub fn new() -> Self {
+        return Self {
+            functions: vec![]
+        }
+    }
+
+    pub fn register(&mut self, function: AddonFn) {
+        self.functions.push(function);
+    }
+}
 
 #[derive(Clone)]
 pub struct FnRef {

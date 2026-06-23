@@ -1,12 +1,8 @@
 [package]
 name = "nlf-shared"
-version = "0.1.0"
-edition = "2024"
-
-[features]
-addon = ["dep:inventory"]
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-inventory = { version = "0.3.21", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 strum = { version = "0.27.2", features = ["derive"] }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf};
 use lazy_static::lazy_static;
 use libloading::{Library, Symbol};
 use parking_lot::Mutex;
-use nlf_shared::addons::{AddonCall, AddonFn, AddonValue, FnRef};
+use nlf_shared::{NLF_VERSION, addons::{AddonCall, AddonMetadata, AddonValue, FnRef, Registry}};
 
 use crate::{interpreter::eval_runtime_function, parser::{FunctionKind, ValueHolder}};
 
@@ -52,7 +52,7 @@ impl Into<ValueHolder> for AddonValue {
 }
 
 pub struct Addon {
-    path: PathBuf,
+    pub path: PathBuf,
     pub functions: HashMap<String, AddonCall>
 }
 
@@ -67,10 +67,23 @@ impl Addon {
         unsafe {
             let lib: Library = Library::new(path).unwrap();
 
-            let all_registered: Symbol<unsafe extern "Rust" fn() -> Vec<&'static AddonFn>> =
-                lib.get(b"all_registered").unwrap();
+            let mut registry = Registry::new();
 
-            for function in all_registered() {
+            let metadata_function: Symbol<unsafe extern "Rust" fn() -> AddonMetadata> =
+                lib.get(b"metadata").unwrap();
+
+            let metadata = metadata_function();
+
+            if metadata.nlf_version != NLF_VERSION {
+                panic!("Tried to load an incompatible addon\nCurrent: {}\nAddon: {}", NLF_VERSION, metadata.nlf_version)
+            }
+
+            let register_functions: Symbol<unsafe extern "Rust" fn(&mut Registry)> =
+                lib.get(b"register_functions").unwrap();
+
+            register_functions(&mut registry);
+
+            for function in registry.functions {
                 map.insert(function.name.to_string(), function.call);
             }
 

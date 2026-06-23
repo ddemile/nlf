@@ -1,8 +1,8 @@
 [package]
 name = "nlf-addon-maker"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 
 [dependencies]
 macros = { path = "./macros"}
-nlf-shared = { path = "../shared", features = ["addon"] }
+nlf-shared = { path = "../shared" }

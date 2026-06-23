@@ -330,6 +330,13 @@ lazy_static! {
     pub static ref NUMBER_PROTOTYPE: BuiltInPrototype = {
         let mut prototype = BuiltInPrototype::new("Number");
         prototype
+            .with_method("toString", Arc::new(|instance, args, _| {
+                if args.len() > 0 {
+                    return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
+                }
+
+                Ok(ValueHolder::String(instance.to_string()))
+            }))
             .with_operator(Operation::Addition, Arc::new(|a, b| {
                 let ValueHolder::Number(a) = a else {
                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))

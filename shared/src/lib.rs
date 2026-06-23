@@ -1,5 +1,4 @@
 pub mod addons;
 pub mod numbers;
 
-#[cfg(feature = "addon")]
-pub use inventory;
+pub const NLF_VERSION: &str = env!("CARGO_PKG_VERSION");

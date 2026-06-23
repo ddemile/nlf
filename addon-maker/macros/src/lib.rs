@@ -23,7 +23,7 @@ fn convert_type(input: &syn::Type) -> Ident {
 }
 
 #[proc_macro_attribute]
-pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn addon_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as ItemFn);
     let name = input.sig.ident;
     let name_str = name.to_string();
@@ -75,7 +75,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let register_fn = quote! {
         #[unsafe(no_mangle)]
-        pub extern "Rust" fn #name(values: Vec<nlf_addon_maker::AddonValue>) -> nlf_addon_maker::AddonValue {
+        extern "Rust" fn #name(values: Vec<nlf_addon_maker::AddonValue>) -> nlf_addon_maker::AddonValue {
             let _ = crate::__ADDON_INIT_MARKER;
 
             #(
@@ -84,14 +84,6 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             );*;
             #call
-        }
-
-        // register metadata
-        nlf_addon_maker::inventory::submit! {
-            nlf_addon_maker::AddonFn {
-                name: #name_str,
-                call: #name
-            }
         }
     };
 
@@ -102,16 +94,4 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     expanded.into()
-}
-
-#[proc_macro]
-pub fn init(_item: TokenStream) -> TokenStream {
-    quote! {
-        pub const __ADDON_INIT_MARKER: () = ();
-
-        #[unsafe(no_mangle)]
-        pub extern "Rust" fn all_registered() -> Vec<&'static nlf_addon_maker::AddonFn> {
-            nlf_addon_maker::inventory::iter::<nlf_addon_maker::AddonFn>.into_iter().collect()
-        }
-    }.into()
 }
