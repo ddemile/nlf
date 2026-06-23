@@ -1,4 +1,6 @@
-use crate::{explorer::Visitor, parser::{ASTStatement, ASTStatementKind, Argument, ClassType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}};
+use std::path::PathBuf;
+
+use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Span {
@@ -151,6 +153,33 @@ impl SymbolIndex {
 
         None
     }
+}
+
+pub fn get_symbol_index(path: PathBuf, contents: String) -> Option<SymbolIndex> {
+    let tokens = match lexer::lex(contents) {
+        Ok(tokens) => tokens,
+        Err(_) => return None
+    };
+
+    let program = match parser::parse(tokens) {
+        Ok(program) => program,
+        Err(_) => return None
+    };
+
+    let typed_program = match type_checker::check_types(program, path) {
+        Ok(program) => program,
+        Err(_) => return None
+    };
+
+    let index = {
+        let mut scope_builder = TypedScopeBuilder::new();
+
+        explorer::visit_program(&typed_program, &mut scope_builder);
+
+        SymbolIndex::from(scope_builder)
+    };
+
+    Some(index)
 }
 
 pub struct TypedScopeBuilder {

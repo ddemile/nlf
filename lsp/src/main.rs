@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 use std::str::FromStr;
 
-use nlf_core::analysis::{TypedScopeBuilder, Symbol, SymbolIndex, SymbolKind};
+use nlf_core::analysis::{self, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder};
 use nlf_core::lexer::TokenKind;
-use nlf_core::loader::Module;
+use nlf_core::loader::{self, Module, ModuleKind};
 use nlf_core::parser::{FunctionType, RuntimeFunction};
 use nlf_core::stdlib::{CoreModules, FUNCTION_TABLE};
 use nlf_core::{explorer, lexer, parser, stdlib, translator, type_checker};
@@ -29,33 +30,6 @@ struct TextDocumentContentParams {
 }
 
 impl Backend {
-    async fn get_symbol_index(&self, contents: String) -> Option<SymbolIndex> {
-        let tokens = match lexer::lex(contents) {
-            Ok(tokens) => tokens,
-            Err(_) => return None
-        };
-
-        let program = match parser::parse(tokens) {
-            Ok(program) => program,
-            Err(_) => return None
-        };
-
-        let typed_program = match type_checker::check_types(program) {
-            Ok(program) => program,
-            Err(_) => return None
-        };
-
-        let index = {
-            let mut scope_builder = TypedScopeBuilder::new();
-
-            explorer::visit_program(&typed_program, &mut scope_builder);
-
-            SymbolIndex::from(scope_builder)
-        };
-
-        Some(index)
-    }
-
     async fn get_file_contents(&self, uri: &Url) -> String {
         let docs = self.documents.read().await;
 
@@ -67,17 +41,21 @@ impl Backend {
     }
 
     async fn resolve_import(&self, name: &str, source: &str, uri: &Url) -> Option<(Symbol, Url, String)> {
-        let (uri, contents) = if let Some(core_module) = source.strip_prefix("core:") {
-            (Url::from_str(&format!("nlf://core/{}.nlf", core_module)).ok()?, String::from_utf8(CoreModules::get(&format!("{}.nlf", core_module))?.data.to_vec()).ok()?)
-        } else {
-            let resolved_path = Module::resolve_path_internal(source.into(), Some(uri.to_file_path().unwrap().parent().unwrap().to_path_buf())).unwrap();
-            
-            let resolved_uri = Url::from_file_path(resolved_path).ok()?;
+        let module_source = loader::resolve_module(source.into(), Some(uri.to_file_path().unwrap().parent().unwrap().to_path_buf())).unwrap();
 
-            (resolved_uri.clone(), self.get_file_contents(&resolved_uri).await)
+        let uri = match module_source.kind {
+            ModuleKind::Core => Url::from_str(&format!("nlf://core/{}.nlf", module_source.path.strip_prefix("core:")?)).ok()?,
+            ModuleKind::Standard => Url::from_file_path(module_source.path.clone()).ok()?.clone(),
+            ModuleKind::Library => todo!()
         };
 
-        let imported_index = match self.get_symbol_index(contents.clone()).await {
+        let contents = if self.documents.read().await.contains_key(&uri) {
+            self.get_file_contents(&uri).await
+        } else {
+            loader::read_module(&module_source).ok()?
+        };
+
+        let imported_index = match analysis::get_symbol_index(uri.to_file_path().ok()?, contents.clone()) {
             Some(index) => index,
             None => return None
         };
@@ -187,7 +165,7 @@ impl LanguageServer for Backend {
             let position = params.text_document_position.position;
             let source = line_to_source(&contents, position);
 
-            let index = match self.get_symbol_index(contents).await {
+            let index = match analysis::get_symbol_index(uri.to_file_path().unwrap(), contents) {
                 Some(index) => index,
                 None => return Ok(None)
             };
@@ -353,7 +331,7 @@ impl LanguageServer for Backend {
 
         let contents = self.get_file_contents(&uri).await;
 
-        let index = match self.get_symbol_index(contents.clone()).await {
+        let index = match analysis::get_symbol_index(uri.to_file_path().unwrap(), contents.clone()) {
             Some(index) => index,
             None => return Ok(None)
         };
@@ -416,7 +394,7 @@ impl LanguageServer for Backend {
 
         let contents = self.get_file_contents(&uri).await;
 
-        let index = match self.get_symbol_index(contents.clone()).await {
+        let index = match analysis::get_symbol_index(uri.to_file_path().unwrap(), contents.clone()) {
             Some(index) => index,
             None => return Ok(None)
         };

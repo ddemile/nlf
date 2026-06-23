@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::{fs, path::{Path, PathBuf}, str::FromStr};
 
-use nlf_core::{analysis::{TypedScopeBuilder, SymbolIndex}, explorer::{self}, lexer, loader::{Module, run_main}, parser, tests, type_checker};
+use nlf_core::{analysis::{SymbolIndex, TypedScopeBuilder}, explorer::{self}, lexer, loader::{self, Module, run_main}, parser, tests, type_checker};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -26,14 +26,14 @@ fn main() {
     if args.visit {
         let mut scope_builder = TypedScopeBuilder::new();
 
-        let path = Module::resolve_path("core/src/program/visit.nlf").unwrap();
+        let source = loader::resolve_module("core/src/program/visit.nlf", None).unwrap();
 
-        let code = std::fs::read_to_string(&path).unwrap();
+        let code = fs::read_to_string(&source.path).unwrap();
 
         let tokens = lexer::lex(code).unwrap();
         let program = parser::parse(tokens).unwrap();
         
-        let typed_program = type_checker::check_types(program).unwrap();
+        let typed_program = type_checker::check_types(program, PathBuf::from_str(&source.path).unwrap()).unwrap();
 
         explorer::visit_program(&typed_program, &mut scope_builder);
 

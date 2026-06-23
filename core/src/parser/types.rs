@@ -7,7 +7,7 @@ use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
-    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
+    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}, loader::ModuleSource
 };
 
 #[derive(Debug)]

@@ -8,6 +8,80 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+pub struct ModuleSource {
+    pub path: String,
+    pub kind: ModuleKind
+}
+
+pub fn resolve_module(path: &str, current_folder: Option<PathBuf>) -> LanguageResult<ModuleSource> {
+    let current_dir = env::current_dir().unwrap();
+
+    let resolver = PathResovler {
+        process_path: current_dir.clone(),
+        current_path: if current_folder.is_some() { current_folder.unwrap() } else { current_dir },
+    };
+
+    let resolved = match resolver.resolve(PathBuf::from(path)).map(|buf| buf.to_str().unwrap().to_string()) {
+        Ok(resolved) => resolved,
+        Err(_) => path.to_string()
+    };
+
+    let kind = if PathBuf::from(resolved.clone()).exists() {
+        ModuleKind::Standard
+    } else if resolved.starts_with("core:") {
+        ModuleKind::Core
+    } else {
+        return Err(LanguageError::from(LoaderError::ModuleNotFound(resolved.to_string())))
+    };
+
+    Ok(ModuleSource {
+        path: resolved,
+        kind
+    })
+}
+
+pub fn parse_module_source(source: &ModuleSource, pg_context: Rc<RefCell<ProgramContext>>) -> LanguageResult<Arc<Mutex<Module>>> {
+    if !pg_context.borrow().modules.contains_key(&source.path) {
+        let module = Arc::new(Mutex::new(Module::new(source.clone(), pg_context.clone())));
+
+        // Borrow only to insert, then drop it immediately.
+        {
+            let modules = &mut pg_context.borrow_mut().modules;
+            modules.insert(source.path.clone(), module.clone());
+        }
+
+        Module::load(module)?;
+    }
+
+    let module = pg_context.borrow().modules.get(&source.path).unwrap().clone();
+
+    Ok(module)
+}
+
+pub fn read_module(source: &ModuleSource) -> LanguageResult<String> {
+    let path = source.path.clone();
+
+    let contents = match source.kind {
+        ModuleKind::Core => {
+            let embedded_file = CoreModules::get(&format!("{}.nlf", path.strip_prefix("core:").unwrap()))
+                .ok_or_else(|| LanguageError::from(LoaderError::ModuleNotFound(path.clone())))?;
+
+            String::from_utf8(embedded_file.data.into_owned()).map_err(|_| LanguageError::from(LoaderError::TODO))?
+        }
+        ModuleKind::Standard => {
+            fs::read_to_string(&path)
+                // TODO: proper start / and
+                .map_err(|_| LanguageError::from(LoaderError::ModuleNotFound(path.clone())))?
+        }
+        ModuleKind::Library => {
+            todo!()
+        }
+    };
+
+    Ok(contents)
+}
+
+#[derive(Debug, Clone)]
 pub struct Import {
     pub source: String,
     pub specifiers: Vec<VariableRef>,
@@ -15,14 +89,13 @@ pub struct Import {
 
 #[derive(Debug, Clone)]
 pub struct Module {
-    pub source: String,
+    pub source: ModuleSource,
     pub exports: HashMap<String, ValueHolder>,
     pub context: Option<Rc<RefCell<ModuleContext>>>,
     pub statements: Rc<[IRStatement]>,
     pub imports: Vec<Import>,
     pub program: Rc<RefCell<ProgramContext>>,
     pub contents: Option<Arc<Mutex<String>>>,
-    pub kind: ModuleKind
 }
 
 struct PathResovler {
@@ -71,34 +144,15 @@ pub enum ModuleKind {
 }
 
 impl Module {
-    pub fn new(source: &str, kind: ModuleKind, program: Rc<RefCell<ProgramContext>>) -> Self {
+    pub fn new(resolved_file: ModuleSource, program: Rc<RefCell<ProgramContext>>) -> Self {
         Self {
-            source: source.into(),
+            source: resolved_file,
             exports: HashMap::new(),
             context: None,
             statements: Rc::new([]),
             imports: vec![],
             program,
-            contents: None,
-            kind
-        }
-    }
-
-    pub fn resolve_path(path: &str) -> LanguageResult<String> {
-        Self::resolve_path_internal(path.into(), None)
-    }
-
-    pub fn resolve_path_internal(path: PathBuf, current_path: Option<PathBuf>) -> LanguageResult<String> {
-        let current_dir = env::current_dir().unwrap();
-
-        let resolver = PathResovler {
-            process_path: current_dir.clone(),
-            current_path: if current_path.is_some() { current_path.unwrap() } else { current_dir },
-        };
-
-        match resolver.resolve(PathBuf::from(path.clone())).map(|buf| buf.to_str().unwrap().to_string()) {
-            Ok(resolved) => Ok(resolved),
-            Err(_) => Ok(path.to_str().unwrap().to_string())
+            contents: None
         }
     }
 
@@ -106,12 +160,12 @@ impl Module {
         return self.context.is_some();
     }
 
-    fn _scan(module: Arc<Mutex<Module>>, contents: &String) -> LanguageResult<()> {
-        let source = module.lock().source.clone();
+    fn _load(module: Arc<Mutex<Module>>, contents: &String) -> LanguageResult<()> {
+        let path = module.lock().source.path.clone();
 
         let tokens = lexer::lex(contents.clone())?;
         
-        let name = Path::new(&source)
+        let name = Path::new(&path)
             .file_name()
             .unwrap()
             .to_str()
@@ -157,7 +211,7 @@ impl Module {
                         var_ref.name.clone().unwrap(),
                         ValueHolder::LazyRef {
                             slot: var_ref.slot,
-                            module: source.clone(),
+                            module: path.clone(),
                         },
                     );
 
@@ -179,9 +233,9 @@ impl Module {
             for import in imports {
                 let program = module.lock().program.clone();
 
-                let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.lock().source.clone()).parent().unwrap().to_path_buf()))?;
+                let resolved_module = loader::resolve_module(&import.source, Some(PathBuf::from(module.lock().source.path.clone()).parent().unwrap().to_path_buf()))?;
 
-                let module_ref = resolve_module(&source, program)?;
+                let module_ref = parse_module_source(&resolved_module, program)?;
                 let imported_mod = module_ref.lock();
                 for specifier in import.specifiers {
                     let name = &specifier.name.clone().unwrap();
@@ -207,30 +261,15 @@ impl Module {
         Ok(())
     }
 
-    fn scan(module: Arc<Mutex<Module>>) -> LanguageResult<()> {
+    fn load(module: Arc<Mutex<Module>>) -> LanguageResult<()> {
         let source = module.lock().source.clone();
 
-        let contents = match module.lock().kind {
-            ModuleKind::Core => {
-                let embedded_file = CoreModules::get(&format!("{}.nlf", source.strip_prefix("core:").unwrap()))
-                    .ok_or_else(|| LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?;
-
-                String::from_utf8(embedded_file.data.into_owned()).map_err(|_| LanguageError::from(LoaderError::TODO))?
-            }
-            ModuleKind::Standard => {
-                fs::read_to_string(&source)
-                    // TODO: proper start / and
-                    .map_err(|_| LanguageError::from(LoaderError::ModuleNotFound(source.clone())))?
-            }
-            ModuleKind::Library => {
-                todo!()
-            }
-        };
+        let contents = read_module(&source)?;
         
-        let mut result = Self::_scan(module, &contents);
+        let mut result = Self::_load(module, &contents);
 
         provide_source(&mut result, ErrorSource {
-            path: source,
+            path: source.path,
             contents: Arc::new(Mutex::new(contents))
         });
 
@@ -259,9 +298,9 @@ impl Module {
                     let module = module_ref.lock();
                     let program = module.program.borrow();
 
-                    let source = Self::resolve_path_internal(import.source.clone().into(), Some(PathBuf::from(module.source.clone()).parent().unwrap().to_path_buf()))?;
+                    let source = loader::resolve_module(&import.source, Some(PathBuf::from(module.source.path.clone()).parent().unwrap().to_path_buf()))?;
                     
-                    let module = program.modules.get(&source).unwrap().lock();
+                    let module = program.modules.get(&source.path).unwrap().lock();
                     let value = module
                         .exports
                         .get(&name)
@@ -293,7 +332,7 @@ impl Module {
 
         if let Some(contents) = &module.contents {
             provide_source(&mut result, ErrorSource {
-                path: module.source.clone(),
+                path: module.source.path.clone(),
                 contents: contents.clone()
             });
         }
@@ -302,38 +341,12 @@ impl Module {
     }
 }
 
-pub fn resolve_module(path: &str, pg_context: Rc<RefCell<ProgramContext>>) -> LanguageResult<Arc<Mutex<Module>>> {
-    let kind = if PathBuf::from(path).exists() {
-        ModuleKind::Standard
-    } else if path.starts_with("core:") {
-        ModuleKind::Core
-    } else {
-        return Err(LanguageError::from(LoaderError::ModuleNotFound(path.to_string())))
-    };
-
-    if !pg_context.borrow().modules.contains_key(path) {
-        let module = Arc::new(Mutex::new(Module::new(&path, kind, pg_context.clone())));
-
-        // Borrow only to insert, then drop it immediately.
-        {
-            let modules = &mut pg_context.borrow_mut().modules;
-            modules.insert(path.into(), module.clone());
-        }
-
-        Module::scan(module)?;
-    }
-
-    let module = pg_context.borrow().modules.get(path).unwrap().clone();
-
-    Ok(module)
-}
-
 pub fn run_main(path: &str) -> LanguageResult<()> {
     let pg_context = Rc::new(RefCell::new(ProgramContext::new()));
 
-    let path = Module::resolve_path(path)?;
+    let module_source = loader::resolve_module(path, None)?;
 
-    let module = loader::resolve_module(&path, pg_context.clone())?;
+    let module = loader::parse_module_source(&module_source, pg_context.clone())?;
 
     Module::execute(module)?;
 

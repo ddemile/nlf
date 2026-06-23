@@ -1,7 +1,7 @@
-use std::{rc::Rc, str::FromStr};
+use std::{fs, path::PathBuf, rc::Rc, str::FromStr};
 
 
-use crate::{analysis::{Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder}, errors::LanguageResult, explorer::{self, Visitor}, parser::{ASTBlock, ASTProgram, ASTStatement, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, LiteralExpressionKind, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
+use crate::{analysis::{self, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder}, errors::LanguageResult, explorer::{self, Visitor}, loader::{self, ModuleSource}, parser::{ASTBlock, ASTProgram, ASTStatement, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, LiteralExpressionKind, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
 
 struct TypeChecker {
     pub program: ASTProgram,
@@ -18,6 +18,7 @@ impl TypeChecker {
 }
 
 struct TypedTreeSyntaxTransformer {
+    pub path: PathBuf,
     pub symbol_index: SymbolIndex,
     pub flat_statements: Vec<TypedStatement>
 }
@@ -44,6 +45,25 @@ impl TypedTreeSyntaxTransformer {
             match definition.kind {
                 StatementKind::VariableDefinition { ty: defintion_ty, .. } => {
                     return Some(defintion_ty)
+                }
+                StatementKind::Import { source, .. } => {
+                    let module_source = loader::resolve_module(&source.value, Some(self.path.parent().unwrap().to_path_buf())).ok()?;
+
+                    let contents = loader::read_module(&module_source).ok()?;
+
+                    let symbol_index = analysis::get_symbol_index(module_source.path.into(), contents)?;
+
+                    let source_symbol = symbol_index.find_export(name);
+
+                    let Some(source_symbol) = source_symbol else {
+                        return None
+                    };
+                    
+                    match source_symbol.kind {
+                        SymbolKind::Function(function_type) => return Some(Type::Function(Box::new(function_type))),
+                        SymbolKind::Class(class_type) => return Some(Type::Class(Box::new(class_type))),
+                        _ => return None
+                    }
                 }
                 _ => {}
             }
@@ -84,7 +104,7 @@ impl TypedTreeSyntaxTransformer {
 
                 if let Some(method) = class.methods.get(property) {
                     return Some(Type::Function(Box::new(method.clone())))
-                }   
+                }
             }
             ExpressionKind::Call { callee, .. } => {
                 let Some(callee_type) = self.resolve_expression_type(&callee) else {
@@ -126,7 +146,7 @@ impl Visitor<TypedSyntaxTree> for TypedTreeSyntaxTransformer {
     }
 }
 
-pub fn check_types(program: ASTProgram) -> LanguageResult<TypedProgram> {
+pub fn check_types(program: ASTProgram, path: PathBuf) -> LanguageResult<TypedProgram> {
     let mut checker = TypeChecker::new(program);
     
     let typed_program = check_body(checker.program.body.clone(), &mut checker).map(|statements| TypedProgram { body: statements })?;
@@ -137,7 +157,7 @@ pub fn check_types(program: ASTProgram) -> LanguageResult<TypedProgram> {
 
     let symbol_index = SymbolIndex::from(visitor);
 
-    let mut transformer = TypedTreeSyntaxTransformer { symbol_index, flat_statements: vec![] };
+    let mut transformer = TypedTreeSyntaxTransformer { path, symbol_index, flat_statements: vec![] };
 
     let checked_program = explorer::transform_program(&typed_program, &mut transformer);
 

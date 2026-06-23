@@ -4,7 +4,7 @@ let a = "string"
 let b = true
 let c: number = 454.5
 
-fn function(my_str: string, e): string {
+fn function(my_str: string, e: any): string {
     let nested = true
 
     my_str

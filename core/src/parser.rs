@@ -337,7 +337,7 @@ fn match_import(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     expect_keyword!(parser, KeywordKind::From);
     let source = expect_string!(parser);
 
-    let Token { start, end, .. } = parser.get_token_at(start);
+    let Token { end, .. } = parser.get_token_at(parser.cursor - 1);
 
     Ok(ASTStatement { kind: ASTStatementKind::Import { specifiers, source }, start, end })
 }
