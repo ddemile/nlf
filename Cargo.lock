@@ -1016,7 +1016,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "ctor",
- "indexmap",
  "inline_colorization",
  "lazy_static",
  "libloading",
@@ -1057,6 +1056,7 @@ dependencies = [
 name = "nlf-shared"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "serde",
  "strum",
 ]

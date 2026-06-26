@@ -1,6 +1,6 @@
-use std::{fs, path::{Path, PathBuf}, str::FromStr};
+use std::path::Path;
 
-use nlf_core::{analysis::{SymbolIndex, TypedScopeBuilder}, explorer::{self}, lexer, loader::{self, run_main}, parser, tests, type_checker};
+use nlf_core::{loader::run_main, tests};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -20,33 +20,6 @@ fn main() {
 
     if args.tests {
         tests::run_tests(Path::new("core/tests"));
-        return;
-    }
-
-    if args.visit {
-        let mut scope_builder = TypedScopeBuilder::new();
-
-        let source = loader::resolve_module("core/src/program/visit.nlf", None).unwrap();
-
-        let code = fs::read_to_string(&source.path).unwrap();
-
-        let tokens = lexer::lex(code).unwrap();
-        let program = parser::parse(tokens).unwrap();
-        
-        let typed_program = type_checker::check_types(program, PathBuf::from_str(&source.path).unwrap()).unwrap();
-
-        explorer::visit_program(&typed_program, &mut scope_builder);
-
-        let index = SymbolIndex::from(scope_builder);
-
-        index.scopes.iter().enumerate().for_each(|(i, scope)| {
-            println!("Scope {}: Parent: {:?}, Children: {:?}, Symbols: {:?}, Span: {:?}", i, scope.parent, scope.children, scope.symbols, scope.span);
-        });
-
-        index.symbol_at(8).iter().for_each(|symbol| {
-            println!("Symbol: {} (Scope: {:?})", symbol.name, symbol.scope);
-        });
-
         return;
     }
 

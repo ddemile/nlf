@@ -49,9 +49,9 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
                 let scope = visitor.enter_scope(block.get_span());
                 let alternate = Box::new(walk_statement(visitor, &alternate));
                 visitor.exit_scope(scope);
-                StatementKind::If { condition: condition.clone(), block, alternate: Some(alternate) }
+                StatementKind::If { condition: walk_expression(visitor, condition), block, alternate: Some(alternate) }
             } else {
-                StatementKind::If { condition: condition.clone(), block, alternate: None }
+                StatementKind::If { condition: walk_expression(visitor, condition), block, alternate: None }
             }
         }
         StatementKind::Block(block) => {

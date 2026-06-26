@@ -1,7 +1,7 @@
 use core::panic;
 use std::{cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::{Rc, Weak}, sync::Arc};
 
-use indexmap::{IndexMap, IndexSet};
+use nlf_shared::{Schema, SchemaStore, indexmap::{IndexMap, IndexSet}};
 use parking_lot::{Mutex, MutexGuard};
 use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
@@ -123,14 +123,14 @@ pub type RuntimeResult = LanguageResult<ValueHolder>;
 #[derive(Debug)]
 pub struct ProgramContext {
     pub modules: HashMap<String, Arc<Mutex<Module>>>,
-    pub schemas: Vec<Schema>
+    pub schema_store: Rc<RefCell<SchemaStore>>
 }
 
 impl ProgramContext {
     pub fn new() -> Self {
         Self {
             modules: HashMap::new(),
-            schemas: vec![]
+            schema_store: Rc::new(RefCell::new(SchemaStore::default()))
         }
     }
 
@@ -158,12 +158,10 @@ impl ModuleContext {
 
         context_ref
     }
-}
 
-#[derive(Clone, Debug)]
-pub struct Schema {
-    id: usize,
-    keys: IndexSet<String>,
+    pub fn get_schema_store(&self) -> Rc<RefCell<SchemaStore>> {
+        self.program.borrow().schema_store.clone()
+    }
 }
 
 #[derive(Clone)]
@@ -180,10 +178,8 @@ impl std::fmt::Debug for Object {
     }
 }
 
-fn get_schema(keys: IndexSet<String>, context: &mut ModuleContext) -> Schema {
-    let schema =  context
-        .program
-        .borrow()
+fn get_schema(keys: IndexSet<String>, schema_store: &mut SchemaStore) -> Schema {
+    let schema = schema_store
         .schemas
         .iter()
         .find(|s| s.keys == keys)
@@ -191,19 +187,19 @@ fn get_schema(keys: IndexSet<String>, context: &mut ModuleContext) -> Schema {
     
     schema.unwrap_or_else(|| {
         let schema: Schema = Schema {
-            id: context.program.borrow().schemas.len(),
+            id: schema_store.schemas.len(),
             keys,
         };
-        context.program.borrow_mut().schemas.push(schema.clone());
+        schema_store.schemas.push(schema.clone());
         schema
     })
 }
 
 impl ObjectRef {
-    pub fn new(entries: IndexMap<String, ValueHolder>, prototype: Option<Rc<dyn Prototype>>, context: &mut ModuleContext) -> Self {
+    pub fn new(entries: IndexMap<String, ValueHolder>, prototype: Option<Rc<dyn Prototype>>, schema_store: Rc<RefCell<SchemaStore>>) -> Self {
         let keys: IndexSet<String> = entries.keys().cloned().collect();
 
-        let schema = get_schema(keys, context);
+        let schema = get_schema(keys, &mut schema_store.borrow_mut());
 
         let object = Object {
             schema_id: schema.id,
@@ -211,15 +207,15 @@ impl ObjectRef {
             prototype
         };
 
-        ObjectRef { object: Rc::new(RefCell::new(object)), program_context: context.program.clone() }
+        ObjectRef { object: Rc::new(RefCell::new(object)), schema_store }
     }
 
-    pub(self) fn get(self, property: String, context: &mut ModuleContext) -> RuntimeResult {
-        let program = context.program.borrow();
+    pub(self) fn get(self, property: String) -> RuntimeResult {
+        let schema_store = self.schema_store.borrow();
 
         let object = self.object.borrow();
 
-        let schema = program
+        let schema = schema_store
             .schemas
             .iter()
             .find(|schema| schema.id == object.schema_id)
@@ -234,12 +230,12 @@ impl ObjectRef {
         Err(LanguageError::from(RuntimeError::NoSuchProperty(property)))
     }
 
-    pub(self) fn set(&self, property: String, value: ValueHolder, context: &mut ModuleContext) {
-        let program = context.program.borrow();
+    pub(self) fn set(&self, property: String, value: ValueHolder) {
+        let mut schema_store = self.schema_store.borrow_mut();
 
         let mut object = self.object.borrow_mut();
 
-        let schema = program
+        let schema = schema_store
             .schemas
             .iter()
             .find(|schema| schema.id == object.schema_id)
@@ -258,19 +254,17 @@ impl ObjectRef {
             }
         }
 
-        drop(program);
-        
-        let schema = get_schema(keys, context);
+        let schema = get_schema(keys, &mut schema_store);
 
         object.schema_id = schema.id;
     }
 
     pub fn fetch(&self) -> IndexMap<String, ValueHolder> {
-        let program = self.program_context.borrow();
+        let schema_store = self.schema_store.borrow();
 
         let object = self.object.borrow();
 
-        let schema = program
+        let schema = schema_store
             .schemas
             .iter()
             .find(|schema| schema.id == object.schema_id)
@@ -878,7 +872,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
             };
 
             if let ValueHolder::Object(object) = &value {
-                match object.clone().get(property.to_string(), context) {
+                match object.clone().get(property.to_string()) {
                     Ok(object) => return Ok(object),
                     Err(_) => (),
                 };
@@ -925,7 +919,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                     .iter()
                     .map(|(k, v)| (k.clone(), eval_expr(v, context).unwrap()))
                     .collect();
-                let object_ref = ObjectRef::new(entries, None, context);
+                let object_ref = ObjectRef::new(entries, None, context.get_schema_store());
                 return Ok(ValueHolder::Object(object_ref));
             } else if let LiteralExpressionKind::Array(items) = r#type {
                 let items: Vec<ValueHolder> = items
@@ -1061,9 +1055,9 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
 
                     let expr = eval_expr(&right, context)?;
                     let value = compute_value!(expr, {
-                        object_ref.clone().get(property.to_string(), context)?
+                        object_ref.clone().get(property.to_string())?
                     })?;
-                    object_ref.set(property.to_string(), value, context);
+                    object_ref.set(property.to_string(), value);
 
                     return Ok(ValueHolder::Void);
                 } else if let ValueHolder::Array(array_ref) = value {
@@ -1183,7 +1177,7 @@ fn eval_call(
             entries.insert(field.name, field.value);
         }
         let prototype = Rc::new(definition.prototype);
-        let class = ValueHolder::Object(ObjectRef::new(entries, Some(prototype.clone()), context));
+        let class = ValueHolder::Object(ObjectRef::new(entries, Some(prototype.clone()), context.get_schema_store()));
         let constructor = prototype.get_method(&prototype._name);
         if let Some(method) = constructor {
             method.call(&class, &evaluated_args, context)?;

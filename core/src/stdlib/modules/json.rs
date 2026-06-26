@@ -43,7 +43,7 @@ fn convert_json_value(value: &Value, context: &mut ModuleContext) -> ValueHolder
         Value::Object(object) => ValueHolder::Object(ObjectRef::new(
             object.iter().map(|(key, value)| (key.clone(), convert_json_value(value, context))).collect(),
             None,
-            context
+            context.get_schema_store()
         )),
         Value::Null => ValueHolder::Void
     }

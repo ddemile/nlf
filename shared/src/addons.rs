@@ -1,6 +1,8 @@
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::numbers::DynamicNumber;
+use indexmap::IndexMap;
+
+use crate::{SchemaStore, numbers::DynamicNumber};
 
 pub type AddonCall = extern "Rust" fn(Vec<AddonValue>) -> AddonValue;
 
@@ -36,6 +38,12 @@ pub struct FnRef {
     pub func: Rc<dyn Fn(Vec<AddonValue>) -> AddonValue> 
 }
 
+#[derive(Clone)]
+pub struct ObjectRef {
+    pub object: IndexMap<String, AddonValue>,
+    pub schema_store: Rc<RefCell<SchemaStore>>
+}
+
 impl FnRef {
     pub fn new(func: impl Fn(Vec<AddonValue>) -> AddonValue + 'static) -> Self {
         Self {
@@ -48,10 +56,13 @@ impl FnRef {
     }
 }
 
+#[derive(Clone)]
 pub enum AddonValue {
     String(String),
     Number(DynamicNumber),
     Bool(bool),
     Function(FnRef),
+    Array(Vec<AddonValue>),
+    Object(ObjectRef),
     Void
 }

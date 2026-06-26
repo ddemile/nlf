@@ -3,9 +3,9 @@ use std::{collections::HashMap, path::PathBuf};
 use lazy_static::lazy_static;
 use libloading::{Library, Symbol};
 use parking_lot::Mutex;
-use nlf_shared::{NLF_VERSION, addons::{AddonCall, AddonMetadata, AddonValue, FnRef, Registry}};
+use nlf_shared::{NLF_VERSION, addons::{AddonCall, AddonMetadata, AddonValue, FnRef, ObjectRef as AddonObjectRef, Registry}};
 
-use crate::{interpreter::eval_runtime_function, parser::{FunctionKind, ValueHolder}};
+use crate::{interpreter::eval_runtime_function, parser::{ArrayRef, FunctionKind, ObjectRef, ValueHolder}};
 
 impl From<ValueHolder> for AddonValue {
     fn from(value: ValueHolder) -> Self {
@@ -33,6 +33,11 @@ impl From<ValueHolder> for AddonValue {
 
                 AddonValue::Function(function_ref)
             },
+            ValueHolder::Array(array_ref) => AddonValue::Array(array_ref.fetch().iter().map(|value| (*value).clone().into()).collect()),
+            ValueHolder::Object(object_ref) => AddonValue::Object(AddonObjectRef {
+                object: object_ref.fetch().iter().map(|(key, value)| (key.clone(), value.clone().into())).collect(),
+                schema_store: object_ref.schema_store
+            }),
             ValueHolder::Void => AddonValue::Void,
             _ => panic!()
         }
@@ -45,6 +50,12 @@ impl Into<ValueHolder> for AddonValue {
             AddonValue::Number(number) => ValueHolder::Number(number),
             AddonValue::String(string) => ValueHolder::String(string),
             AddonValue::Bool(bool) => ValueHolder::Bool(bool),
+            AddonValue::Array(array) => ValueHolder::Array(ArrayRef::new(array.iter().map(|value| value.clone().into()).collect())),
+            AddonValue::Object(object_ref) => ValueHolder::Object(ObjectRef::new(
+                object_ref.object.iter().map(|(key, value)| (key.clone(), value.clone().into())).collect(),
+                None,
+                object_ref.schema_store
+            )),
             AddonValue::Void => ValueHolder::Void,
             _ => panic!()
         }

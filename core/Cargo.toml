@@ -10,7 +10,6 @@ name = "nlf_core"
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }
 ctor = "0.6.1"
-indexmap = { version = "2.11.4", features = ["serde"] }
 inline_colorization = "0.1.6"
 lazy_static = "1.5.0"
 libloading = "0.9.0"

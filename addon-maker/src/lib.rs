@@ -8,13 +8,10 @@ macro_rules! init {
     ($( $fn_name:ident ),* ) => {
         pub const __ADDON_INIT_MARKER: () = ();
         
-        pub const FUNCTIONS: std::sync::Mutex<Vec<nlf_addon_maker::AddonFn>> = Mutex::new(vec![]);
-
         #[unsafe(no_mangle)]
         extern "Rust" fn metadata() -> nlf_addon_maker::AddonMetadata {
             nlf_addon_maker::AddonMetadata {
-                nlf_version: nlf_addon_maker::NLF_VERSION,
-                // functions: FUNCTIONS.lock().unwrap().to_vec()
+                nlf_version: nlf_addon_maker::NLF_VERSION
             }
         }
 

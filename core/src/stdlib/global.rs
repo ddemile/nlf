@@ -1,6 +1,6 @@
 use std::{io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
 
-use indexmap::IndexMap;
+use nlf_shared::indexmap::IndexMap;
 use nlf_macros::expose;
 use nlf_shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
 
@@ -76,7 +76,7 @@ fn binding(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult
         map.insert(key.to_string(), function);
     }
 
-    Ok(ValueHolder::Object(ObjectRef::new(map, None, context)))
+    Ok(ValueHolder::Object(ObjectRef::new(map, None, context.get_schema_store())))
 }
 
 #[expose]
@@ -151,5 +151,5 @@ fn addon(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
         map.insert(function.0, func);
     }
 
-    Ok(ValueHolder::Object(ObjectRef::new(map, None, context)))
+    Ok(ValueHolder::Object(ObjectRef::new(map, None, context.get_schema_store())))
 }

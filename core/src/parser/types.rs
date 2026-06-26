@@ -2,7 +2,7 @@ use std::{
     cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, str::FromStr
 };
 
-use indexmap::IndexMap;
+use nlf_shared::{SchemaStore, indexmap::IndexMap};
 use serde::Serialize;
 use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
@@ -25,7 +25,7 @@ pub struct ObjectRef {
     #[serde(skip)]
     pub object: Rc<RefCell<Object>>,
     #[serde(skip)]
-    pub program_context: Rc<RefCell<ProgramContext>>,
+    pub schema_store: Rc<RefCell<SchemaStore>>,
 }
 
 #[derive(Serialize, Debug, Clone)]

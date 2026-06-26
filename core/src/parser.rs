@@ -203,7 +203,7 @@ macro_rules! expect_array {
 #[macro_export]
 macro_rules! expect_object {
     ($parser:expr) => {{
-        let mut map: indexmap::IndexMap<String, Expression> = indexmap::IndexMap::new();
+        let mut map: nlf_shared::indexmap::IndexMap<String, Expression> = nlf_shared::indexmap::IndexMap::new();
         
         crate::expect_comma_separated_group!($parser, TokenKind::OpeningBracket, TokenKind::ClosingBracket, {
             let key = crate::expect_string!($parser);
