@@ -1,5 +1,5 @@
 
-use crate::{analysis::{ScopeId, Span}, parser::{Block, Expression, ExpressionKind, LiteralExpressionKind, Program, Statement, StatementKind, SyntaxTree}};
+use crate::{analysis::{ScopeId, Span}, parser::{Block, Expression, ExpressionKind, Iterable, LiteralExpressionKind, Program, Statement, StatementKind, SyntaxTree}};
 
 pub trait Visitor<A: SyntaxTree> {
     fn visit_expression(&mut self, _expression: &Expression) {}
@@ -60,13 +60,22 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
         StatementKind::While { condition, statements } => {
             StatementKind::While { condition: condition.clone(), statements: statements.iter().map(|statement| walk_statement(visitor, statement)).collect() }
         }
-        StatementKind::For { variable, statements, left, right } => {
-            let left = left.clone().map(|left| walk_expression(visitor, &left));
-            let right = right.clone().map(|right| walk_expression(visitor, &right));
+        StatementKind::For { variable, statements, iterable } => {
+            let iterable = match iterable {
+                Iterable::Range(left, right) => {
+                    let left = left.clone().map(|left| walk_expression(visitor, &left));
+                    let right = right.clone().map(|right| walk_expression(visitor, &right));
+
+                    Iterable::Range(left, right)
+                }
+                Iterable::Array(expression) => {
+                    Iterable::Array(walk_expression(visitor, expression))
+                }
+            };
 
             let statements = statements.iter().map(|statement| walk_statement(visitor, statement)).collect();
 
-            StatementKind::For { variable: variable.clone(), left: left.clone(), right: right.clone(), statements }
+            StatementKind::For { variable: variable.clone(), iterable, statements }
         }
         StatementKind::Class { variable, methods, fields, body_start, body_end } => {
             let scope = visitor.enter_scope(Span { start: *body_start, end: *body_end });

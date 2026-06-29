@@ -1,8 +1,8 @@
-use std::{io::{self, Write}, rc::Rc, str::FromStr, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
+use std::{io::{self, Write}, rc::Rc, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
 
 use nlf_shared::indexmap::IndexMap;
 use nlf_macros::expose;
-use nlf_shared::{addons::AddonValue, numbers::{DynamicNumber, NumberHolder}};
+use nlf_shared::addons::AddonValue;
 
 use crate::{addons::Addon, argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
 
@@ -31,7 +31,7 @@ fn now(_values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
         .expect("time should go forward");
-    Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float64(since_the_epoch.as_millis_f64()))))
+    Ok(ValueHolder::Number(since_the_epoch.as_millis_f64()))
 }
 
 #[expose]
@@ -114,21 +114,6 @@ fn confirm(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResul
 }
 
 #[expose]
-fn cast_number(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let number = argument!(values, ValueHolder::Number, "number", 0);
-    let cast = argument!(values, ValueHolder::String, "cast", 1);
-
-    Ok(ValueHolder::Number(number.convert_to_type_of(&DynamicNumber::new(NumberHolder::from_str(&cast).expect("Invalid cast")))))
-}
-
-#[expose]
-fn get_number_type(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let number = argument!(values, ValueHolder::Number, "number", 0);
-
-    Ok(ValueHolder::String(number.get_str_repr()))
-}
-
-#[expose]
 fn addon(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
     let path = argument!(values, ValueHolder::String, "path", 0);
 
@@ -152,4 +137,16 @@ fn addon(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
     }
 
     Ok(ValueHolder::Object(ObjectRef::new(map, None, context.get_schema_store())))
+}
+
+#[expose]
+fn is_null(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
+    let Some(arg) = values.get(0) else {
+        return Err(LanguageError::from(RuntimeError::Custom(format!(
+            "argument at index {} missing",
+            0
+        ))))
+    };
+
+    Ok(ValueHolder::Bool(matches!(arg, ValueHolder::Void)))
 }

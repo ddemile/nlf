@@ -4,7 +4,7 @@ use syn::{Ident, Index, ItemFn, parse_macro_input};
 
 fn get_type_ident(input: &syn::Type) -> &Ident {
     match input {
-        syn::Type::Path(ty) => ty.path.get_ident().unwrap(),
+        syn::Type::Path(ty) => &ty.path.segments.first().unwrap().ident,
         _ => panic!(),
     }
 }
@@ -12,10 +12,12 @@ fn get_type_ident(input: &syn::Type) -> &Ident {
 fn convert_type(input: &syn::Type) -> Ident {
     let ident = get_type_ident(input).to_string();
     let kind = match ident.as_str() {
-        "DynamicNumber" | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "f32" | "f64" => "Number",
+        "f64" => "Number",
         "String" => "String",
         "bool" => "Bool",
         "FnRef" => "Function",
+        "AddonValue" => "AddonValue",
+        "ObjectRef" => "Object",
         _ => panic!()
     };
 
@@ -63,9 +65,9 @@ pub fn addon_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
             #fn_call;
             nlf_addon_maker::AddonValue::#return_type
         }
-    } else if return_type.to_string() == "Number" {
+    } else if return_type.to_string() == "AddonValue" {
         quote! {
-            nlf_addon_maker::AddonValue::#return_type(DynamicNumber::from(#fn_call))
+            #fn_call
         }
     } else {
         quote! {            

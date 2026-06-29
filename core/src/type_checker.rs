@@ -1,7 +1,7 @@
 use std::{path::PathBuf, rc::Rc, str::FromStr};
 
 
-use crate::{analysis::{self, Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, loader::{self}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
+use crate::{analysis::{self, Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, loader::{self}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, Iterable, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
 
 struct TypeChecker {
     pub program: ASTProgram,
@@ -407,8 +407,20 @@ fn check_statement(statement: ASTStatement, checker: &mut TypeChecker) -> Langua
         StatementKind::Field { visibility, name, value } => {
             StatementKind::Field { visibility, name, value }
         }
-        StatementKind::For { variable, left, right, statements } => {
-            StatementKind::For { variable, left, right, statements: check_body(statements, checker)? }
+        StatementKind::For { variable, iterable, statements } => {
+            let iterable = match iterable {
+                Iterable::Range(left, right) => {
+                    let left = left.map(|left| check_expression(left, checker)).transpose()?;
+                    let right = right.map(|right| check_expression(right, checker)).transpose()?;
+
+                    Iterable::Range(left, right)
+                }
+                Iterable::Array(expression) => {
+                    Iterable::Array(check_expression(expression, checker)?)
+                }
+            };
+
+            StatementKind::For { variable, iterable, statements: check_body(statements, checker)? }
         }
         StatementKind::If { condition, block, alternate } => {
             let alternate = if let Some(alt) = alternate {

@@ -1,8 +1,8 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use indexmap::IndexMap;
 
-use crate::{SchemaStore, numbers::DynamicNumber};
+use crate::SchemaStore;
 
 pub type AddonCall = extern "Rust" fn(Vec<AddonValue>) -> AddonValue;
 
@@ -59,7 +59,7 @@ impl FnRef {
 #[derive(Clone)]
 pub enum AddonValue {
     String(String),
-    Number(DynamicNumber),
+    Number(f64),
     Bool(bool),
     Function(FnRef),
     Array(Vec<AddonValue>),

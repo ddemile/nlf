@@ -1,102 +1,86 @@
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 
 use nlf_macros::module;
-use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
 
 module!("math", {
     fn sqrt(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.sqrt()))))
+        Ok(ValueHolder::Number(x.sqrt()))
     }
 
     fn pow(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let a = argument!(values, ValueHolder::Number, "a", 0);
         let b = argument!(values, ValueHolder::Number, "b", 1);
-        let a: f32 = a.into();
-        let b: f32 = b.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(a.powf(b)))))
+        Ok(ValueHolder::Number(a.powf(b)))
     }
 
     fn abs(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.abs()))))
+        Ok(ValueHolder::Number(x.abs()))
     }
 
     fn sign(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.signum()))))
+        Ok(ValueHolder::Number(x.signum()))
     }
 
     fn sin(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.sin()))))
+        Ok(ValueHolder::Number(x.sin()))
     }
 
     fn cos(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.cos()))))
+        Ok(ValueHolder::Number(x.cos()))
     }
 
     fn tan(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.tan()))))
+        Ok(ValueHolder::Number(x.tan()))
     }
 
     fn round(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.round()))))
+        Ok(ValueHolder::Number(x.round()))
     }
 
     fn floor(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.floor()))))
+        Ok(ValueHolder::Number(x.floor()))
     }
 
     fn ceil(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let x = argument!(values, ValueHolder::Number, "x", 0);
-        let x: f32 = x.into();
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(x.ceil()))))
+        Ok(ValueHolder::Number(x.ceil()))
     }
 
     fn pi(_values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(PI))))
+        Ok(ValueHolder::Number(PI))
     }
 
     fn min(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let a = argument!(values, ValueHolder::Number, "a", 0);
-        let b = argument!(values, ValueHolder::Number, "b", 0);
-        let a: f32 = a.into();
-        let b: f32 = b.into();
+        let b = argument!(values, ValueHolder::Number, "b", 1);
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(a.min(b)))))
+        Ok(ValueHolder::Number(a.min(b)))
     }
 
     fn max(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
         let a = argument!(values, ValueHolder::Number, "a", 0);
-        let b = argument!(values, ValueHolder::Number, "b", 0);
-        let a: f32 = a.into();
-        let b: f32 = b.into();
+        let b = argument!(values, ValueHolder::Number, "b", 1);
 
-        Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Float32(a.min(b)))))
+        Ok(ValueHolder::Number(a.max(b)))
     }
 });

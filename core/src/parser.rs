@@ -1,3 +1,4 @@
+use std::rc::Rc;
 
 use crate::{errors::{LanguageError, LanguageResult}, lexer::{KeywordKind, Token, TokenKind}, parser::pratt::parse_expression};
 
@@ -263,7 +264,16 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<ASTStatement> {
 
     expect_token!(parser, TokenKind::Arrow);
 
-    let block = expect_block(parser)?;
+    let block = if matches!(parser.peek(), Some(Token { kind: TokenKind::OpeningBracket, .. })) {
+        expect_block(parser)?
+    } else {
+        let expression = match_expression(parser)?;
+
+        let start = expression.start;
+        let end = expression.end;
+
+        Block { statements: Rc::new([StatementKind::Return { expression }.into_statement(start, end)]), start, end }
+    };
 
     let end = block.end;
 
@@ -471,28 +481,40 @@ fn match_for(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     expect_keyword!(parser, KeywordKind::In);
 
     let left = match parser.peek() {
-        Some(Token { kind: TokenKind::NumericLiteral { .. } | TokenKind::Identifier { .. } | TokenKind::OpeningParenthesis, .. }) => Some(match_expression(parser)?),
+        Some(Token { kind: TokenKind::NumericLiteral { .. } | TokenKind::Identifier { .. } | TokenKind::OpeningParenthesis | TokenKind::OpeningSquareBracket, .. }) => Some(match_expression(parser)?),
         _ => None
     };
     
-    let Token { start: range_start, end: range_end, .. } = expect_token!(parser, TokenKind::Range);
+    let iterable = match parser.peek().cloned() {
+        Some(Token { kind: TokenKind::Range, start: range_start, end: range_end }) => {
+            parser.advance();
 
-    let right = match parser.peek() {
-        Some(Token { kind: TokenKind::NumericLiteral { .. } | TokenKind::Identifier { .. } | TokenKind::OpeningParenthesis, .. }) => Some(match_expression(parser)?),
-        _ => None
+            let right = match parser.peek() {
+                Some(Token { kind: TokenKind::NumericLiteral { .. } | TokenKind::Identifier { .. } | TokenKind::OpeningParenthesis, .. }) => Some(match_expression(parser)?),
+                _ => None
+            };
+
+            match (&left, &right) {
+                (None, None) => return Err(LanguageError::with_source(ParserError::InvalidUsage("Both sides of a range expression cannot be None".into()), range_start, range_end)),
+                _ => ()
+            }
+
+            Iterable::Range(left, right)
+        }
+        _ => {
+            if let Some(expression) = left {
+                Iterable::Array(expression)
+            } else {
+                return parser.error()
+            }
+        }
     };
 
     let block = expect_block(parser)?;
 
-    match (&left, &right) {
-        (None, None) => return Err(LanguageError::with_source(ParserError::InvalidUsage("Both sides of a range expression cannot be None".into()), range_start, range_end)),
-        _ => ()
-    }
-
     Ok(ASTStatementKind::For {
         variable: loop_variable,
-        left,
-        right,
+        iterable,
         statements: block.statements
     }.into_statement(start, block.end))
 }

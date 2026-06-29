@@ -4,14 +4,13 @@ use std::{cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::{Rc, Weak
 use nlf_shared::{Schema, SchemaStore, indexmap::{IndexMap, IndexSet}};
 use parking_lot::{Mutex, MutexGuard};
 use serde::Serialize;
-use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 use smallvec::SmallVec;
 
 use crate::{
     errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{format::FormatOptions, prototypes::{
         ARRAY_PROTOTYPE, LocalMethodFunc, LocalPrototype, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }}, lexer::TokenKind, loader::Module, parser::{
-        ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, IRProgram, IRStatement, IRStatementKind, LiteralExpressionKind, ObjectRef, RuntimeFunction, StatementKind, StatementKindWrapper, ValueHolder, VariableRef, Visibility
+        ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, ObjectRef, RuntimeFunction, StatementKind, StatementKindWrapper, ValueHolder, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE
 };
 
@@ -646,10 +645,9 @@ fn eval_statement(statement: &IRStatement, context: &mut ModuleContext) -> Runti
         } => eval_if(&condition, block, alternate, context),
         IRStatementKind::For {
             variable,
-            left,
-            right,
+            iterable,
             statements,
-        } => eval_for(variable, left, right, statements.clone(), context),
+        } => eval_for(variable, iterable, statements.clone(), context),
         IRStatementKind::While {
             condition,
             statements,
@@ -672,66 +670,105 @@ fn eval_statement(statement: &IRStatement, context: &mut ModuleContext) -> Runti
 
 fn eval_for(
     variable: &VariableRef,
-    left: &Option<Expression>,
-    right: &Option<Expression>,
+    iterable: &Iterable,
     statements: Rc<[IRStatement]>,
     context: &mut ModuleContext,
 ) -> RuntimeResult {
     let mut iter: Box<dyn Iterator<Item = i32>> = Box::new(0..);
 
-    match (left, right) {
-        (Some(_), Some(_)) => {
-            let left: i32 = eval_expr(left.as_ref().unwrap(), context)?.into();
-            let right: i32 = eval_expr(right.as_ref().unwrap(), context)?.into();
+    match iterable {
+        Iterable::Range(left, right) => {
+            match (left, right) {
+                (Some(_), Some(_)) => {
+                    let left: i32 = eval_expr(left.as_ref().unwrap(), context)?.into();
+                    let right: i32 = eval_expr(right.as_ref().unwrap(), context)?.into();
 
-            iter = if left < right {
-                Box::new(left..right)
-            } else {
-                Box::new(((right + 1)..(left + 1)).rev())
+                    iter = if left < right {
+                        Box::new(left..right)
+                    } else {
+                        Box::new(((right + 1)..(left + 1)).rev())
+                    };
+                }
+                (Some(_), None) => {
+                    let left: i32 = eval_expr(left.as_ref().unwrap(), context)?.into();
+
+                    iter = Box::new(left..)
+                }
+                (None, Some(_)) => {
+                    let right: i32 = eval_expr(right.as_ref().unwrap(), context)?.into();
+
+                    iter = Box::new(0..right)
+                }
+                _ => (),
+            }
+
+            context.environment.enter_scope(ScopeKind::Loop);
+            context
+                .environment
+                .set(variable, ValueHolder::Number(0.0), true)?;
+
+            for i in iter {
+                {
+                    // Faster than environment.set in this context
+                    let mut scope = context.environment.scopes.last().unwrap().borrow_mut();
+
+                    scope.slots.fill(ValueHolder::Void);
+
+                    scope.slots[variable.slot] = ValueHolder::Number(i as f64);
+                }
+
+                eval_body(statements.clone(), context)?;
+                let broken = context
+                    .environment
+                    .scopes
+                    .last()
+                    .unwrap()
+                    .borrow()
+                    .interrupted
+                    .is_some();
+
+                if broken {
+                    break;
+                }
+            }
+        }
+        Iterable::Array(expression) => {
+            let ValueHolder::Array(array) = eval_expr(expression, context)? else {
+                return Err(LanguageError::with_source(RuntimeError::OperationNotSupported("Only arrays can be iterated".to_string()), expression.start, expression.end))
             };
-        }
-        (Some(_), None) => {
-            let left: i32 = eval_expr(left.as_ref().unwrap(), context)?.into();
 
-            iter = Box::new(left..)
-        }
-        (None, Some(_)) => {
-            let right: i32 = eval_expr(right.as_ref().unwrap(), context)?.into();
+            context.environment.enter_scope(ScopeKind::Loop);
+            context
+                .environment
+                .set(variable, ValueHolder::Number(0.0), true)?;
 
-            iter = Box::new(0..right)
-        }
-        _ => (),
-    }
+            for value in array.fetch() {
+                {
+                    // Faster than environment.set in this context
+                    let mut scope = context.environment.scopes.last().unwrap().borrow_mut();
 
-    context.environment.enter_scope(ScopeKind::Loop);
-    context
-        .environment
-        .set(variable, ValueHolder::Number(DynamicNumber::new(NumberHolder::Integer8(0))), true)?;
+                    scope.slots.fill(ValueHolder::Void);
 
-    for i in iter {
-        {
-            // Faster than environment.set in this context
-            let mut scope = context.environment.scopes.last().unwrap().borrow_mut();
+                    scope.slots[variable.slot] = value;
+                }
 
-            scope.slots.fill(ValueHolder::Void);
+                eval_body(statements.clone(), context)?;
+                let broken = context
+                    .environment
+                    .scopes
+                    .last()
+                    .unwrap()
+                    .borrow()
+                    .interrupted
+                    .is_some();
 
-            scope.slots[variable.slot] = ValueHolder::Number(DynamicNumber::new(NumberHolder::Integer32(i)));
-        }
-
-        eval_body(statements.clone(), context)?;
-        let broken = context
-            .environment
-            .scopes
-            .last()
-            .unwrap()
-            .borrow()
-            .interrupted
-            .is_some();
-
-        if broken {
-            break;
+                if broken {
+                    break;
+                }
+            }
         }
     }
+
     context.environment.exit_scope();
 
     Ok(ValueHolder::Void)
@@ -851,7 +888,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
 
             if matches!(&property, ValueHolder::Number(_)) {
                 let index = match &property {
-                    ValueHolder::Number(f) => <DynamicNumber as Into<usize>>::into(*f),
+                    ValueHolder::Number(f) => *f as usize,
                     _ => unreachable!()
                 };
 
@@ -949,9 +986,9 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
         }
         ExpressionKind::Unary { left, operator } => {
             let value = eval_expr(left, context)?;
-            match (value, operator) {
+            match (value.clone(), operator) {
                 (ValueHolder::Number(mut number), TokenKind::Minus) => {
-                    number = number * DynamicNumber::new(NumberHolder::Integer8(-1));
+                    number = number * -1.0;
 
                     return Ok(ValueHolder::Number(number))
                 },
@@ -960,6 +997,11 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
 
                     return Ok(ValueHolder::Bool(boolean))
                 },
+                (_, TokenKind::Bang) => {
+                    let boolean: bool = value.into();
+
+                    return Ok(ValueHolder::Bool(!boolean))
+                }
                 _ => return Err(LanguageError::with_source(RuntimeError::Custom("Unable to use this unary operator with this type".to_string()), left.start - 1, left.start))
             }
         }
@@ -1072,7 +1114,7 @@ fn eval_expr(expr: &Expression, context: &mut ModuleContext) -> RuntimeResult {
                     };
 
                     let index = match index {
-                        ValueHolder::Number(f) => <DynamicNumber as Into<usize>>::into(*f),
+                        ValueHolder::Number(f) => *f as usize,
                         _ => {
                             return Err(LanguageError::with_source(RuntimeError::InvalidType(
                                 "Index should be an integer".to_string(),

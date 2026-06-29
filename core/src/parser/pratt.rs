@@ -1,5 +1,3 @@
-use nlf_shared::numbers::DynamicNumber;
-
 use crate::{errors::{LanguageError, LanguageResult}, expect_array, expect_boolean, expect_comma_separated_group, expect_identifier, expect_number, expect_object, expect_string, expect_token, lexer::{Token, TokenKind}, parser::{ASTStatement, Expression, ExpressionKind, LiteralExpressionKind, Parser, ParserError, StatementKindWrapper, ValueHolder, expect_lambda}};
 
 fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
@@ -14,7 +12,7 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
 
     if matches!(token.kind, TokenKind::Minus | TokenKind::Bang) {
         parser.advance();
-        let left = parse_expression(parser, 100)?;
+        let left = parse_expression(parser, 0)?;
         let end = left.end;
 
         return Ok(ExpressionKind::Unary {
@@ -48,7 +46,7 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
         },
         Some(TokenKind::NumericLiteral { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
-            value: ValueHolder::Number(DynamicNumber::from_str(&expect_number!(parser))) 
+            value: ValueHolder::Number(expect_number!(parser).parse().unwrap()) 
         },
         Some(TokenKind::BooleanLiteral { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,

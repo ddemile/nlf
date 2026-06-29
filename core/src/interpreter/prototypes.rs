@@ -1,9 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use lazy_static::lazy_static;
-use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, Scope}, parser::{ArrayRef, ValueHolder}};
+use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, Scope, eval_runtime_function}, parser::{ArrayRef, ValueHolder}};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub enum Operation {
@@ -235,7 +234,7 @@ lazy_static! {
                     unreachable!()
                 };
 
-                Ok(ValueHolder::Number(DynamicNumber::new(NumberHolder::Unsigned32(array.fetch().len() as u32))))
+                Ok(ValueHolder::Number(array.fetch().len() as f64))
             }))
             .with_method("push", Arc::new(|instance, args, _context| {
                 if args.len() > 1 {
@@ -273,6 +272,32 @@ lazy_static! {
                 };
                 
                 Ok(ValueHolder::String(array.fetch().iter().map(|arg| arg.to_string()).collect::<Vec<String>>().join(separator)))
+            }))
+            .with_method("find", Arc::new(|instance, args, context| {
+                let Some(ValueHolder::Fn(predicate)) = args.get(0) else {
+                    return Err(LanguageError::from(RuntimeError::Custom("Expected string at index 0".into())));
+                };
+
+                let ValueHolder::Array(array) = instance else {
+                    unreachable!()
+                };
+
+                for value in array.fetch() {
+                    let result = match predicate {
+                        crate::parser::FunctionKind::BuiltIn(predicate) => {
+                            predicate.func.call(instance, &[value.clone()], context)?
+                        }
+                        crate::parser::FunctionKind::Runtime(predicate) => {
+                            eval_runtime_function(predicate.clone(), &[value.clone()], context)?
+                        }
+                    };
+
+                    if let ValueHolder::Bool(true) = result {
+                        return Ok(value)
+                    }
+                }
+
+                Ok(ValueHolder::Void)
             }));
         prototype
     };

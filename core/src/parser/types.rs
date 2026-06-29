@@ -4,10 +4,9 @@ use std::{
 
 use nlf_shared::{SchemaStore, indexmap::IndexMap};
 use serde::Serialize;
-use nlf_shared::numbers::{DynamicNumber, NumberHolder};
 
 use crate::{
-    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, ProgramContext, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
+    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
 };
 
 #[derive(Debug)]
@@ -68,7 +67,7 @@ pub enum FunctionKind {
 #[serde(untagged)]
 pub enum ValueHolder {
     String(String),
-    Number(DynamicNumber),
+    Number(f64),
     Bool(bool),
     Fn(FunctionKind),
     Object(ObjectRef),
@@ -121,9 +120,13 @@ impl PartialOrd for ValueHolder {
 impl Into<bool> for ValueHolder {
     fn into(self) -> bool {
         match self {
-            ValueHolder::Number(a) => a > DynamicNumber::new(NumberHolder::Unsigned8(0)),
-            ValueHolder::String(a) => a.len() > 0,
-            ValueHolder::Bool(a) => a,
+            Self::Number(a) => a > 0.0,
+            Self::String(a) => a.len() > 0,
+            Self::Bool(a) => a,
+            Self::Array(_) => true,
+            Self::Object(_) => true,
+            Self::ClassDefinition(_) => true,
+            Self::Fn(_) => true,
             _ => false, // different variants cannot be compared
         }
     }
@@ -132,7 +135,7 @@ impl Into<bool> for ValueHolder {
 impl Into<i32> for ValueHolder {
     fn into(self) -> i32 {
         match self {
-            ValueHolder::Number(a) => a.into(),
+            ValueHolder::Number(a) => a as i32,
             _ => panic!("Couldn't convert ValueHolder into i32"),
         }
     }
@@ -154,6 +157,12 @@ impl<T> Block<T> {
     pub fn get_span(&self) -> Span {
         Span { start: self.start, end: self.end }
     }
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub enum Iterable {
+    Range(Option<Expression>, Option<Expression>),
+    Array(Expression)
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -222,8 +231,7 @@ pub enum StatementKind<A: SyntaxTree> {
     },
     For {
         variable: A::Variable,
-        left: Option<Expression>,
-        right: Option<Expression>,
+        iterable: Iterable,
         statements: Rc<[Statement<Self>]>,
     },
     Function {

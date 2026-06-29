@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc, vec};
 
 use serde::Serialize;
 
-use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, LiteralExpressionKind, Program, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableRef}};
+use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Program, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableRef}};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -159,16 +159,25 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
 
             StatementKind::Block(block)
         }
-        ASTStatementKind::For { variable, left, right, statements } => {
-            let left = left.map(|left| translate_expression(left, context)).transpose()?;
-            let right = right.map(|right| translate_expression(right, context)).transpose()?;
+        ASTStatementKind::For { variable, iterable, statements } => {
+            let iterable = match iterable {
+                Iterable::Range(left, right) => {
+                    let left = left.map(|left| translate_expression(left, context)).transpose()?;
+                    let right = right.map(|right| translate_expression(right, context)).transpose()?;
+
+                    Iterable::Range(left, right)
+                }
+                Iterable::Array(expression) => {
+                    Iterable::Array(translate_expression(expression, context)?)
+                }
+            };
 
             context.enter_scope(ScopeKind::Loop);
             let var_ref = context.set(&variable.value);
             let statements = translate_body(statements, context)?;
             context.exit_scope();
 
-            StatementKind::For { variable: var_ref, left, right, statements }
+            StatementKind::For { variable: var_ref, iterable, statements }
         }
         ASTStatementKind::While { condition, statements } => {
             context.enter_scope(ScopeKind::Loop);

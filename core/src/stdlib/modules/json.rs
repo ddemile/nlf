@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
 use nlf_macros::module;
-use nlf_shared::numbers::DynamicNumber;
 use serde_json::{Number, Value};
 
 use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{ArrayRef, ObjectRef, ValueHolder}};
@@ -38,7 +37,7 @@ fn convert_json_value(value: &Value, context: &mut ModuleContext) -> ValueHolder
     match value {
         Value::Bool(bool) => ValueHolder::Bool(*bool),
         Value::String(string) => ValueHolder::String(string.clone()),
-        Value::Number(number) => ValueHolder::Number(DynamicNumber::from_str(&number.to_string())),
+        Value::Number(number) => ValueHolder::Number(number.as_f64().unwrap()),
         Value::Array(array) => ValueHolder::Array(ArrayRef::new(array.iter().map(|value| convert_json_value(value, context)).collect())),
         Value::Object(object) => ValueHolder::Object(ObjectRef::new(
             object.iter().map(|(key, value)| (key.clone(), convert_json_value(value, context))).collect(),

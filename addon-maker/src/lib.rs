@@ -1,6 +1,5 @@
 pub use macros::addon_fn;
 pub use nlf_shared::addons::*;
-pub use nlf_shared::numbers::DynamicNumber;
 pub use nlf_shared::NLF_VERSION;
 
 #[macro_export]

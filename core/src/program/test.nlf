@@ -6,15 +6,13 @@ class Dog {
     }
 }
 
-let d = sign("test")
+let d = sign(7)
 
 let dog = Dog()
 
 let age = dog.age()
 
-let double = (arg: number): number => {
-    return arg * 2
-}
+let double = (arg: number): number => arg * 2
 
 let result = double(2)
 
