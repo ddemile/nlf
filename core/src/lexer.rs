@@ -1,4 +1,4 @@
-use std::{collections::HashMap, f32::consts::PI};
+use std::{collections::HashMap, f64::consts::PI};
 
 use serde::{Serialize, Deserialize};
 

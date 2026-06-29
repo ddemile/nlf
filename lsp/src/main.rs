@@ -120,7 +120,28 @@ impl LanguageServer for Backend {
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
-                // document_highlight_provider: Some(OneOf::Left(true)),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: vec![
+                                    "variable".into(),
+                                    "function".into(),
+                                    "class".into(),
+                                    "type".into(),
+                                    "keyword".into(),
+                                ],
+                                token_modifiers: vec![
+                                    "declaration".into(),
+                                    "readonly".into(),
+                                    "static".into(),
+                                ],
+                            },
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            ..Default::default()
+                        },
+                    ),
+                ),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -522,6 +543,86 @@ impl LanguageServer for Backend {
         };
 
         Ok(Some(GotoDefinitionResponse::Scalar(location)))
+    }
+
+    async fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Result<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri;
+
+        let contents = self.get_file_contents(&uri).await;
+
+        let index = match analysis::get_symbol_index(uri.to_file_path().unwrap(), contents.clone()) {
+            Some(index) => index,
+            None => return Ok(None)
+        };
+
+        fn get_definition_type(ty: &Type) -> u32 {
+            match ty {
+                Type::Function(_) => 1,
+                Type::Class(_) => 2,
+                _ => 0
+            }
+        }
+
+        fn get_symbol_type<'a>(backend: &'a Backend, uri: &'a Url, symbol: &'a Symbol) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<u32>> + Send + 'a>> {
+            Box::pin(async move {
+                match &symbol.kind {
+                    SymbolKind::Definition(ty) => Some(get_definition_type(ty)),
+                    SymbolKind::Function(_) => Some(1),
+                    SymbolKind::Class(_) => Some(2),
+                    SymbolKind::Import(source_path) => {
+                        let (resolved_symbol, uri , _) = backend.resolve_import(&symbol.name, &source_path, uri).await?;
+
+                        get_symbol_type(backend, &uri, &resolved_symbol).await
+                    },
+                    _ => None
+                }
+            })
+        }
+
+        let mut data = Vec::new();
+        let mut prev = (0, 0);
+
+        let mut symbols = index.symbols.clone();
+
+        // IMPORTANT: LSP requires tokens sorted top-to-bottom, left-to-right
+        symbols.sort_by(|a, b| {
+            let pa = source_to_line(&contents, a.span.start);
+            let pb = source_to_line(&contents, b.span.start);
+
+            pa.line
+                .cmp(&pb.line)
+                .then(pa.character.cmp(&pb.character))
+        });
+
+        for symbol in symbols {
+            let (SymbolKind::Variable | SymbolKind::Definition(_)) = symbol.kind else {
+                continue
+            };
+
+            let token_type = if let SymbolKind::Definition(ty) = symbol.kind {
+                get_definition_type(&ty)
+            } else {
+                let Some(source_symbol) = index.find_definition(&symbol.name, symbol.span.start).cloned() else {
+                    continue;
+                };
+
+                get_symbol_type(self, &uri, &source_symbol).await.unwrap()
+            };
+
+            let position = source_to_line(&contents, symbol.span.start);
+
+            data.push(SemanticToken {
+                delta_line: position.line - prev.0,
+                delta_start: if position.line == prev.0 { position.character - prev.1 } else { position.character },
+                length: (symbol.span.end - symbol.span.start) as u32,
+                token_type,
+                token_modifiers_bitset: 0
+            });
+
+            prev = (position.line, position.character);
+        }
+
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens { result_id: None, data })))
     }
 }
 

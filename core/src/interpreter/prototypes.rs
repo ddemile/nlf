@@ -298,6 +298,17 @@ lazy_static! {
                 }
 
                 Ok(ValueHolder::Void)
+            }))
+            .with_method("contains", Arc::new(|instance, args, _context| {
+                let Some(value) = args.get(0) else {
+                    return Err(LanguageError::from(RuntimeError::Custom("Expected value at index 0".into())));
+                };
+
+                let ValueHolder::Array(array) = instance else {
+                    unreachable!()
+                };
+                
+                Ok(ValueHolder::Bool(array.fetch().contains(value)))
             }));
         prototype
     };
