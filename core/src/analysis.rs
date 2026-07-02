@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
-use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Copy)]
+use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, Iterable, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
+
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -281,8 +283,16 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
                     self.define(identifier.value.to_string(), SymbolKind::Definition(ty.clone()), Span { start: identifier.start, end: identifier.end });
                 }
             }
-            TypedStatementKind::For { variable, .. } => {
-                self.define(variable.value.clone(), SymbolKind::Definition(Type::Number), Span { start: variable.start, end: variable.end });
+            TypedStatementKind::For { variable, iterable, .. } => {
+                match iterable {
+                    Iterable::Range(_, _) => {
+                        self.define(variable.value.clone(), SymbolKind::Definition(Type::Number), Span { start: variable.start, end: variable.end });
+                    }
+                    Iterable::Array(_) => {
+                        // TODO: implement corrrect variable type
+                        self.define(variable.value.clone(), SymbolKind::Definition(Type::Unknown), Span { start: variable.start, end: variable.end });
+                    }
+                }
             }
             _ => {}
         }

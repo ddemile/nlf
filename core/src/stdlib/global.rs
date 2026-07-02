@@ -150,3 +150,10 @@ fn is_null(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResul
 
     Ok(ValueHolder::Bool(matches!(arg, ValueHolder::Void)))
 }
+
+#[expose]
+fn number(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
+    let string = argument!(values, ValueHolder::String, "string", 0);
+
+    Ok(ValueHolder::Number(string.parse().unwrap()))
+}

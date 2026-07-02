@@ -476,13 +476,22 @@ pub struct TypeId(pub u32);
 
 #[derive(Serialize, Debug, Clone)]
 pub enum TypeRef {
-    Named(Identifier)
+    Named(Identifier),
+    Array {
+        type_ref: Box<TypeRef>,
+        span: Span
+    },
+    Object {
+        entries: IndexMap<String, TypeRef>,
+        span: Span
+    }
 }
 
 impl TypeRef {
     pub fn get_span(&self) -> Span {
         match self {
-            Self::Named(ident) => Span { start: ident.start, end: ident.end }
+            Self::Named(ident) => Span { start: ident.start, end: ident.end },
+            Self::Array { span, .. } | Self::Object { span, .. } => *span,
         }
     }
 }
@@ -517,6 +526,8 @@ pub enum Type {
     Instance {
         class: Box<ClassType>
     },
+    Array(Box<Type>),
+    Object(IndexMap<String, Type>),
     Unknown,
     Any
 }
@@ -539,6 +550,10 @@ impl ToString for Type {
             },
             Self::Class(box ClassType { name, .. }) => format!("class {}", name),
             Self::Instance { class: box ClassType { name, .. }, .. } => format!("{}", name),
+            Self::Array(ty) => format!("{}[]", ty.to_string()),
+            Self::Object(entries) => {
+                format!("{{ {} }}", entries.iter().map(|(key, value)| format!("{}: {}", key, value.to_string())).collect::<Vec<String>>().join(", "))
+            },
             Self::Unknown => "unknown".to_string(),
             Self::Any => "any".to_string()
         }

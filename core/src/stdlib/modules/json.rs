@@ -19,18 +19,8 @@ module!("json", {
     }
 });
 
-impl From<ValueHolder> for Value {
-    fn from(value: ValueHolder) -> Self {
-        match value {
-            ValueHolder::Bool(bool) => Value::Bool(bool),
-            ValueHolder::String(string) => Value::String(string),
-            ValueHolder::Number(number) => Value::Number(serde_json::Number::from_str(&number.to_string()).unwrap()),
-            ValueHolder::Array(array) => Value::Array(array.fetch().iter().map(|value| Value::from(value.clone())).collect()),
-            ValueHolder::Object(object) => Value::Object(object.fetch().iter().map(|(key, value)| (key.clone(), Value::from(value.clone()))).collect()),
-            ValueHolder::Void => Value::Null,
-            _ => panic!()
-        }
-    }
+fn is_decimal(x: f64) -> bool {
+    (x - x.round()).abs() > f64::EPSILON
 }
 
 fn convert_json_value(value: &Value, context: &mut ModuleContext) -> ValueHolder {
@@ -52,7 +42,13 @@ fn convert_value_holder(value: &ValueHolder) -> Option<Value> {
     match value {
         ValueHolder::Bool(bool) => Some(Value::Bool(*bool)),
         ValueHolder::String(string) => Some(Value::String(string.clone())),
-        ValueHolder::Number(number) => Some(Value::Number(Number::from_f64((*number).into()).unwrap())),
+        ValueHolder::Number(number) => {
+            Some(if is_decimal(*number) {
+                Value::Number(serde_json::Number::from_f64(*number).unwrap())
+            } else {
+                Value::Number(serde_json::Number::from_u128(*number as u128).unwrap())
+            })
+        },
         ValueHolder::Array(array) => Some(Value::Array(array.fetch().iter().filter_map(|value| convert_value_holder(value)).collect())),
         ValueHolder::Object(object) => Some(Value::Object(object.fetch().into_iter().filter_map(|(key, value)| convert_value_holder(&value).map(|value| (key, value))).collect())),
         ValueHolder::Void => Some(Value::Null),

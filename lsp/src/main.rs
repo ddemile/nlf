@@ -249,6 +249,16 @@ impl LanguageServer for Backend {
                                 }
                                 Type::String => return get_prototype_completions(&prototypes::STRING_PROTOTYPE),
                                 Type::Number => return get_prototype_completions(&prototypes::NUMBER_PROTOTYPE),
+                                Type::Array(_) => return get_prototype_completions(&prototypes::ARRAY_PROTOTYPE),
+                                Type::Object(entries) => {
+                                    for key in entries.keys() {
+                                        items.push(CompletionItem {
+                                            label: key.to_string(),
+                                            kind: Some(CompletionItemKind::FIELD),
+                                            ..Default::default()
+                                        });
+                                    }
+                                },
                                 _ => {}
                             }
                         }

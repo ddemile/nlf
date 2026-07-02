@@ -1,5 +1,7 @@
-use std::{path::PathBuf, rc::Rc, str::FromStr};
+use std::{fs, path::PathBuf, rc::Rc, str::FromStr};
 
+
+use nlf_shared::indexmap::IndexMap;
 
 use crate::{analysis::{self, Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, loader::{self}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, Iterable, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
 
@@ -111,11 +113,11 @@ impl Visitor<ASTSyntaxTree> for TypeCollector {
     fn transform_statement(&mut self, statement: &ASTStatement) -> ASTStatement {
         match &statement.kind {
             ASTStatementKind::Class { variable, .. } => {
-                self.define(variable.value.clone(), Span { start: statement.start, end: statement.end });
+                self.define(variable.value.clone(), Span { start: variable.start, end: variable.end });
             }
             ASTStatementKind::Import { specifiers, .. } => {
                 for ident in specifiers {
-                    self.define(ident.value.to_string(), Span { start: statement.start, end: statement.end });
+                    self.define(ident.value.to_string(), Span { start: ident.start, end: ident.end });
                 }
             }
             _ => {} 
@@ -259,6 +261,15 @@ impl TypedTreeSyntaxTransformer {
                     _ => {}
                 }
             }
+            ExpressionKind::Literal { r#type: LiteralExpressionKind::Object(entries), .. } => {
+                let map: IndexMap<String, Type> = entries.iter().filter_map(|(key, value)| {
+                    let ty = self.resolve_expression_type(value).unwrap_or(resolve_expression_type(value).ok()?);
+
+                    Some((key.to_string(), ty))
+                }).collect();
+                
+                return Some(Type::Object(map))
+            }
             _ => {}
         }
         
@@ -321,7 +332,7 @@ fn hoist_types(statements: &Rc<[ASTStatement]>, checker: &mut TypeChecker) -> La
 
         let class_type = get_class_type(&variable, &methods, &fields);
 
-        checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type)}, span: Span { start: statement.start, end: statement.end } });
+        checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type)}, span: Span { start: variable.start, end: variable.end } });
     
         Ok(())
     }
@@ -354,7 +365,7 @@ fn hoist_types(statements: &Rc<[ASTStatement]>, checker: &mut TypeChecker) -> La
                     
                     match source_symbol.kind {
                         SymbolKind::Class(class_type) => {
-                            checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type) }, span: Span { start: statement.start, end: statement.end } });
+                            checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type) }, span: Span { start: ident.start, end: ident.end } });
                         },
                         _ => {}
                     }  
@@ -569,6 +580,16 @@ fn resolve_type_ref(type_ref: &TypeRef, checker: &mut TypeChecker) -> LanguageRe
             }
 
             return Err(LanguageError::with_source(ParserError::InvalidType(format!("Type not found: {}", ident.value)), ident.start, ident.end))
+        }
+        TypeRef::Array { type_ref, .. } => {
+            return Ok(Type::Array(Box::new(resolve_type_ref(type_ref, checker)?)))
+        }
+        TypeRef::Object { entries, .. } => {
+            let map: IndexMap<String, Type> = entries.iter().filter_map(|(key, type_ref)| {
+                Some((key.to_string(), resolve_type_ref(type_ref, checker).ok()?))
+            }).collect();
+
+            return Ok(Type::Object(map))
         }
     }
 }

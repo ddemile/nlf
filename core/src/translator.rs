@@ -321,6 +321,12 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                         value: value.clone()
                     }.into_expression(expression.start, expression.end))
                 }
+                LiteralExpressionKind::Object(array) => {
+                    return Ok(ExpressionKind::Literal {
+                        r#type: LiteralExpressionKind::Object(array.iter().map(|(key, expression)| (key.clone(), translate_expression(expression.clone(), context).unwrap())).collect()),
+                        value: value.clone()
+                    }.into_expression(expression.start, expression.end))
+                }
                 _ => ()
             }
 

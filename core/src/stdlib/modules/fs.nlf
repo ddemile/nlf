@@ -4,8 +4,8 @@ export fn read(path: string): string {
     return fs.read(path)
 }
 
-export fn write(path: string) {
-    fs.write(path)
+export fn write(path: string, contents: string) {
+    fs.write(path, contents)
 }
 
 export fn rm(path: string) {

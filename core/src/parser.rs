@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
-use crate::{errors::{LanguageError, LanguageResult}, lexer::{KeywordKind, Token, TokenKind}, parser::pratt::parse_expression};
+use crate::{analysis::Span, errors::{LanguageError, LanguageResult}, lexer::{KeywordKind, Token, TokenKind}, parser::pratt::parse_expression};
 
 pub mod pratt;
 pub mod types;
 
+use nlf_shared::indexmap::IndexMap;
 pub use types::*;
 
 pub struct Parser {
@@ -178,9 +179,7 @@ macro_rules! expect_arguments_definition {
             if matches!($parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
                 $parser.advance();
 
-                let type_ident = expect_identifier!($parser);
-
-                type_ref = Some(crate::parser::types::TypeRef::Named(type_ident));
+                type_ref = Some(match_type_ref($parser)?);
             }
             
             crate::parser::types::Argument {
@@ -255,9 +254,9 @@ fn expect_lambda(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     if matches!(parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
         parser.advance();
 
-        let type_ident = expect_identifier!(parser);
+        let type_ref = match_type_ref(parser)?;
 
-        return_type_ref = Some(TypeRef::Named(type_ident));
+        return_type_ref = Some(type_ref);
     }
 
     let start = parser.get_token_at(start_cursor).start;
@@ -347,9 +346,7 @@ fn match_statement(parser: &mut Parser) -> LanguageResult<Option<ASTStatement>> 
 }
 
 fn match_import(parser: &mut Parser) -> LanguageResult<ASTStatement> {
-    let start = parser.cursor;
-
-    expect_keyword!(parser, KeywordKind::Import);
+    let Token { start, .. } = expect_keyword!(parser, KeywordKind::Import);
 
     let specifiers = expect_destructuring_pattern!(parser).iter().map(|specifier| {
         let Token { kind: TokenKind::Identifier { value }, start, end } = specifier else {
@@ -368,7 +365,7 @@ fn match_import(parser: &mut Parser) -> LanguageResult<ASTStatement> {
 
 fn match_method(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     let name = expect_identifier!(parser);
-    let start = parser.get_token_at(parser.cursor - 1).start;
+    let start = name.start;
 
     let arguments = expect_arguments_definition!(parser);
 
@@ -377,9 +374,7 @@ fn match_method(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     if matches!(parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
         parser.advance();
 
-        let type_ident = expect_identifier!(parser);
-
-        return_type_ref = Some(TypeRef::Named(type_ident));
+        return_type_ref = Some(match_type_ref(parser)?);
     }
 
     let block = expect_block(parser)?;
@@ -437,9 +432,7 @@ fn match_let(parser: &mut Parser) -> LanguageResult<ASTStatement> {
     if matches!(parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
         parser.advance();
 
-        let type_ident = expect_identifier!(parser);
-
-        type_ref = Some(TypeRef::Named(type_ident));
+        type_ref = Some(match_type_ref(parser)?);
     }
 
     expect_token!(parser, TokenKind::Assign);
@@ -596,4 +589,40 @@ fn match_class(parser: &mut Parser) -> LanguageResult<ASTStatement> {
 
 fn match_expression(parser: &mut Parser) -> LanguageResult<Expression> {
     parse_expression(parser, 0)
+}
+
+fn match_type_ref(parser: &mut Parser) -> LanguageResult<TypeRef> {
+    let (mut type_ref, start) = match parser.peek().cloned() {
+        Some(Token { kind: TokenKind::Identifier { .. }, start, .. }) => {
+            (TypeRef::Named(expect_identifier!(parser)), start)
+        }
+        Some(Token { kind: TokenKind::OpeningBracket, start, .. }) => {
+            let mut entries: IndexMap<String, TypeRef> = IndexMap::new();
+
+            expect_comma_separated_group!(parser, TokenKind::OpeningBracket, TokenKind::ClosingBracket, {
+                let identifier = expect_identifier!(parser);
+
+                expect_token!(parser, TokenKind::Colon);
+
+                let type_ref = match_type_ref(parser)?;
+
+                entries.insert(identifier.value, type_ref);
+            });
+
+            let Token { end, .. } = parser.get_token_at(parser.cursor - 1);
+
+            (TypeRef::Object { entries, span: Span { start, end } }, start)
+        }
+        _ => unreachable!()
+    };
+
+    while matches!(parser.peek(), Some(Token { kind: TokenKind::OpeningSquareBracket, .. })) {
+        parser.advance();
+
+        let Token { end, .. } = expect_token!(parser, TokenKind::ClosingSquareBracket);
+
+        type_ref = TypeRef::Array { type_ref: Box::new(type_ref), span: Span { start, end } }
+    }
+
+    Ok(type_ref)
 }
