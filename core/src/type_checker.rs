@@ -1,22 +1,21 @@
-use std::{fs, path::PathBuf, rc::Rc, str::FromStr};
+use std::{fs, path::PathBuf, rc::Rc, str::FromStr, sync::Arc};
 
 
 use nlf_shared::indexmap::IndexMap;
+use parking_lot::Mutex;
 
-use crate::{analysis::{self, Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, loader::{self}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, Expression, ExpressionKind, FunctionType, Identifier, Iterable, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
+use crate::{analysis::{self, Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, loader::{self}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, DefaultType, Expression, ExpressionKind, FunctionType, Identifier, Iterable, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeId, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
 
 struct TypeChecker {
     pub program: ASTProgram,
-    pub arena: TypeArena,
+    pub arena: Arc<Mutex<TypeArena>>,
     pub symbol_index: Option<SymbolIndex>,
     pub type_collector: TypeCollector,
     pub hoisted_types: Vec<LocatedType>
 }
 
 impl TypeChecker {
-    pub fn new(program: ASTProgram, type_collector: TypeCollector) -> Self {
-        let arena = TypeArena::new();
-
+    pub fn new(program: ASTProgram, type_collector: TypeCollector, arena: Arc<Mutex<TypeArena>>) -> Self {
         Self { program, arena, symbol_index: None, type_collector, hoisted_types: vec![] }
     }
 }
@@ -31,7 +30,8 @@ pub struct TypeCollector {
     pub scopes: Vec<Scope>,
     pub current: ScopeId,
     pub types: Vec<CollectedType>,
-    pub path: PathBuf
+    pub path: PathBuf,
+    pub arena: TypeArena<String>
 }
 
 impl TypeCollector {
@@ -45,12 +45,15 @@ impl TypeCollector {
             }],
             current: ScopeId(0),
             types: vec![],
-            path
+            path,
+            arena: TypeArena::new()
         }
     }
 
     fn define(&mut self, name: String, span: Span) {
         let id = self.types.len();
+    
+        self.arena.alloc(name.clone());
 
         self.types.push(CollectedType {
             name,
@@ -155,7 +158,8 @@ impl Visitor<ASTSyntaxTree> for TypeCollector {
 struct TypedTreeSyntaxTransformer {
     pub path: PathBuf,
     pub symbol_index: SymbolIndex,
-    pub flat_statements: Vec<TypedStatement>
+    pub flat_statements: Vec<TypedStatement>,
+    pub arena: Arc<Mutex<TypeArena>>
 }
 
 impl TypedTreeSyntaxTransformer {
@@ -179,7 +183,7 @@ impl TypedTreeSyntaxTransformer {
         if let Some(definition) = self.find_statement(definition_span.start) {
             match definition.kind {
                 StatementKind::VariableDefinition { ty: defintion_ty, .. } => {
-                    return Some(defintion_ty)
+                    return Some(self.arena.lock().get(defintion_ty).clone())
                 }
                 StatementKind::Import { source, .. } => {
                     let module_source = loader::resolve_module(&source.value, Some(self.path.parent().unwrap().to_path_buf())).ok()?;
@@ -206,7 +210,7 @@ impl TypedTreeSyntaxTransformer {
 
         // Tries to get the type of an argument
         if let SymbolKind::Definition(definition) = kind {
-            return Some(definition.clone())
+            return Some(self.arena.lock().get(definition.clone()).clone())
         }
 
         match kind {
@@ -253,7 +257,7 @@ impl TypedTreeSyntaxTransformer {
 
                 match callee_type {
                     Type::Function(box FunctionType { return_ty, .. }) => {
-                        return Some(return_ty)
+                        return Some(self.arena.lock().get(return_ty).clone())
                     }
                     Type::Class(class_type) => {
                         return Some(Type::Instance { class: class_type })
@@ -263,7 +267,7 @@ impl TypedTreeSyntaxTransformer {
             }
             ExpressionKind::Literal { r#type: LiteralExpressionKind::Object(entries), .. } => {
                 let map: IndexMap<String, Type> = entries.iter().filter_map(|(key, value)| {
-                    let ty = self.resolve_expression_type(value).unwrap_or(resolve_expression_type(value).ok()?);
+                    let ty = self.resolve_expression_type(value).unwrap_or(self.arena.lock().get(resolve_expression_type(value, self.arena.clone()).ok()?).clone());
 
                     Some((key.to_string(), ty))
                 }).collect();
@@ -282,9 +286,9 @@ impl Visitor<TypedSyntaxTree> for TypedTreeSyntaxTransformer {
         let mut statement = statement.clone();
         
         if let StatementKind::VariableDefinition { ty, expression, .. } = &mut statement.kind {
-            if matches!(ty, Type::Unknown) {
+            if matches!(self.arena.lock().get(ty.clone()), Type::Unknown) {
                 if let Some(expression_type) = self.resolve_expression_type(expression) {
-                    *ty = expression_type
+                    *ty = self.arena.lock().alloc(expression_type)
                 }
             }
         }
@@ -300,17 +304,22 @@ pub fn check_types(program: ASTProgram, path: PathBuf) -> LanguageResult<TypedPr
 
     explorer::visit_program(&program, &mut type_collector);
 
-    let mut checker = TypeChecker::new(program, type_collector);
+    let mut arena = TypeArena::new();
+    arena.register_defaults();
+    
+    let arena = Arc::new(Mutex::new(arena));
+
+    let mut checker = TypeChecker::new(program, type_collector, arena.clone());
     
     let typed_program = check_body(checker.program.body.clone(), &mut checker).map(|statements| TypedProgram { body: statements })?;
 
-    let mut visitor = TypedScopeBuilder::new();
+    let mut visitor = TypedScopeBuilder::new(arena.clone());
     
     explorer::visit_program(&typed_program, &mut visitor);
 
     let symbol_index = SymbolIndex::from(visitor);
 
-    let mut transformer = TypedTreeSyntaxTransformer { path, symbol_index, flat_statements: vec![] };
+    let mut transformer = TypedTreeSyntaxTransformer { path, symbol_index, flat_statements: vec![], arena };
 
     let checked_program = explorer::transform_program(&typed_program, &mut transformer);
 
@@ -330,7 +339,7 @@ fn hoist_types(statements: &Rc<[ASTStatement]>, checker: &mut TypeChecker) -> La
             unreachable!()
         };
 
-        let class_type = get_class_type(&variable, &methods, &fields);
+        let class_type = get_class_type(&variable, &methods, &fields, checker.arena.clone());
 
         checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type)}, span: Span { start: variable.start, end: variable.end } });
     
@@ -401,7 +410,7 @@ fn check_statement(statement: ASTStatement, checker: &mut TypeChecker) -> Langua
             let return_ty = if let Some(type_ref) = &return_type_ref {
                 resolve_type_ref(type_ref, checker)?
             } else {
-                Type::Unknown
+                checker.arena.lock().get_default(DefaultType::Unknown)
             };
 
             StatementKind::Function { variable, arguments: typed_arguments, block: check_block(block, checker)?, return_type_ref, return_ty }
@@ -536,11 +545,11 @@ fn check_block(block: ASTBlock, checker: &mut TypeChecker) -> LanguageResult<Blo
     Ok(checked_block)
 }
 
-fn check_argument(argument: Argument<Identifier, ()>, checker: &mut TypeChecker) -> LanguageResult<Argument<Identifier, Type>> {
+fn check_argument(argument: Argument<Identifier, ()>, checker: &mut TypeChecker) -> LanguageResult<Argument<Identifier, TypeId>> {
     let ty = if let Some(type_ref) = &argument.type_ref {
         resolve_type_ref(type_ref, checker)?
     } else {
-        Type::Unknown
+        checker.arena.lock().get_default(DefaultType::Unknown)
     };
 
     Ok(Argument {
@@ -556,17 +565,17 @@ fn check_definition(descriptor: VariableDescriptor, expression: Expression, type
     let ty = if let Some(type_ref) = &type_ref {
         resolve_type_ref(type_ref, checker)?
     } else {
-        resolve_expression_type(&expression)?
+        resolve_expression_type(&expression, checker.arena.clone())?
     };
     
     Ok(TypedStatementKind::VariableDefinition { descriptor, expression, type_ref, ty })
 }
 
-fn resolve_type_ref(type_ref: &TypeRef, checker: &mut TypeChecker) -> LanguageResult<Type> {
+fn resolve_type_ref(type_ref: &TypeRef, checker: &mut TypeChecker) -> LanguageResult<TypeId> {
     match type_ref {
         TypeRef::Named(ident) => {
-            if let Ok(ty) = Type::from_str(&ident.value) {
-                return Ok(ty)
+            if let Ok(ty) = DefaultType::from_str(&ident.value) {
+                return Ok(checker.arena.lock().get_default(ty))
             }
 
             if let Some(CollectedType { name, span, .. }) = checker.type_collector.find_definition(&ident.value, ident.start) {
@@ -575,38 +584,40 @@ fn resolve_type_ref(type_ref: &TypeRef, checker: &mut TypeChecker) -> LanguageRe
                         continue;
                     }
 
-                    return Ok(located_type.ty.clone())
+                    return Ok(checker.arena.lock().alloc(located_type.ty.clone()))
                 }
             }
 
             return Err(LanguageError::with_source(ParserError::InvalidType(format!("Type not found: {}", ident.value)), ident.start, ident.end))
         }
         TypeRef::Array { type_ref, .. } => {
-            return Ok(Type::Array(Box::new(resolve_type_ref(type_ref, checker)?)))
+            let type_id = resolve_type_ref(type_ref, checker)?;
+            return Ok(checker.arena.lock().alloc(Type::Array(Box::new(checker.arena.lock().get(type_id).clone()))))
         }
         TypeRef::Object { entries, .. } => {
             let map: IndexMap<String, Type> = entries.iter().filter_map(|(key, type_ref)| {
-                Some((key.to_string(), resolve_type_ref(type_ref, checker).ok()?))
+                let type_id = resolve_type_ref(type_ref, checker).ok()?;
+                Some((key.to_string(), checker.arena.lock().get(type_id).clone()))
             }).collect();
 
-            return Ok(Type::Object(map))
+            return Ok(checker.arena.lock().alloc(Type::Object(map)))
         }
     }
 }
 
-fn resolve_expression_type(expression: &Expression) -> LanguageResult<Type> {
+fn resolve_expression_type(expression: &Expression, arena: Arc<Mutex<TypeArena>>) -> LanguageResult<TypeId> {
     match &expression.kind {
         ExpressionKind::Literal { r#type, value } => {
             match (r#type, value) {
-                (LiteralExpressionKind::Literal, ValueHolder::String(_)) => Ok(Type::String),
-                (LiteralExpressionKind::Literal, ValueHolder::Number(_)) => Ok(Type::Number),
-                (LiteralExpressionKind::Literal, ValueHolder::Bool(_)) => Ok(Type::Bool),
+                (LiteralExpressionKind::Literal, ValueHolder::String(_)) => Ok(arena.lock().get_default(DefaultType::String)),
+                (LiteralExpressionKind::Literal, ValueHolder::Number(_)) => Ok(arena.lock().get_default(DefaultType::Number)),
+                (LiteralExpressionKind::Literal, ValueHolder::Bool(_)) => Ok(arena.lock().get_default(DefaultType::Bool)),
                 (LiteralExpressionKind::Function(box StatementKindWrapper::Typed(TypedStatementKind::Function { arguments, return_ty, .. })), _) => {
-                    Ok(Type::Function(Box::new(FunctionType { arguments: arguments.clone(), return_ty: return_ty.clone() })))
+                    Ok(arena.lock().alloc(Type::Function(Box::new(FunctionType { arguments: arguments.clone(), return_ty: return_ty.clone() }))))
                 }
-                _ => Ok(Type::Unknown)
+                _ => Ok(arena.lock().get_default(DefaultType::Unknown))
             }    
         }
-        _ => Ok(Type::Unknown)
+        _ => Ok(arena.lock().get_default(DefaultType::Unknown))
     }
 }

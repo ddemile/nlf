@@ -13,3 +13,7 @@ pub mod addons;
 pub mod explorer;
 pub mod analysis;
 pub mod type_checker;
+pub mod type_resolver;
+pub mod vm;
+pub mod compiler;
+pub mod new_translator;

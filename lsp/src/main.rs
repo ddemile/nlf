@@ -2,14 +2,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use nlf_core::analysis::{self, CompletionResolver, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder};
 use nlf_core::interpreter::prototypes::{self, BuiltInPrototype};
 use nlf_core::lexer::TokenKind;
 use nlf_core::loader::{self, ModuleKind};
-use nlf_core::parser::{FunctionType, Type};
+use nlf_core::parser::{FunctionType, Type, TypeArena, TypeId};
 use nlf_core::stdlib::{CoreModules, FUNCTION_TABLE};
 use nlf_core::{explorer, lexer, parser, stdlib, translator, type_checker};
+use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -201,7 +203,10 @@ impl LanguageServer for Backend {
 
                 explorer::visit_program(&typed_program, &mut completion_resolver);
 
-                let mut scope_builder = TypedScopeBuilder::new();
+                let type_arena = Arc::new(Mutex::new(TypeArena::new()));
+                type_arena.lock().register_defaults();
+
+                let mut scope_builder = TypedScopeBuilder::new(type_arena);
 
                 explorer::visit_program(&typed_program, &mut scope_builder);
 
@@ -210,11 +215,14 @@ impl LanguageServer for Backend {
                 index
             };
 
-            fn get_completion<'a>(backend: &'a Backend, definition: &'a Symbol, uri: &'a Url) -> Pin<Box<dyn Future<Output = CompletionResponse> + Send + 'a>> {
+            fn get_completion<'a>(backend: &'a Backend, definition: &'a Symbol, uri: &'a Url, index: &'a SymbolIndex) -> Pin<Box<dyn Future<Output = CompletionResponse> + Send + 'a>> {
                 Box::pin(async move {
                     let mut items = vec![];
                     match &definition.kind {
                         SymbolKind::Definition(ty) => {
+                            let arena = index.arena.lock();
+                            let ty = arena.get(*ty);
+
                             fn get_prototype_completions(prototype: &BuiltInPrototype) -> CompletionResponse {
                                 CompletionResponse::Array(prototype.methods.iter().map(|(name, _)| {
                                     CompletionItem {
@@ -267,7 +275,7 @@ impl LanguageServer for Backend {
                                 panic!()
                             };
 
-                            return get_completion(backend, &source_symbol, uri).await
+                            return get_completion(backend, &source_symbol, uri, index).await
                         }
                         _ => {}
                     }
@@ -279,7 +287,7 @@ impl LanguageServer for Backend {
                 if source >= candidate.completion_span.start && source <= candidate.completion_span.end {
                     if let Some(Symbol { name, kind: SymbolKind::Variable, .. }) = index.symbol_at(candidate.object_span.start) {
                         if let Some(definition) = index.find_definition(name, candidate.object_span.start) {
-                            return Ok(Some(get_completion(&self, definition, &uri).await))
+                            return Ok(Some(get_completion(&self, definition, &uri, &index).await))
                         }
                     }
                 }
@@ -305,7 +313,7 @@ impl LanguageServer for Backend {
                     SymbolKind::Definition(_) | SymbolKind::Import(_) => CompletionItemKind::VARIABLE,
                     SymbolKind::Function { .. } => CompletionItemKind::FUNCTION,
                     SymbolKind::Class(_) => CompletionItemKind::CLASS,
-                    _ => todo!()
+                    _ => continue
                 };
 
                 items.push(CompletionItem {
@@ -456,10 +464,18 @@ impl LanguageServer for Backend {
         let symbol = index.symbol_at(source);
 
         if let Some(symbol) = symbol {
+            fn get_type(type_id: TypeId, arena: Arc<Mutex<TypeArena>>) -> Type {
+                arena.lock().get(type_id).clone()
+            }
+
             fn get_hover_text<'a>(symbol: &'a Symbol, index: &'a SymbolIndex, source: usize, uri: &'a Url, backend: &'a Backend) -> std::pin::Pin<Box<dyn std::future::Future<Output = String> + Send + 'a>> {
                 Box::pin(async move {
                     match &symbol.kind {
-                        SymbolKind::Definition(ty) => format!("let {}: {}", symbol.name, ty.to_string()),
+                        SymbolKind::Definition(ty) => {
+                            let ty = get_type(*ty, index.arena.clone());
+
+                            format!("let {}: {}", symbol.name, ty.to_string())
+                        },
                         SymbolKind::Variable => {
                             let definition = index.find_definition(&symbol.name, source);
                             
@@ -471,12 +487,16 @@ impl LanguageServer for Backend {
                                 format!("{}", symbol.name)
                             }
                         },
-                        SymbolKind::Function(FunctionType { arguments: args, return_ty }) => format!(
-                            "fn {}({}): {}",
-                            symbol.name,
-                            args.iter().map(|arg| format!("{}: {}", arg.variable.value.clone(), arg.ty.to_string())).collect::<Vec<String>>().join(", "),
-                            return_ty.to_string()
-                        ),
+                        SymbolKind::Function(FunctionType { arguments: args, return_ty }) => {
+                            let return_ty = get_type(*return_ty, index.arena.clone());
+
+                            format!(
+                                "fn {}({}): {}",
+                                symbol.name,
+                                args.iter().map(|arg| format!("{}: {}", arg.variable.value.clone(), get_type(arg.ty, index.arena.clone()).to_string())).collect::<Vec<String>>().join(", "),
+                                return_ty.to_string()
+                            )
+                        },
                         SymbolKind::Class(_) => format!("class {}", symbol.name),
                         SymbolKind::Import(source_path) => {
                             let Some((source_symbol, _, _)) = backend.resolve_import(&symbol.name, source_path, uri).await else {
@@ -485,6 +505,42 @@ impl LanguageServer for Backend {
 
                             get_hover_text(&source_symbol, index, source, uri, backend).await
                         },
+                        SymbolKind::Property(object_pos) => {
+                            let source_symbol = index.symbol_at(*object_pos).unwrap();
+
+                            let definition = index.find_definition(&source_symbol.name, source_symbol.span.start).unwrap();
+
+                            let SymbolKind::Definition(type_id) = definition.kind else {
+                                return format!("{}", symbol.name);
+                            };
+
+                            let ty = get_type(type_id, index.arena.clone());
+
+                            match ty {
+                                Type::Instance { class: class_type } => {
+                                    if let Some(FunctionType { arguments: args, return_ty }) = class_type.methods.get(&symbol.name) {
+                                        return format!(
+                                            "{}.{}({}): {}",
+                                            class_type.name,
+                                            symbol.name,
+                                            args.iter().map(|arg| format!("{}: {}", arg.variable.value.clone(), get_type(arg.ty, index.arena.clone()).to_string())).collect::<Vec<String>>().join(", "),
+                                            get_type(*return_ty, index.arena.clone()).to_string()
+                                        )
+                                    } else if let Some(field) = class_type.fields.iter().find(|field| field.name == symbol.name) {
+                                        // TODO: use actual visibility
+                                        return format!("public {}: {}", field.name, get_type(field.ty, index.arena.clone()).to_string())
+                                    }
+                                }
+                                Type::Object(entries) => {
+                                    if let Some(ty) = entries.get(&symbol.name) {
+                                        return format!("{}: {}", symbol.name, ty.to_string())
+                                    }
+                                }
+                                _ => return format!("{}", symbol.name)
+                            }
+
+                            get_hover_text(&definition, index, source, uri, backend).await
+                        }
                         _ => todo!()
                     }
                 })
@@ -573,16 +629,22 @@ impl LanguageServer for Backend {
             }
         }
 
-        fn get_symbol_type<'a>(backend: &'a Backend, uri: &'a Url, symbol: &'a Symbol) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<u32>> + Send + 'a>> {
+        fn get_symbol_type<'a>(backend: &'a Backend, uri: &'a Url, symbol: &'a Symbol, index: &'a SymbolIndex) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<u32>> + Send + 'a>> {
             Box::pin(async move {
                 match &symbol.kind {
-                    SymbolKind::Definition(ty) => Some(get_definition_type(ty)),
+                    SymbolKind::Definition(ty) => {
+                        let ty = {
+                            let arena = index.arena.lock();
+                            arena.get(*ty).clone()
+                        };
+                        Some(get_definition_type(&ty))
+                    },
                     SymbolKind::Function(_) => Some(1),
                     SymbolKind::Class(_) => Some(2),
                     SymbolKind::Import(source_path) => {
                         let (resolved_symbol, uri , _) = backend.resolve_import(&symbol.name, &source_path, uri).await?;
 
-                        get_symbol_type(backend, &uri, &resolved_symbol).await
+                        get_symbol_type(backend, &uri, &resolved_symbol, index).await
                     },
                     _ => None
                 }
@@ -610,13 +672,20 @@ impl LanguageServer for Backend {
             };
 
             let token_type = if let SymbolKind::Definition(ty) = symbol.kind {
+                let ty = {
+                    let arena = index.arena.lock();
+                    arena.get(ty).clone()
+                };
                 get_definition_type(&ty)
             } else {
                 let Some(source_symbol) = index.find_definition(&symbol.name, symbol.span.start).cloned() else {
                     continue;
                 };
 
-                get_symbol_type(self, &uri, &source_symbol).await.unwrap()
+                match get_symbol_type(self, &uri, &source_symbol, &index).await {
+                    Some(ty) => ty,
+                    None => continue
+                }
             };
 
             let position = source_to_line(&contents, symbol.span.start);

@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
+use parking_lot::Mutex;
 use serde::Serialize;
 
-use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, Iterable, LiteralExpressionKind, Type, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
+use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, DefaultType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, Iterable, LiteralExpressionKind, Type, TypeArena, TypeId, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Hash, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -22,13 +23,14 @@ pub struct Scope {
 
 #[derive(Debug, Clone)]
 pub enum SymbolKind {
-    Definition(Type),
+    Definition(TypeId),
     Variable,
     Function(FunctionType),
     Class(ClassType),
     Method,
     Constant,
-    Import(String)
+    Import(String),
+    Property(usize)
 }
 
 #[derive(Debug, Clone)]
@@ -50,7 +52,8 @@ pub struct Export {
 pub struct SymbolIndex {
     pub scopes: Vec<Scope>,
     pub symbols: Vec<Symbol>,
-    pub exports: Vec<Export>
+    pub exports: Vec<Export>,
+    pub arena: Arc<Mutex<TypeArena>>
 }
 
 impl From<TypedScopeBuilder> for SymbolIndex {
@@ -58,7 +61,8 @@ impl From<TypedScopeBuilder> for SymbolIndex {
         Self {
             scopes: builder.scopes,
             symbols: builder.symbols,
-            exports: builder.exports
+            exports: builder.exports,
+            arena: builder.arena
         }
     }
 }
@@ -175,7 +179,10 @@ pub fn get_symbol_index(path: PathBuf, contents: String) -> Option<SymbolIndex> 
     };
 
     let index = {
-        let mut scope_builder = TypedScopeBuilder::new();
+        let mut arena = TypeArena::new();
+        arena.register_defaults();
+
+        let mut scope_builder = TypedScopeBuilder::new(Arc::new(Mutex::new(arena)));
 
         explorer::visit_program(&typed_program, &mut scope_builder);
 
@@ -189,11 +196,12 @@ pub struct TypedScopeBuilder {
     pub scopes: Vec<Scope>,
     pub current: ScopeId,
     pub symbols: Vec<Symbol>,
-    pub exports: Vec<Export>
+    pub exports: Vec<Export>,
+    pub arena: Arc<Mutex<TypeArena>>
 }
 
 impl TypedScopeBuilder {
-    pub fn new() -> Self {
+    pub fn new(arena: Arc<Mutex<TypeArena>>) -> Self {
         Self {
             scopes: vec![Scope {
                 parent: None,
@@ -203,7 +211,8 @@ impl TypedScopeBuilder {
             }],
             current: ScopeId(0),
             symbols: vec![],
-            exports: vec![]
+            exports: vec![],
+            arena
         }
     }
 
@@ -232,7 +241,7 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
                 self.define(name.value.to_string(), SymbolKind::Function(FunctionType { arguments: arguments.clone(), return_ty: return_ty.clone() }), Span { start: name.start, end: name.end });
             }
             TypedStatementKind::Class { variable: name, methods, fields, .. } => {
-                self.define(name.value.to_string(), SymbolKind::Class(get_class_type(name, methods, fields)), Span { start: name.start, end: name.end });
+                self.define(name.value.to_string(), SymbolKind::Class(get_class_type(name, methods, fields, self.arena.clone())), Span { start: name.start, end: name.end });
             },
             TypedStatementKind::Import { specifiers, source } => {
                 for specifier in specifiers {
@@ -251,7 +260,7 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
                         self.exports.push(Export { name: name.value.to_string(), symbol: function_symbol });
                     }
                     TypedStatementKind::Class { variable: name, methods, fields, .. } => {
-                        let class_type = get_class_type(name, methods, fields);
+                        let class_type = get_class_type(name, methods, fields, self.arena.clone());
 
                         let class_symbol = Symbol {
                             name: name.value.to_string(),
@@ -286,11 +295,13 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
             TypedStatementKind::For { variable, iterable, .. } => {
                 match iterable {
                     Iterable::Range(_, _) => {
-                        self.define(variable.value.clone(), SymbolKind::Definition(Type::Number), Span { start: variable.start, end: variable.end });
+                        let number_ty = self.arena.lock().get_default(DefaultType::Number);
+                        self.define(variable.value.clone(), SymbolKind::Definition(number_ty), Span { start: variable.start, end: variable.end });
                     }
                     Iterable::Array(_) => {
+                        let unknown_ty = self.arena.lock().get_default(DefaultType::Number);
                         // TODO: implement corrrect variable type
-                        self.define(variable.value.clone(), SymbolKind::Definition(Type::Unknown), Span { start: variable.start, end: variable.end });
+                        self.define(variable.value.clone(), SymbolKind::Definition(unknown_ty), Span { start: variable.start, end: variable.end });
                     }
                 }
             }
@@ -303,11 +314,22 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
             ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } => {
                 self.define(name.to_string(), SymbolKind::Variable, Span { start: expression.start, end: expression.end });
             }
+            ExpressionKind::Member { object, property } => {
+                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, .. } = object.kind else {
+                    return
+                };
+
+                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(value) } = &property.kind else {
+                    return
+                };
+
+                self.define(value.to_string(), SymbolKind::Property(object.start), Span { start: property.start, end: property.end });
+            }
             _ => {}
         }
     }
 
-    fn visit_argument(&mut self, argument: &Argument<Identifier, Type>) {
+    fn visit_argument(&mut self, argument: &Argument<Identifier, TypeId>) {
         // TODO: fix span
         self.define(argument.variable.value.to_string(), SymbolKind::Definition(argument.ty.clone()), Span { start: argument.variable.start, end: argument.variable.end });
     }
@@ -338,7 +360,7 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
     }
 }
 
-pub fn get_class_type(name: &Identifier, methods: &Vec<TypedStatement>, fields: &Vec<ASTStatement>) -> ClassType {
+pub fn get_class_type(name: &Identifier, methods: &Vec<TypedStatement>, fields: &Vec<ASTStatement>, arena: Arc<Mutex<TypeArena>>) -> ClassType {
     let method_types = methods.iter().map(|method| {
         let TypedStatementKind::Function { variable, arguments, return_ty, .. } = &method.kind else {
             unreachable!()
@@ -361,7 +383,7 @@ pub fn get_class_type(name: &Identifier, methods: &Vec<TypedStatement>, fields: 
         FieldType {
             name: name.clone(),
             visibility: visibility.clone(),
-            ty: Type::Unknown
+            ty: arena.lock().get_default(DefaultType::Unknown)
         }
     }).collect();
 

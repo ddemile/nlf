@@ -528,7 +528,8 @@ fn hoist_declarations(
                                 slot: 0,
                                 depth: 0,
                                 start: 0,
-                                end: 0
+                                end: 0,
+                                upvalue: false
                             },
                             ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                                 arguments: arguments.clone(),
@@ -547,7 +548,8 @@ fn hoist_declarations(
                                         slot: 1,
                                         depth: 0,
                                         start: 0,
-                                        end: 0
+                                        end: 0,
+                                        upvalue: false
                                     },
                                     ValueHolder::Object(object_ref.clone()),
                                     true,
@@ -1249,7 +1251,8 @@ pub fn eval_runtime_function(function: RuntimeFunction, evaluated_args: &[ValueH
             slot: 0,
             depth: 0,
             start: 0,
-            end: 0
+            end: 0,
+            upvalue: false
         },
         ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
             arguments: function.arguments.clone(),

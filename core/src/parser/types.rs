@@ -330,9 +330,9 @@ impl SyntaxTree for IRSyntaxTree {
 pub struct TypedSyntaxTree;
 
 impl SyntaxTree for TypedSyntaxTree {
-    type Argument = Argument<Identifier, Self::Type>;
+    type Argument = Argument<Identifier, TypeId>;
     type Descriptor = VariableDescriptor;
-    type Type = Type;
+    type Type = TypeId;
     type Variable = Identifier;
 
     fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper {
@@ -374,13 +374,14 @@ pub enum LiteralExpressionKind {
     Function(Box<StatementKindWrapper>)
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VariableRef {
     pub name: Option<String>,
     pub slot: usize,
     pub depth: usize,
     pub start: usize,
-    pub end: usize
+    pub end: usize,
+    pub upvalue: bool
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -460,7 +461,7 @@ impl Visibility {
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")] // "type" field will contain the variant name
 pub struct Program<T> {
     pub body: Rc<[T]>,
@@ -498,15 +499,15 @@ impl TypeRef {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct FunctionType {
-    pub arguments: Vec<Argument<Identifier, Type>>,
-    pub return_ty: Type
+    pub arguments: Vec<Argument<Identifier, TypeId>>,
+    pub return_ty: TypeId
 }
 
 #[derive(Serialize, Debug, Clone)]
 pub struct FieldType {
     pub name: String,
     pub visibility: Visibility,
-    pub ty: Type
+    pub ty: TypeId
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -540,12 +541,14 @@ impl ToString for Type {
             Self::Bool => "bool".to_string(),
             Self::Function(function_type) => {
                 format!("({}) => {}",
-                    function_type.arguments
-                        .iter()
-                        .map(|argument| format!("{}: {}", argument.variable.value, argument.ty.to_string()))
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    function_type.return_ty.to_string()
+                    // function_type.arguments
+                    //     .iter()
+                    //     .map(|argument| format!("{}: {}", argument.variable.value, argument.ty.to_string()))
+                    //     .collect::<Vec<String>>()
+                    //     .join(", "),
+                    // function_type.return_ty.to_string()
+                    "not implemened",
+                    "still not implemented"
                 )
             },
             Self::Class(box ClassType { name, .. }) => format!("class {}", name),
@@ -560,37 +563,67 @@ impl ToString for Type {
     }
 }
 
-impl FromStr for Type {
+impl FromStr for DefaultType {
     type Err = LanguageError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "string" => Ok(Type::String),
-            "number" => Ok(Type::Number),
-            "bool" => Ok(Type::Bool),
-            "unknown" => Ok(Type::Unknown),
-            "any" => Ok(Type::Any),
-            _ => Err(LanguageError::from(RuntimeError::Custom("Failed to convert str to Type".to_string())))
+            "string" => Ok(DefaultType::String),
+            "number" => Ok(DefaultType::Number),
+            "bool" => Ok(DefaultType::Bool),
+            "unknown" => Ok(DefaultType::Unknown),
+            "any" => Ok(DefaultType::Any),
+            _ => Err(LanguageError::from(RuntimeError::Custom("Failed to convert str to DefaultType".to_string())))
         }
     }
 }
 
-pub struct TypeArena {
-    types: Vec<Type>
+#[derive(Debug)]
+pub struct TypeArena<T = Type> where T: Debug {
+    types: Vec<T>,
+    defaults: HashMap<DefaultType, TypeId>
 }
 
-impl TypeArena {
-    pub fn new() -> Self {
-        Self { types: vec![] }
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub enum DefaultType {
+    String,
+    Number,
+    Bool,
+    Any,
+    Unknown
+}
+
+impl TypeArena<Type> {
+    pub fn register_defaults(&mut self) {
+        let mut register = |default_ty: DefaultType, ty: Type| {
+            let type_id = self.alloc(ty);
+            self.defaults.insert(default_ty, type_id);
+        };
+
+        register(DefaultType::String, Type::String);
+        register(DefaultType::Number, Type::Number);
+        register(DefaultType::Bool, Type::Bool);
+        register(DefaultType::Any, Type::Any);
+        register(DefaultType::Unknown, Type::Unknown);
     }
 
-    pub fn alloc(&mut self, ty: Type) -> TypeId {
+    pub fn get_default(&self, ty: DefaultType) -> TypeId {
+        self.defaults.get(&ty).unwrap().clone()
+    }
+}
+
+impl<T: Debug> TypeArena<T> {
+    pub fn new() -> Self {
+        Self { types: vec![], defaults: HashMap::new() }
+    }
+
+    pub fn alloc(&mut self, ty: T) -> TypeId {
         let id = self.types.len() as u32;
         self.types.push(ty);
         TypeId(id)
     }
 
-    pub fn get(&self, id: TypeId) -> &Type {
+    pub fn get(&self, id: TypeId) -> &T {
         &self.types[id.0 as usize]
     }
 }

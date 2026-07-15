@@ -1,8 +1,11 @@
+// This version of the translator was fixed to work with the NLF compiler
+
 use std::{collections::HashMap, rc::Rc, vec};
 
+use nlf_shared::indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::{errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Program, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableRef}};
+use crate::{compiler::FunctionInfos, errors::{LanguageError, LanguageErrorTrait, LanguageResult}, explorer::{self, Visitor}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Program, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableRef}, vm::{UpvalueDescriptor, UpvalueSource}};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -15,7 +18,6 @@ impl LanguageErrorTrait for TranslatorError {}
 #[derive(Serialize, Debug, Clone)]
 enum ScopeKind {
     Program,
-    Call(usize),
     Loop,
     Conditional,
     Function,
@@ -25,6 +27,7 @@ enum ScopeKind {
 #[derive(Serialize, Debug, Clone, Copy)]
 struct Symbol {
     pub slot: usize,
+    pub upvalue: bool,
     pub start: usize,
     pub end: usize
 }
@@ -43,9 +46,13 @@ impl SymbolTable {
         self.map.get(name).copied()
     }
 
+    fn get_mut(&mut self, name: &str) -> Option<&mut Symbol> {
+        self.map.get_mut(name)
+    }
+
     fn set(&mut self, name: &str, position: (usize, usize)) -> usize {
         let id = self.map.len();
-        self.map.insert(name.to_string(), Symbol { slot: id, start: position.0, end: position.1 });
+        self.map.insert(name.to_string(), Symbol { slot: id, start: position.0, end: position.1, upvalue: false });
         id
     }
 }
@@ -57,38 +64,108 @@ struct Scope {
     symbol_table: SymbolTable
 }
 
+
+#[derive(Serialize, Debug, Clone)]
+struct Frame {
+    symbol_table: SymbolTable,
+    upvalue_mappings: IndexMap<usize, UpvalueDescriptor>
+}
+
 #[derive(Serialize, Debug, Clone)]
 struct Context {
-    stack: Vec<Scope>
+    stack: Vec<Scope>,
+    frames: Vec<Frame>,
+    program: ASTProgram,
+    function_infos: FunctionInfos
 }
 
 impl Context {
-    fn get(&self, name: &str) -> Option<VariableRef> {
+    fn get(&mut self, name: &str) -> Option<VariableRef> {
         let mut scopes = self.stack.iter().rev();
 
-        let mut depth = 0;
+        let mut found_variable = true;
         while let Some(scope) = scopes.next() {
-            if let ScopeKind::Call(idx) = scope.kind {
-                scopes = self.stack[0..((idx + 1) as usize)].iter().rev();
+            if let Some(_) = scope.symbol_table.get(name) {
+                found_variable = true;
+                break;
             }
+        }
 
-            if let Some(symbol) = scope.symbol_table.get(name) {
-                return Some(VariableRef { name: None, slot: symbol.slot, depth, start: symbol.start, end: symbol.end, upvalue: false });
+        if !found_variable {
+            return None;
+        }
+        
+
+        let frames = self.frames.clone();
+        let mut frames_iter = frames.iter().rev();
+
+        let mut depth = 0;
+        let mut traversed = false;
+        while let Some(frame) = frames_iter.next() {
+            if let Some(symbol) = frame.symbol_table.get(name) {
+                // This is the definition frame, we need to go back to the access frame and register upvalue descriptors
+                let mut upvalue_index = symbol.slot;
+                for i in (frames.len() - depth)..self.frames.len() {
+                    let frame = self.frames.get_mut(i).expect("Frame not found");
+
+                    let new_descriptor = if i == frames.len() - depth {
+                        UpvalueDescriptor {
+                            index: upvalue_index,
+                            source: UpvalueSource::Local
+                        }
+                    } else {
+                        UpvalueDescriptor {
+                            index: frame.upvalue_mappings.len(),
+                            source: UpvalueSource::Upvalue
+                        }
+                    };
+
+                    let id = frame.upvalue_mappings.entry(upvalue_index).or_insert_with(|| {
+                        new_descriptor
+                    });
+
+                    upvalue_index = id.index;
+                }
+
+                println!("Found {} at slot {}", name, symbol.slot);
+
+                return Some(VariableRef { name: None, slot: upvalue_index, depth, start: symbol.start, end: symbol.end, upvalue: traversed && symbol.upvalue });
             }
 
             depth += 1;
+            traversed = true;
         }
 
         None
     }
 
     fn set_with_position(&mut self, name: &str, position: (usize, usize)) -> VariableRef {
+        let is_upvalue = self.is_upvalue(name, position);
+
+        if is_upvalue {
+            println!("{name} is an upvalue");
+        } else {
+            println!("{name} is not an upvalue");
+        }
+
         let scope = self.stack.last_mut().unwrap();
 
-        let id = scope.symbol_table.set(name, position);
+        scope.symbol_table.set(name, position);
+
+        let frame = self.frames.last_mut().unwrap();
+
+        let id = frame.symbol_table.set(name, (0, 0));
+
+        if is_upvalue {
+            let symbol = frame.symbol_table.get_mut(name);
+
+            if let Some(symbol) = symbol {
+                symbol.upvalue = true;
+            }
+        }
 
         // TOOD: refactor
-        VariableRef { name: Some(name.to_owned()), slot: id, depth: 0, start: position.0, end: position.1, upvalue: false }
+        VariableRef { name: Some(name.to_owned()), slot: id, depth: 0, start: position.0, end: position.1, upvalue: is_upvalue }
     }
     
     fn set(&mut self, name: &str) -> VariableRef {
@@ -102,14 +179,124 @@ impl Context {
     fn exit_scope(&mut self) {
         self.stack.pop();
     }
+
+    fn enter_frame(&mut self) {
+        println!("Entering frame");
+        self.frames.push(Frame { symbol_table: SymbolTable::new(), upvalue_mappings: IndexMap::new() });
+    }
+
+    fn exit_frame(&mut self) -> Vec<UpvalueDescriptor> {
+        let upvalues = self.frames.last().unwrap().upvalue_mappings.values().map(|upvalue| upvalue.clone()).collect();
+        self.frames.pop();
+        upvalues
+    }
+
+    fn is_upvalue(&self, name: &str, position: (usize, usize)) -> bool {
+        #[derive(Debug)]
+        struct Symbol {
+            name: String,
+            frame_id: usize
+        }
+
+        #[derive(Debug)]
+        struct Frame {
+            symbols: Vec<Symbol>,
+            id: usize
+        }
+
+        struct FrameExplorer {
+            frames: Vec<Frame>,
+            name: String,
+            definition: Option<(ASTStatement, usize)>,
+            position: (usize, usize),
+            upvalue: bool
+        }
+
+        impl Visitor<ASTSyntaxTree> for FrameExplorer {
+            fn visit_expression(&mut self, expression: &Expression) {
+                match &expression.kind {
+                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), value } => {
+                        self.frames.push(Frame { symbols: vec![], id: self.frames.len() });
+                    }
+                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(variable_name) } => {
+                        if self.name != *variable_name {
+                            return
+                        }
+
+                        // println!("{expression:?}");
+
+                        if self.definition.as_ref().unwrap().1 != self.frames.len() {
+                            self.upvalue = true
+                        }
+
+                        // println!("Searching for {}", self.name)
+                    }
+                    _ => {}
+                }
+            }
+
+            fn visit_statement(&mut self, statement: &ASTStatement) {
+                if self.position.0 >= statement.start && self.position.1 <= statement.end {
+                    self.definition = Some((statement.clone(), self.frames.len()));
+                }
+
+                match &statement.kind {
+                    ASTStatementKind::Function { .. } => {
+                        self.frames.push(Frame { symbols: vec![], id: self.frames.len() });
+                    }
+                    _ => {}
+                }
+            }
+
+            fn leave_expression(&mut self, expression: &Expression) {
+                match &expression.kind {
+                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), value } => {
+                        self.frames.pop();
+                    }
+                    _ => {}
+                }
+            }
+
+            fn leave_statement(&mut self, statement: &ASTStatement) {
+                match &statement.kind {
+                    ASTStatementKind::Function { .. } => {
+                        self.frames.pop();
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut visitor = FrameExplorer {
+            frames: vec![Frame { symbols: vec![], id: 0 }],
+            name: name.to_string(),
+            definition: None,
+            position,
+            upvalue: false
+        };
+
+        explorer::visit_program(&self.program, &mut visitor);
+
+        visitor.upvalue
+    }
 }
 
-pub fn translate(program: ASTProgram) -> LanguageResult<IRProgram> {
+pub struct TranslatorOutput {
+    pub program: IRProgram,
+    pub function_infos: FunctionInfos
+}
+
+pub fn translate(program: ASTProgram) -> LanguageResult<TranslatorOutput> {
     let mut context = Context {
-        stack: vec![Scope { kind: ScopeKind::Program, slot_index: 0, symbol_table: SymbolTable::new() }]
+        stack: vec![Scope { kind: ScopeKind::Program, slot_index: 0, symbol_table: SymbolTable::new() }],
+        frames: vec![Frame { symbol_table: SymbolTable::new(), upvalue_mappings: IndexMap::new() }],
+        program: program.clone(),
+        function_infos: HashMap::new()
     };
 
-    translate_body(program.body, &mut context).map(|statements| Program { body: statements })
+    translate_body(program.body, &mut context).map(|statements| {
+        TranslatorOutput { program: Program { body: statements }, function_infos: context.function_infos }
+    })
 }
 
 fn translate_body(statements: Rc<[ASTStatement]>, context: &mut Context) -> LanguageResult<Rc<[IRStatement]>> {
@@ -144,11 +331,15 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
         },
         ASTStatementKind::Function { variable, arguments, block, return_type_ref, return_ty } => {
             let var_ref = context.set(&variable.value);
+            context.enter_frame();
             context.enter_scope(ScopeKind::Function);
             context.set(&variable.value);
             let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
             let block = translate_block(block, context)?;
             context.exit_scope();
+            let upvalues = context.exit_frame();
+
+            context.function_infos.insert(var_ref.clone(), upvalues);
 
             StatementKind::Function { variable: var_ref, arguments: inner_arguements, block, return_type_ref, return_ty }
         },
@@ -209,6 +400,7 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
                     unreachable!()
                 };
 
+                context.enter_frame();
                 context.enter_scope(ScopeKind::Function);
                 if variable.value == class_name.value {
                     // When accessing the method name in the constructor, return the class instead of the constructor
@@ -220,6 +412,9 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
                 let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
                 let block = translate_block(block, context)?;
                 context.exit_scope();
+                context.exit_frame();
+
+                // TODO: Store function infos
 
                 translated_methods.push(IRStatement {
                     kind: IRStatementKind::Method { name: variable.value, arguments: inner_arguements, block },
@@ -301,11 +496,15 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                     };
 
                     let var_ref = context.set(&variable.value);
+                    context.enter_frame();
                     context.enter_scope(ScopeKind::Function);
                     context.set(&variable.value);
                     let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
                     let block = translate_block(block, context)?;
                     context.exit_scope();
+                    let upvalues = context.exit_frame();
+
+                    context.function_infos.insert(var_ref.clone(), upvalues);
 
                     return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKindWrapper::IR(IRStatementKind::Function {
                         variable: var_ref,

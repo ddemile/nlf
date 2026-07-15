@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc, sync::Arc, time::Instant};
 
 use parking_lot::Mutex;
 use ron::ser::PrettyConfig;
@@ -315,13 +315,17 @@ impl Module {
 
         let statements = module_ref.lock().statements.clone();
 
+
+        let start = Instant::now();
         interpret(
             Program {
                 body: statements,
             },
             &mut module_ref.lock().context.clone().unwrap().borrow_mut(),
         )?;
-
+        let end = start.elapsed();
+        println!("{end:.2?}");
+        
         Ok(())
     }
 
