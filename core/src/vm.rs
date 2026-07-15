@@ -16,14 +16,15 @@ pub enum Local {
 
 pub type HeapIndex = usize;
 
-#[derive(Clone, PartialEq, PartialOrd, Debug)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 pub enum Value {
-    String(Rc<String>),
+    String(HeapIndex),
     Float(f64),
     Int(u64),
     Bool(bool),
-    Closure(Rc<Closure>),
+    Closure(HeapIndex),
     Object(HeapIndex),
+    Array(HeapIndex),
     Void
 }
 
@@ -67,24 +68,17 @@ impl ValueStack {
 
         float
     }
-
-    fn pop_string(&mut self) -> Rc<String> {
-        let Value::String(string) = self.pop() else {
-            panic!("Value is not string")
-        };
-
-        string
-    }
 }
 
-impl ToString for Value {
-    fn to_string(&self) -> String {
+impl Value {
+    fn to_string(&self, heap: &Heap) -> String {
         match self {
             Self::Float(value) => value.to_string(),
             Self::Int(value) => value.to_string(),
-            Self::String(value) => value.to_string(),
+            Self::String(string_id) => heap.strings[*string_id].to_string(),
             Self::Bool(value) => value.to_string(),
             Self::Closure(_) => format!("fn() {{}}"),
+            Self::Array(_) => format!("Array"),
             Self::Object(_) => format!("Object"),
             Self::Void => format!("Void")
         }
@@ -101,7 +95,10 @@ pub enum Op {
     StoreUpvalue(usize),
     LoadUpvalue(usize),
     Add,
-    CallNative(fn(&mut ValueStack)),
+    Sub,
+    Mul,
+    Div,
+    CallNative(fn(&mut ValueStack, &Heap)),
     EQ,
     NEQ,
     LT,
@@ -114,36 +111,82 @@ pub enum Op {
     Call(usize),
     Return,
     MakeClosure(FunctionRef),
-    MakeObject(usize),
+    BuildObject(usize),
+    BuildArray(usize),
+    ReadProperty,
+    WriteProperty,
     Halt
 }
 
-struct Object {
+pub struct Object {
     map: IndexMap<String, Value>
 }
 
 impl Object {
+    #[inline(always)]
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.map.get(key)
     }
 
+    #[inline(always)]
     pub fn set(&mut self, key: &str, value: Value) {
         self.map.insert(key.to_string(), value);
     }
 }
 
-struct Heap {
-    objects: Vec<Object>
+pub struct Array {
+    vec: Vec<Value>
+}
+
+impl Array {
+    #[inline(always)]
+    pub fn get(&self, index: usize) -> Option<&Value> {
+        self.vec.get(index)
+    }
+
+    #[inline(always)]
+    pub fn set(&mut self, index: usize, value: Value) {
+        self.vec[index] = value;
+    }
+}
+
+pub struct Heap {
+    pub strings: Vec<String>,
+    pub objects: Vec<Object>,
+    pub arrays: Vec<Array>,
+    pub closures: Vec<Closure>
 }
 
 impl Heap {
     pub fn new() -> Self {
-        Self { objects: vec![] }
+        Self { strings: vec![], objects: vec![], arrays: vec![], closures: vec![] }
     }
 
+    #[inline(always)]
+    pub fn allocate_string(&mut self, string: String) -> usize {
+        let id = self.strings.len();
+        self.strings.push(string);
+        id
+    }
+
+    #[inline(always)]
     pub fn allocate_object(&mut self, object: Object) -> usize {
         let id = self.objects.len();
         self.objects.push(object);
+        id
+    }
+
+    #[inline(always)]
+    pub fn allocate_array(&mut self, array: Array) -> usize {
+        let id = self.arrays.len();
+        self.arrays.push(array);
+        id
+    }
+
+    #[inline(always)]
+    pub fn allocate_closure(&mut self, closure: Closure) -> usize {
+        let id = self.closures.len();
+        self.closures.push(closure);
         id
     }
 }
@@ -166,7 +209,7 @@ struct Frame {
     pub module_id: usize,
     pub ip: usize,
     pub locals: Vec<Local>,
-    pub closure: Option<Rc<Closure>>
+    pub closure: Option<HeapIndex>
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -197,10 +240,10 @@ struct Module {
     constants: Vec<Value>
 }
 
-pub fn print(stack: &mut ValueStack) {
+pub fn print(stack: &mut ValueStack, heap: &Heap) {
     let message = stack.pop();
     
-    println!("{}", message.to_string());
+    println!("{}", message.to_string(heap));
 
     stack.push(Value::Void);
 }
@@ -221,19 +264,37 @@ fn run(vm: &mut VM) {
 
         match instruction {
             Op::Const(id) => {
-                stack.push(module.constants[*id].clone());
+                stack.push(module.constants[*id]);
             }
             Op::Pop => {
                 stack.pop();
             }
             Op::CallNative(func) => {
-                func(stack);
+                func(stack, &vm.heap);
             }
             Op::Add => {
                 let b = stack.pop_float();
                 let a = stack.pop_float();
                 
                 stack.push(Value::Float(a + b));
+            }
+            Op::Sub => {
+                let b = stack.pop_float();
+                let a = stack.pop_float();
+                
+                stack.push(Value::Float(a - b));
+            }
+            Op::Mul => {
+                let b = stack.pop_float();
+                let a = stack.pop_float();
+                
+                stack.push(Value::Float(a * b));
+            }
+            Op::Div => {
+                let b = stack.pop_float();
+                let a = stack.pop_float();
+                
+                stack.push(Value::Float(a * b));
             }
             Op::Store(slot) => {
                 let value = stack.pop();
@@ -249,19 +310,24 @@ fn run(vm: &mut VM) {
             }
             Op::Load(slot) => {
                 stack.push(match &frame.locals[*slot] {
-                    Local::Value(value) => value.clone(),
+                    Local::Value(value) => *value,
                     Local::Upvalue(upvalue_ref) => upvalue_ref.borrow().clone()
                 });
             }
             Op::StoreUpvalue(slot) => {
                 let value = stack.pop();
 
-                let closure = frame.closure.as_ref().expect("StoreUpvalue in non-closure");
+                let closure_id = *frame.closure.as_ref().expect("StoreUpvalue in non-closure");
+
+                let closure = &vm.heap.closures[closure_id];
 
                 *closure.upvalues[*slot].borrow_mut() = value;
+
             }
             Op::LoadUpvalue(slot) => {
-                let closure = frame.closure.as_ref().expect("LoadUpvalue in non-closure");
+                let closure_id = *frame.closure.as_ref().expect("LoadUpvalue in non-closure");
+
+                let closure = &vm.heap.closures[closure_id];
 
                 stack.push(closure.upvalues[*slot].borrow().clone());
             }
@@ -330,19 +396,23 @@ fn run(vm: &mut VM) {
                 }
             }
             Op::Call(argument_count) => {
+                let mut arguments = vec![];
                 for _ in 0..*argument_count {
-                    stack.pop();
+                    arguments.push(Local::Value(stack.pop()));
                 }
 
-                let Value::Closure(closure) = stack.pop() else {
+                let Value::Closure(closure_id) = stack.pop() else {
                     panic!("Failed to retrieve function")
                 };
 
+                let closure = &vm.heap.closures[closure_id];
+
                 let function = vm.functions[closure.function_id].clone();
 
-                let mut call_locals = Vec::new();
+                let mut call_locals = vec![Local::Value(Value::Closure(closure_id))];
+                call_locals.append(&mut arguments);
                 call_locals.resize(function.argument_count + function.local_count, Local::Value(Value::Void));
-                vm.frames.push(Frame { module_id: function.module_id, ip: function.code_offset, locals: call_locals, closure: Some(closure) });
+                vm.frames.push(Frame { module_id: function.module_id, ip: function.code_offset, locals: call_locals, closure: Some(closure_id) });
             }
             Op::Return => {
                 vm.frames.pop();
@@ -364,7 +434,9 @@ fn run(vm: &mut VM) {
                                     upvalues.push(upvalue_ref);
                                 }
                                 UpvalueSource::Upvalue => {
-                                    let upvalue_ref = frame.closure.as_ref().expect("Closure should be defined").upvalues[upvlaue_descriptor.index].clone();
+                                    let closure_id = *frame.closure.as_ref().expect("Closure should be defined");
+
+                                    let upvalue_ref = vm.heap.closures[closure_id].upvalues[upvlaue_descriptor.index].clone();
 
                                     upvalues.push(upvalue_ref);
                                 }
@@ -376,24 +448,94 @@ fn run(vm: &mut VM) {
                             upvalues
                         };
 
-                        stack.push(Value::Closure(Rc::new(closure)));
+                        let closure_id = vm.heap.allocate_closure(closure);
+
+                        stack.push(Value::Closure(closure_id));
                     }
                     _ => {}
                 }
             }
-            Op::MakeObject(elements) => {
+            Op::BuildObject(elements) => {
                 let mut map = IndexMap::new();
 
                 for _ in 0..*elements {
                     let value = stack.pop();
-                    let key = stack.pop_string();
+                    let key = stack.pop();
 
-                    map.insert((*key).clone(), value);
+                    let Value::String(string_id) = key else {
+                        panic!()
+                    };
+
+                    let key = vm.heap.strings[string_id].clone();
+
+                    map.insert(key, value);
                 }
 
                 let object_id = vm.heap.allocate_object(Object { map });
 
                 stack.push(Value::Object(object_id));
+            }
+            Op::BuildArray(elements) => {
+                let mut vec = vec![];
+
+                for _ in 0..*elements {
+                    let value = stack.pop();
+
+                    vec.push(value);
+                }
+
+                let object_id = vm.heap.allocate_array(Array { vec });
+
+                stack.push(Value::Array(object_id));
+            }
+            Op::ReadProperty => {
+                let property = stack.pop();
+                let object = stack.pop();
+
+                match object {
+                    Value::Object(id) => {
+                        let Value::String(string_id) = property else {
+                            panic!("An object should only be indexed using a string")
+                        };
+
+                        let property = &vm.heap.strings[string_id];
+
+                        stack.push(*vm.heap.objects[id].get(property).expect("Property doesn't exist"));
+                    }
+                    Value::Array(id) => {
+                        let Value::Float(index) = property else {
+                            panic!("An object should only be indexed using an int")
+                        };
+
+                        stack.push(*vm.heap.arrays[id].get(index as usize).expect("Index out of range"));
+                    }
+                    _ => panic!("Value not indexable")
+                }
+            }
+            Op::WriteProperty => {
+                let value = stack.pop();
+                let property = stack.pop();
+                let object = stack.pop();
+
+                match object {
+                    Value::Object(id) => {
+                        let Value::String(string_id) = property else {
+                            panic!("An object should only be indexed using a string")
+                        };
+
+                        let property = &vm.heap.strings[string_id];
+
+                        vm.heap.objects[id].set(property, value);
+                    }
+                    Value::Array(id) => {
+                        let Value::Float(index) = property else {
+                            panic!("An object should only be indexed using an int")
+                        };
+
+                        vm.heap.arrays[id].set(index as usize, value);
+                    }
+                    _ => panic!("Value not indexable")
+                }
             }
             Op::Halt => {
                 break;
@@ -404,7 +546,7 @@ fn run(vm: &mut VM) {
     }
 }
 
-pub fn execute(modules: Vec<Module>, functions: Vec<Function>) {
+pub fn execute(modules: Vec<Module>, functions: Vec<Function>, heap: Heap) {
     let mut locals = Vec::new();
     locals.resize(5, Local::Value(Value::Void));
 
@@ -422,14 +564,14 @@ pub fn execute(modules: Vec<Module>, functions: Vec<Function>) {
         frames,
         modules,
         functions,
-        heap: Heap::new()
+        heap
     };
 
     let start = Instant::now();
     run(&mut vm);
     let end = start.elapsed();
     println!("{end:.2?}");
-
+    
     assert!(vm.stack.0.len() == 0, "Stack is not empty")
 }
 
@@ -450,12 +592,12 @@ pub fn test_compile(path: &str) -> LanguageResult<()> {
 
     let ir = new_translator::translate(ast)?;
     
-    fs::write("ir.ron", ron::ser::to_string_pretty(&ir.program, Default::default()).unwrap()).unwrap();
+    fs::write("core/debug/vm/ir.ron", ron::ser::to_string_pretty(&ir.program, Default::default()).unwrap()).unwrap();
 
     let build = compile_program(ir);
 
-    fs::write("build.dbg", build.operations.iter().map(|op| format!("{:?}", op)).collect::<Vec<String>>().join("\n")).expect("Failed to write operations debug file");
-    fs::write("constants.dbg", format!("{:#?}", build.consts)).unwrap();
+    fs::write("core/debug/vm/build.dbg", build.operations.iter().map(|op| format!("{:?}", op)).collect::<Vec<String>>().join("\n")).expect("Failed to write operations debug file");
+    fs::write("core/debug/vm/constants.dbg", format!("{:#?}", build.consts)).unwrap();
 
     let module = Module {
         code: build.operations,
@@ -463,13 +605,13 @@ pub fn test_compile(path: &str) -> LanguageResult<()> {
         name: name.to_string()
     };
 
-    vm::execute(vec![module], build.functions);
+    vm::execute(vec![module], build.functions, build.heap);
 
     Ok(())
 }
 
 pub fn test() {
-    let mut compiler = Compiler::new(HashMap::new());
+    let mut compiler = Compiler::new(HashMap::new(), 0);
 
     let zero = compiler.constant(Value::Int(0));
 
@@ -530,7 +672,7 @@ pub fn test() {
 
     // Hello world function
     compiler.begin_function(vec![]);
-    let hello_world = compiler.constant(Value::String(Rc::new("Hello, World!".to_string())));
+    let hello_world = compiler.string_constant("Hello, World!");
     compiler.emit(Op::Const(hello_world));
     compiler.emit(Op::CallNative(print));
     compiler.emit(Op::Return);
@@ -566,7 +708,7 @@ pub fn test() {
                 Op::Return
             ],
             constants: vec![
-                Value::String(Rc::new("Module loaded".to_string()))
+                Value::Int(69420)
             ]
         }
     ];
@@ -575,5 +717,5 @@ pub fn test() {
 
     functions.push(Function { module_id: 1, argument_count: 0, local_count: 0, code_offset: 3, upvalue_descriptors: vec![] });
     
-    execute(modules, functions);
+    execute(modules, functions, build.heap);
 }

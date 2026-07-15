@@ -127,8 +127,6 @@ impl Context {
                     upvalue_index = id.index;
                 }
 
-                println!("Found {} at slot {}", name, symbol.slot);
-
                 return Some(VariableRef { name: None, slot: upvalue_index, depth, start: symbol.start, end: symbol.end, upvalue: traversed && symbol.upvalue });
             }
 
@@ -141,12 +139,6 @@ impl Context {
 
     fn set_with_position(&mut self, name: &str, position: (usize, usize)) -> VariableRef {
         let is_upvalue = self.is_upvalue(name, position);
-
-        if is_upvalue {
-            println!("{name} is an upvalue");
-        } else {
-            println!("{name} is not an upvalue");
-        }
 
         let scope = self.stack.last_mut().unwrap();
 
@@ -223,13 +215,9 @@ impl Context {
                             return
                         }
 
-                        // println!("{expression:?}");
-
                         if self.definition.as_ref().unwrap().1 != self.frames.len() {
                             self.upvalue = true
                         }
-
-                        // println!("Searching for {}", self.name)
                     }
                     _ => {}
                 }
