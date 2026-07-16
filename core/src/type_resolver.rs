@@ -1,8 +1,8 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 
 use parking_lot::Mutex;
 
-use crate::{analysis::{Scope, ScopeId, Span, SymbolId}, explorer::Visitor, parser::{ASTSyntaxTree, Type, TypeArena, TypeId}};
+use crate::{analysis::{Scope, ScopeId, Span}, explorer::Visitor, parser::{ASTSyntaxTree, Type, TypeArena, TypeId}};
 
 #[derive(Debug, Clone)]
 pub struct TypeArenaWrapper<T: Debug = Type>(Arc<Mutex<TypeArena<T>>>);

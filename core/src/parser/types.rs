@@ -249,6 +249,7 @@ pub enum StatementKind<A: SyntaxTree> {
         expression: Expression,
     },
     Break,
+    Continue,
     Block(Block<Statement<Self>>),
     Import {
         specifiers: Vec<A::Variable>,
@@ -539,7 +540,7 @@ impl ToString for Type {
             Self::String => "string".to_string(),
             Self::Number => "number".to_string(),
             Self::Bool => "bool".to_string(),
-            Self::Function(function_type) => {
+            Self::Function(_function_type) => {
                 format!("({}) => {}",
                     // function_type.arguments
                     //     .iter()

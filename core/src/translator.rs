@@ -15,7 +15,6 @@ impl LanguageErrorTrait for TranslatorError {}
 #[derive(Serialize, Debug, Clone)]
 enum ScopeKind {
     Program,
-    Call(usize),
     Loop,
     Conditional,
     Function,
@@ -68,10 +67,6 @@ impl Context {
 
         let mut depth = 0;
         while let Some(scope) = scopes.next() {
-            if let ScopeKind::Call(idx) = scope.kind {
-                scopes = self.stack[0..((idx + 1) as usize)].iter().rev();
-            }
-
             if let Some(symbol) = scope.symbol_table.get(name) {
                 return Some(VariableRef { name: None, slot: symbol.slot, depth, start: symbol.start, end: symbol.end, upvalue: false });
             }
@@ -242,6 +237,7 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
             StatementKind::VariableDefinition { descriptor: variables, expression: translate_expression(expression, context)?, type_ref, ty }
         }
         ASTStatementKind::Break => StatementKind::Break,
+        ASTStatementKind::Continue => StatementKind::Continue,
         ASTStatementKind::Method { name, arguments, block } => StatementKind::Method { name, arguments, block },
         ASTStatementKind::Field { visibility, name, value } => StatementKind::Field { visibility, name, value }
     };

@@ -5,7 +5,7 @@ use std::{collections::HashMap, rc::Rc, vec};
 use nlf_shared::indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::{compiler::FunctionInfos, errors::{LanguageError, LanguageErrorTrait, LanguageResult}, explorer::{self, Visitor}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Program, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableRef}, vm::{UpvalueDescriptor, UpvalueSource}};
+use crate::{compiler::{FunctionInfo, FunctionInfos}, errors::{LanguageError, LanguageErrorTrait, LanguageResult}, explorer::{self, Visitor}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Program, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableRef}, vm::{UpvalueDescriptor, UpvalueSource}};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -173,28 +173,25 @@ impl Context {
     }
 
     fn enter_frame(&mut self) {
-        println!("Entering frame");
         self.frames.push(Frame { symbol_table: SymbolTable::new(), upvalue_mappings: IndexMap::new() });
     }
 
-    fn exit_frame(&mut self) -> Vec<UpvalueDescriptor> {
-        let upvalues = self.frames.last().unwrap().upvalue_mappings.values().map(|upvalue| upvalue.clone()).collect();
+    fn exit_frame(&mut self) -> FunctionInfo {
+        let frame = self.frames.last().unwrap();
+
+        let function_info = FunctionInfo {
+            upvalue_descriptors: frame.upvalue_mappings.values().map(|upvalue| upvalue.clone()).collect(),
+            local_count: frame.symbol_table.map.len()
+        };
+
         self.frames.pop();
-        upvalues
+
+        function_info
     }
 
     fn is_upvalue(&self, name: &str, position: (usize, usize)) -> bool {
         #[derive(Debug)]
-        struct Symbol {
-            name: String,
-            frame_id: usize
-        }
-
-        #[derive(Debug)]
-        struct Frame {
-            symbols: Vec<Symbol>,
-            id: usize
-        }
+        struct Frame;
 
         struct FrameExplorer {
             frames: Vec<Frame>,
@@ -207,8 +204,8 @@ impl Context {
         impl Visitor<ASTSyntaxTree> for FrameExplorer {
             fn visit_expression(&mut self, expression: &Expression) {
                 match &expression.kind {
-                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), value } => {
-                        self.frames.push(Frame { symbols: vec![], id: self.frames.len() });
+                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), .. } => {
+                        self.frames.push(Frame);
                     }
                     ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(variable_name) } => {
                         if self.name != *variable_name {
@@ -230,7 +227,7 @@ impl Context {
 
                 match &statement.kind {
                     ASTStatementKind::Function { .. } => {
-                        self.frames.push(Frame { symbols: vec![], id: self.frames.len() });
+                        self.frames.push(Frame);
                     }
                     _ => {}
                 }
@@ -238,7 +235,7 @@ impl Context {
 
             fn leave_expression(&mut self, expression: &Expression) {
                 match &expression.kind {
-                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), value } => {
+                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), .. } => {
                         self.frames.pop();
                     }
                     _ => {}
@@ -256,7 +253,7 @@ impl Context {
         }
 
         let mut visitor = FrameExplorer {
-            frames: vec![Frame { symbols: vec![], id: 0 }],
+            frames: vec![Frame],
             name: name.to_string(),
             definition: None,
             position,
@@ -271,7 +268,8 @@ impl Context {
 
 pub struct TranslatorOutput {
     pub program: IRProgram,
-    pub function_infos: FunctionInfos
+    pub function_infos: FunctionInfos,
+    pub local_count: usize
 }
 
 pub fn translate(program: ASTProgram) -> LanguageResult<TranslatorOutput> {
@@ -283,7 +281,7 @@ pub fn translate(program: ASTProgram) -> LanguageResult<TranslatorOutput> {
     };
 
     translate_body(program.body, &mut context).map(|statements| {
-        TranslatorOutput { program: Program { body: statements }, function_infos: context.function_infos }
+        TranslatorOutput { program: Program { body: statements }, function_infos: context.function_infos, local_count: context.frames.last().unwrap().symbol_table.map.len() }
     })
 }
 
@@ -325,9 +323,9 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
             let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
             let block = translate_block(block, context)?;
             context.exit_scope();
-            let upvalues = context.exit_frame();
+            let function_info = context.exit_frame();
 
-            context.function_infos.insert(var_ref.clone(), upvalues);
+            context.function_infos.insert(var_ref.clone(), function_info);
 
             StatementKind::Function { variable: var_ref, arguments: inner_arguements, block, return_type_ref, return_ty }
         },
@@ -425,6 +423,7 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
             StatementKind::VariableDefinition { descriptor: variables, expression: translate_expression(expression, context)?, type_ref, ty }
         }
         ASTStatementKind::Break => StatementKind::Break,
+        ASTStatementKind::Continue => StatementKind::Continue,
         ASTStatementKind::Method { name, arguments, block } => StatementKind::Method { name, arguments, block },
         ASTStatementKind::Field { visibility, name, value } => StatementKind::Field { visibility, name, value }
     };
@@ -490,9 +489,9 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                     let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
                     let block = translate_block(block, context)?;
                     context.exit_scope();
-                    let upvalues = context.exit_frame();
+                    let function_info = context.exit_frame();
 
-                    context.function_infos.insert(var_ref.clone(), upvalues);
+                    context.function_infos.insert(var_ref.clone(), function_info);
 
                     return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKindWrapper::IR(IRStatementKind::Function {
                         variable: var_ref,

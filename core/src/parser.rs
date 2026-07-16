@@ -325,6 +325,11 @@ fn match_statement(parser: &mut Parser) -> LanguageResult<Option<ASTStatement>> 
 
             Ok(Some(ASTStatementKind::Break.into_statement(start, end)))
         },
+        Some(TokenKind::Keyword(KeywordKind::Continue)) => {
+            let Token { start, end, .. } = expect_keyword!(parser, KeywordKind::Continue);
+
+            Ok(Some(ASTStatementKind::Continue.into_statement(start, end)))
+        },
         Some(TokenKind::Keyword(KeywordKind::Return)) => {
             let Token { start, .. } = expect_keyword!(parser, KeywordKind::Return);
             let expression = match_expression(parser)?;

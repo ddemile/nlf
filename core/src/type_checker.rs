@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, rc::Rc, str::FromStr, sync::Arc};
+use std::{path::PathBuf, rc::Rc, str::FromStr, sync::Arc};
 
 
 use nlf_shared::indexmap::IndexMap;

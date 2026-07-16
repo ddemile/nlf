@@ -68,6 +68,14 @@ impl ValueStack {
 
         float
     }
+
+    fn pop_bool(&mut self) -> bool {
+        let Value::Bool(bool) = self.pop() else {
+            panic!("Value is not bool")
+        };
+
+        bool
+    }
 }
 
 impl Value {
@@ -105,6 +113,8 @@ pub enum Op {
     LTE,
     GT,
     GTE,
+    And,
+    Or,
     Increment(usize),
     Jump(usize),
     JumpIfFalse(usize),
@@ -234,7 +244,7 @@ pub struct Function {
 }
 
 #[derive(Debug)]
-struct Module {
+pub struct Module {
     name: String,
     code: Vec<Op>,
     constants: Vec<Value>
@@ -376,6 +386,18 @@ fn run(vm: &mut VM) {
                 let a = stack.pop();
 
                 stack.push(Value::Bool(a >= b));
+            }
+            Op::And => {
+                let b = stack.pop_bool();
+                let a = stack.pop_bool();
+
+                stack.push(Value::Bool(a && b));
+            }
+            Op::Or => {
+                let b = stack.pop_bool();
+                let a = stack.pop_bool();
+
+                stack.push(Value::Bool(a || b));
             }
             Op::Increment(slot) => {
                 let value = frame.locals.get_mut(*slot).expect("Local not found");
@@ -540,15 +562,19 @@ fn run(vm: &mut VM) {
             Op::Halt => {
                 break;
             }
-            op => todo!("Operation not implemented: {:?}", op)
         }
-
     }
 }
 
-pub fn execute(modules: Vec<Module>, functions: Vec<Function>, heap: Heap) {
+pub struct ExecutionInfo {
+    pub functions: Vec<Function>,
+    pub heap: Heap,
+    pub local_count: usize
+}
+
+pub fn execute(modules: Vec<Module>, excution_info: ExecutionInfo) {
     let mut locals = Vec::new();
-    locals.resize(5, Local::Value(Value::Void));
+    locals.resize(excution_info.local_count, Local::Value(Value::Void));
 
     let frames = vec![
         Frame {
@@ -563,8 +589,8 @@ pub fn execute(modules: Vec<Module>, functions: Vec<Function>, heap: Heap) {
         stack: ValueStack::new(),
         frames,
         modules,
-        functions,
-        heap
+        functions: excution_info.functions,
+        heap: excution_info.heap
     };
 
     let start = Instant::now();
@@ -592,6 +618,8 @@ pub fn test_compile(path: &str) -> LanguageResult<()> {
 
     let ir = new_translator::translate(ast)?;
     
+    let local_count = ir.local_count; 
+    
     fs::write("core/debug/vm/ir.ron", ron::ser::to_string_pretty(&ir.program, Default::default()).unwrap()).unwrap();
 
     let build = compile_program(ir);
@@ -605,7 +633,7 @@ pub fn test_compile(path: &str) -> LanguageResult<()> {
         name: name.to_string()
     };
 
-    vm::execute(vec![module], build.functions, build.heap);
+    vm::execute(vec![module], ExecutionInfo { functions: build.functions, heap: build.heap, local_count });
 
     Ok(())
 }
@@ -717,5 +745,5 @@ pub fn test() {
 
     functions.push(Function { module_id: 1, argument_count: 0, local_count: 0, code_offset: 3, upvalue_descriptors: vec![] });
     
-    execute(modules, functions, build.heap);
+    execute(modules, ExecutionInfo { functions, heap: build.heap, local_count: 3 });
 }

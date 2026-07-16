@@ -1,8 +1,9 @@
 use std::{collections::HashMap, fs, rc::Rc};
 
-use reqwest::header::LAST_MODIFIED;
+use nlf_shared::indexmap::map::raw_entry_v1::RawOccupiedEntryMut;
+use serde::Serialize;
 
-use crate::{compiler, interpreter::prototypes::Operation, lexer::TokenKind, new_translator::TranslatorOutput, parser::{Block, Expression, ExpressionKind, IRBlock, IRProgram, IRStatement, Iterable, LiteralExpressionKind, StatementKind, StatementKindWrapper, ValueHolder, VariableRef}, vm::{self, Function, FunctionId, FunctionRef, Heap, Op, UpvalueDescriptor, UpvalueSource, Value}};
+use crate::{lexer::TokenKind, new_translator::TranslatorOutput, parser::{Expression, ExpressionKind, IRBlock, IRStatement, Iterable, LiteralExpressionKind, StatementKind, StatementKindWrapper, ValueHolder, VariableRef}, vm::{self, Function, FunctionId, FunctionRef, Heap, Op, UpvalueDescriptor, Value}};
 
 enum UnresolvedOp {
     Jump(String),
@@ -21,9 +22,12 @@ pub enum ValueUsage {
 }
 
 pub struct AbstractFunction {
-    pub instructions: Vec<Instruction>,
+    instructions: Vec<Instruction>,
     completed: bool,
-    upvalue_descriptors: Vec<UpvalueDescriptor>
+    upvalue_descriptors: Vec<UpvalueDescriptor>,
+    labels: Vec<String>,
+    argument_count: usize, 
+    local_count: usize
 }
 
 pub struct CompilerBuild {
@@ -41,10 +45,22 @@ pub struct Compiler {
     label_id: usize,
     function_infos: FunctionInfos,
     starting_heap_id: usize,
-    heap: Heap
+    heap: Heap,
+    loops: Vec<Loop>
 }
 
-pub type FunctionInfos = HashMap<VariableRef, Vec<UpvalueDescriptor>>;
+struct Loop {
+    next_iteration_label: String,
+    end_label: String
+}
+
+pub type FunctionInfos = HashMap<VariableRef, FunctionInfo>;
+
+#[derive(Serialize, Debug, Clone)]
+pub struct FunctionInfo {
+    pub upvalue_descriptors: Vec<UpvalueDescriptor>,
+    pub local_count: usize
+}
 
 impl Compiler {
     pub fn new(function_infos: FunctionInfos, starting_heap_id: usize) -> Self {
@@ -56,27 +72,36 @@ impl Compiler {
             label_id: 0,
             function_infos,
             starting_heap_id,
-            heap: Heap::new()
+            heap: Heap::new(),
+            loops: vec![]
         }
     }
 
     pub fn label(&mut self, name: &str) {
+        for (_, function) in self.functions.iter_mut().rev().enumerate() {
+            if function.completed {
+                continue
+            }
+
+            function.labels.push(name.to_string());
+            self.labels.insert(name.to_string(), function.instructions.len());
+
+            return;
+        }
+
         self.labels.insert(name.to_string(), self.instructions.len());
     }
 
-    pub fn new_label(&mut self) -> String {
+    pub fn generate_label(&mut self) -> String {
         let name = self.label_id.to_string();
-
-        self.label(&name);
         self.label_id += 1;
-
         name
     }
 
     fn emit_instruction(&mut self, instruction: Instruction) {
         for function in self.functions.iter_mut().rev() {
             if function.completed {
-                continue;
+                continue
             }
 
             function.instructions.push(instruction);
@@ -98,14 +123,18 @@ impl Compiler {
         self.emit_instruction(Instruction::Unresolved(UnresolvedOp::JumpIfFalse(label.to_string())));
     }
 
+    pub fn begin_function_with(&mut self, abstract_function: AbstractFunction) {
+        self.functions.push(abstract_function);
+    }
+
     pub fn begin_function(&mut self, upvalue_descriptors: Vec<UpvalueDescriptor>) {
-        self.functions.push(AbstractFunction { instructions: vec![], completed: false, upvalue_descriptors });
+        self.begin_function_with(AbstractFunction { instructions: vec![], completed: false, upvalue_descriptors, labels: vec![], local_count: 0, argument_count: 0 });
     }
 
     pub fn end_function(&mut self) -> usize {
         for (index, function) in self.functions.iter_mut().rev().enumerate() {
             if function.completed {
-                continue;
+                continue
             }
 
             function.completed = true;
@@ -144,16 +173,20 @@ impl Compiler {
     }
 
     pub fn build(mut self) -> CompilerBuild {
-        let labels = self.labels;
+        let mut labels = self.labels;
 
         let mut functions: Vec<Function> = vec![];
 
         for (_, function) in self.functions.iter_mut().enumerate() {
+            for label in &function.labels {
+                *labels.get_mut(label).expect("Label not found") += self.instructions.len();
+            }
+
             functions.push(Function {
                 // TODO: use real values
                 module_id: 0,
                 argument_count: 0,
-                local_count: 5,
+                local_count: function.local_count,
                 code_offset: self.instructions.len(),
                 upvalue_descriptors: function.upvalue_descriptors.clone()
             });
@@ -233,9 +266,18 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
             compile_expression(&start, ValueUsage::Needed, compiler);
             compiler.emit(Op::Store(variable.slot));
 
-            let loop_start = compiler.new_label();
+            let loop_start = compiler.generate_label();
+            let loop_next_iteration = compiler.generate_label();
+            let loop_end = compiler.generate_label();
+
+            compiler.loops.push(Loop { next_iteration_label: loop_next_iteration.clone(), end_label: loop_end.clone() });
+
+            compiler.label(&loop_start);
 
             compile_body(statements.clone(), compiler);
+
+            compiler.label(&loop_next_iteration);
+
             compiler.emit(Op::Increment(variable.slot));
 
             compiler.emit(Op::Load(variable.slot));
@@ -243,6 +285,65 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
             compiler.emit(Op::GTE);
 
             compiler.jump_if_false(&loop_start);
+
+            compiler.label(&loop_end);
+
+            compiler.loops.pop();
+        }
+        StatementKind::While { condition, statements } => {
+            let loop_start = compiler.generate_label();
+            let loop_end = compiler.generate_label();
+
+            compiler.label(&loop_start);
+
+            compile_expression(condition, ValueUsage::Needed, compiler);
+            compiler.jump_if_false(&loop_end);
+            
+            compiler.loops.push(Loop { next_iteration_label: loop_start.clone(), end_label: loop_end.clone() });
+
+            compile_body(statements.clone(), compiler);
+            compiler.jump(&loop_start);
+
+            compiler.label(&loop_end);
+
+            compiler.loops.pop();
+        }
+        StatementKind::If { condition, block, alternate } => {
+            compile_expression(condition, ValueUsage::Needed, compiler);
+
+            let alternate_label = compiler.generate_label();
+            let end_label = compiler.generate_label();
+
+            compiler.jump_if_false(&alternate_label);
+            
+            compile_block(block, compiler);
+
+            compiler.jump(&end_label);
+
+            compiler.label(&alternate_label);
+
+            if let Some(alternate) = alternate {
+                compile_statement(alternate, compiler);
+            }
+
+            compiler.label(&end_label);
+        }
+        StatementKind::Block(block) => {
+            compile_block(block, compiler);
+        }
+        StatementKind::Return { expression } => {
+            compile_expression(expression, ValueUsage::Needed, compiler);
+            compiler.emit(Op::Return);
+        }
+        StatementKind::Break => {
+            let label = compiler.loops.last().expect("Tried to break on a non-loop statement").end_label.clone();
+
+            compiler.jump(&label);
+        }
+        StatementKind::Continue => {
+            let label = compiler.loops.last().expect("Tried to continue on a non-loop statement").next_iteration_label.clone();
+
+            compiler.jump(&label);
         }
         _ => todo!()
     }
@@ -289,7 +390,6 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
 
                     compile_function(variable, arguments, block, compiler);
                 }
-                _ => todo!()
             }
         }
         ExpressionKind::Binary { left, operator, right } => {
@@ -297,13 +397,11 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
             compile_expression(right, ValueUsage::Needed, compiler);
 
             match operator {
-                TokenKind::Plus => {
-                    compiler.emit(Op::Add);
-                }
-                TokenKind::Minus => {
-                    compiler.emit(Op::Sub);
-                },
-                _ => todo!()
+                TokenKind::Plus => compiler.emit(Op::Add),
+                TokenKind::Minus => compiler.emit(Op::Sub),
+                TokenKind::Asterisk => compiler.emit(Op::Mul),
+                TokenKind::Slash => compiler.emit(Op::Div),
+                _ => unreachable!()
             }
         }
         ExpressionKind::Relational { left, operator, right } => {
@@ -311,13 +409,31 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
             compile_expression(right, ValueUsage::Needed, compiler);
 
             match operator {
-                TokenKind::Asterisk => {
-                    compiler.emit(Op::Mul);
-                }
-                TokenKind::Slash => {
-                    compiler.emit(Op::Div);
-                },
-                _ => todo!()
+                TokenKind::GT => compiler.emit(Op::GT),
+                TokenKind::GTE => compiler.emit(Op::GTE),
+                TokenKind::LT => compiler.emit(Op::LT),
+                TokenKind::LTE => compiler.emit(Op::LTE),
+                _ => unreachable!()
+            }
+        }
+        ExpressionKind::Equality { left, operator, right } => {
+            compile_expression(left, ValueUsage::Needed, compiler);
+            compile_expression(right, ValueUsage::Needed, compiler);
+
+            match operator {
+                TokenKind::EQ => compiler.emit(Op::EQ),
+                TokenKind::NE => compiler.emit(Op::NEQ),
+                _ => unreachable!()
+            }
+        }
+        ExpressionKind::Logical { left, operator, right } => {
+            compile_expression(left, ValueUsage::Needed, compiler);
+            compile_expression(right, ValueUsage::Needed, compiler);
+
+            match operator {
+                TokenKind::And => compiler.emit(Op::And),
+                TokenKind::Or => compiler.emit(Op::Or),
+                _ => unreachable!()
             }
         }
         ExpressionKind::Variable(var_ref) => {
@@ -344,10 +460,39 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
                 }
             }
         }
-        ExpressionKind::Assignment { left, right, .. } => {
+        ExpressionKind::Assignment { left, operator, right } => {
+            fn compile_value(left: &Expression, operator: &TokenKind, right: &Expression, compiler: &mut Compiler) {
+                match operator {
+                    TokenKind::Assign => {
+                        compile_expression(right, ValueUsage::Needed, compiler);
+                    }
+                    TokenKind::PlusEqual => {
+                        compile_expression(left, ValueUsage::Needed, compiler);
+                        compile_expression(right, ValueUsage::Needed, compiler);
+                        compiler.emit(Op::Add);
+                    }
+                    TokenKind::MinusEqual => {
+                        compile_expression(left, ValueUsage::Needed, compiler);
+                        compile_expression(right, ValueUsage::Needed, compiler);
+                        compiler.emit(Op::Sub);
+                    }
+                    TokenKind::AsteriskEqual => {
+                        compile_expression(left, ValueUsage::Needed, compiler);
+                        compile_expression(right, ValueUsage::Needed, compiler);
+                        compiler.emit(Op::Mul);
+                    }
+                    TokenKind::SlashEqual => {
+                        compile_expression(left, ValueUsage::Needed, compiler);
+                        compile_expression(right, ValueUsage::Needed, compiler);
+                        compiler.emit(Op::Div);
+                    }
+                    _ => unreachable!()
+                }
+            }
+
             match &left.kind {
                 ExpressionKind::Variable(var_ref) => {
-                    compile_expression(right, ValueUsage::Needed, compiler);
+                    compile_value(left, operator, right, compiler);
                     if var_ref.upvalue {
                         compiler.emit(Op::StoreUpvalue(var_ref.slot));
                     } else {
@@ -358,7 +503,7 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
                 ExpressionKind::Member { object, property } => {
                     compile_expression(object, ValueUsage::Needed, compiler);
                     compile_expression(property, ValueUsage::Needed, compiler);
-                    compile_expression(right, ValueUsage::Needed, compiler);
+                    compile_value(left, operator, right, compiler);
                     compiler.emit(Op::WriteProperty);
                     return
                 }
@@ -379,7 +524,18 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
 }
 
 fn compile_function(variable: &VariableRef, arguments: &Vec<VariableRef>, block: &IRBlock, compiler: &mut Compiler) {
-    compiler.begin_function(compiler.function_infos.get(variable).expect("Function infos not found").to_vec());
+    let function_infos = compiler.function_infos.get(variable).expect("Function infos not found");
+
+    let abstract_function = AbstractFunction {
+        completed: false,
+        instructions: vec![],
+        upvalue_descriptors: function_infos.upvalue_descriptors.to_vec(),
+        labels: vec![],
+        local_count: function_infos.local_count,
+        argument_count: arguments.len()
+    };
+
+    compiler.begin_function_with(abstract_function);
 
     compile_block(block, compiler);
 

@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use parking_lot::Mutex;
 use serde::Serialize;
 
-use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, DefaultType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, Iterable, LiteralExpressionKind, Type, TypeArena, TypeId, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
+use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, DefaultType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, Iterable, LiteralExpressionKind, TypeArena, TypeId, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
 
 #[derive(Debug, Clone, Copy, Serialize, Hash, PartialEq, Eq)]
 pub struct Span {

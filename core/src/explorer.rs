@@ -122,6 +122,7 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
             StatementKind::VariableDefinition { expression: walk_expression(visitor, expression), descriptor: descriptor.clone(), type_ref: type_ref.clone(), ty: ty.clone() }
         }
         StatementKind::Break => StatementKind::Break,
+        StatementKind::Continue => StatementKind::Continue,
         StatementKind::Field { visibility, name, value } => {
             StatementKind::Field { visibility: visibility.clone(), name: name.clone(), value: value.clone() }
         }

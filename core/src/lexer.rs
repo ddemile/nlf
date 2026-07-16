@@ -66,6 +66,7 @@ pub enum KeywordKind {
     Fn,
     Return,
     Break,
+    Continue,
     Throw,
     Try,
     Catch,
@@ -175,6 +176,7 @@ pub fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("fn", TokenKind::Keyword(KeywordKind::Fn));
     map.insert("return", TokenKind::Keyword(KeywordKind::Return));
     map.insert("break", TokenKind::Keyword(KeywordKind::Break));
+    map.insert("continue", TokenKind::Keyword(KeywordKind::Continue));
     map.insert("throw", TokenKind::Keyword(KeywordKind::Throw));
     map.insert("try", TokenKind::Keyword(KeywordKind::Try));
     map.insert("catch", TokenKind::Keyword(KeywordKind::Catch));
