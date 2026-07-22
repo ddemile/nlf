@@ -1,8 +1,8 @@
 // Name: For loop with 1 million iterations
-for i in ..1000000 {}
+for i in 0..1000000 {}
 
 // Name: For loop with 1 million iterations and assignment
-for i in ..1000000 {
+for i in 0..1000000 {
     let b = 0
 }
 

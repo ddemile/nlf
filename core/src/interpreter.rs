@@ -7,10 +7,10 @@ use serde::Serialize;
 use smallvec::SmallVec;
 
 use crate::{
-    errors::{LanguageError, LanguageErrorTrait, LanguageResult}, interpreter::{format::FormatOptions, prototypes::{
+    errors::{LanguageError, LanguageErrorKind, LanguageResult}, interpreter::{format::FormatOptions, prototypes::{
         ARRAY_PROTOTYPE, LocalMethodFunc, LocalPrototype, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE
     }}, lexer::TokenKind, loader::Module, parser::{
-        ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, ObjectRef, RuntimeFunction, StatementKind, StatementKindWrapper, ValueHolder, VariableRef, Visibility
+        ArrayRef, Block, BuiltInFunction, Expression, ExpressionKind, FunctionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, ObjectRef, RuntimeFunction, StatementKind, StatementKindWrapper, ValueHolder, VariableKind, VariableRef, Visibility
     }, stdlib::FUNCTION_TABLE
 };
 
@@ -52,7 +52,7 @@ pub enum RuntimeError {
     OperationNotSupported(String),
 }
 
-impl LanguageErrorTrait for RuntimeError {}
+impl LanguageErrorKind for RuntimeError {}
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -88,10 +88,10 @@ impl ValueHolder {
             ValueHolder::Bool(value) => format!("{value}"),
             ValueHolder::Fn(FunctionKind::Runtime(_)) => format!("fn() {{ TODO }}"),
             ValueHolder::Fn(FunctionKind::BuiltIn(_)) => format!("fn() {{ native code }}"),
-            ValueHolder::Object(object_ref) => format::format_object(object_ref, FormatOptions {
+            ValueHolder::Object(object_ref) => format::format_object_ref(object_ref, FormatOptions {
                 space: if object_ref.fetch().len() > 1 { Some(2) } else { None }
             }),
-            ValueHolder::Array(array_ref) => format::format_array(array_ref, FormatOptions {
+            ValueHolder::Array(array_ref) => format::format_array_ref(array_ref, FormatOptions {
                 space: if array_ref.fetch().len() > 1 { Some(2) } else { None }
             }),
             ValueHolder::LazyRef { .. } => format!("LazyRef"),
@@ -524,12 +524,12 @@ fn hoist_declarations(
 
                         context.environment.set(
                             &VariableRef {
+                                kind: VariableKind::Local,
                                 name: None,
                                 slot: 0,
                                 depth: 0,
                                 start: 0,
-                                end: 0,
-                                upvalue: false
+                                end: 0
                             },
                             ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
                                 arguments: arguments.clone(),
@@ -544,12 +544,12 @@ fn hoist_declarations(
                             if !is_method_static {
                                 context.environment.set(
                                     &VariableRef {
+                                        kind: VariableKind::Local,
                                         name: None,
                                         slot: 1,
                                         depth: 0,
                                         start: 0,
-                                        end: 0,
-                                        upvalue: false
+                                        end: 0
                                     },
                                     ValueHolder::Object(object_ref.clone()),
                                     true,
@@ -1247,12 +1247,12 @@ pub fn eval_runtime_function(function: RuntimeFunction, evaluated_args: &[ValueH
 
     context.environment.set(
         &VariableRef {
+            kind: VariableKind::Local,
             name: None,
             slot: 0,
             depth: 0,
             start: 0,
-            end: 0,
-            upvalue: false
+            end: 0
         },
         ValueHolder::Fn(FunctionKind::Runtime(RuntimeFunction {
             arguments: function.arguments.clone(),

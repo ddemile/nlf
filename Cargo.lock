@@ -1049,6 +1049,7 @@ dependencies = [
 name = "nlf-macros"
 version = "0.1.0"
 dependencies = [
+ "nlf-shared",
  "quote",
  "syn",
 ]
@@ -1058,6 +1059,8 @@ name = "nlf-shared"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "inline_colorization",
+ "parking_lot",
  "serde",
  "strum",
 ]

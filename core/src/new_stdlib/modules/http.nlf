@@ -1,0 +1,5 @@
+let http = binding("http")
+
+export fn get(url) {
+    return http.get(url)
+}

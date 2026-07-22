@@ -1,9 +1,22 @@
-use std::{collections::HashMap, fs, rc::Rc};
+use std::{collections::HashMap, path::PathBuf, rc::Rc};
 
-use nlf_shared::indexmap::map::raw_entry_v1::RawOccupiedEntryMut;
 use serde::Serialize;
 
-use crate::{lexer::TokenKind, new_translator::TranslatorOutput, parser::{Expression, ExpressionKind, IRBlock, IRStatement, Iterable, LiteralExpressionKind, StatementKind, StatementKindWrapper, ValueHolder, VariableRef}, vm::{self, Function, FunctionId, FunctionRef, Heap, Op, UpvalueDescriptor, Value}};
+use crate::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver, NonImplementedModuleResolver, StaticModuleResolver}, lexer::TokenKind, new_translator::TranslatorOutput, parser::{ASTStatementKind, Expression, ExpressionKind, IRBlock, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Statement, StatementKind, StatementKindWrapper, ValueHolder, VariableKind, VariableRef}, vm::{Function, FunctionId, FunctionRef, Op, UpvalueDescriptor, Value}};
+
+pub mod resolvers;
+
+#[derive(Debug, Clone)]
+pub enum ImportKind {
+    Wildcard,
+    Specific(Vec<String>)
+}
+
+#[derive(Debug, Clone)]
+pub struct Import {
+    pub kind: ImportKind,
+    pub source: String
+}
 
 enum UnresolvedOp {
     Jump(String),
@@ -30,11 +43,14 @@ pub struct AbstractFunction {
     local_count: usize
 }
 
+#[derive(Clone)]
 pub struct CompilerBuild {
     pub operations: Vec<Op>,
     pub consts: Vec<Value>,
     pub functions: Vec<Function>,
-    pub heap: Heap
+    pub strings: Vec<String>,
+    pub exports: HashMap<String, usize>,
+    pub imports: Vec<Import>
 }
 
 pub struct Compiler {
@@ -44,9 +60,13 @@ pub struct Compiler {
     functions: Vec<AbstractFunction>,
     label_id: usize,
     function_infos: FunctionInfos,
-    starting_heap_id: usize,
-    heap: Heap,
-    loops: Vec<Loop>
+    class_infos: ClassInfos,
+    strings: Vec<String>,
+    loops: Vec<Loop>,
+    source: PathBuf,
+    path_resolver: Rc<dyn ModuleResolver>,
+    exports: HashMap<String, usize>,
+    imports: Vec<Import>
 }
 
 struct Loop {
@@ -55,6 +75,7 @@ struct Loop {
 }
 
 pub type FunctionInfos = HashMap<VariableRef, FunctionInfo>;
+pub type ClassInfos = HashMap<VariableRef, ClassInfo>;
 
 #[derive(Serialize, Debug, Clone)]
 pub struct FunctionInfo {
@@ -62,18 +83,67 @@ pub struct FunctionInfo {
     pub local_count: usize
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub struct ClassInfo {
+    pub methods: HashMap<String, FunctionInfo>
+}
+
+pub struct CompileInfo {
+    pub source: PathBuf,
+    pub function_infos: FunctionInfos,
+    pub class_infos: ClassInfos,
+    pub path_resolver: Rc<dyn ModuleResolver>
+}
+
+impl CompileInfo {
+    pub fn module_resolver(process_path: PathBuf) -> Self {
+        CompileInfo {
+            source: "<module>".into(),
+            function_infos: FunctionInfos::new(),
+            class_infos: ClassInfos::new(),
+            path_resolver: Rc::new(FileSystemModuleResolver {
+                process_path
+            })
+        }
+    }
+
+    pub fn no_resolver() -> Self {
+        CompileInfo {
+            source: "<module>".into(),
+            function_infos: FunctionInfos::new(),
+            class_infos: ClassInfos::new(),
+            path_resolver: Rc::new(NonImplementedModuleResolver)
+        }
+    }
+
+    pub fn basic_resolver(modules: HashMap<String, String>) -> Self {
+        CompileInfo {
+            source: "<module>".into(),
+            function_infos: FunctionInfos::new(),
+            class_infos: ClassInfos::new(),
+            path_resolver: Rc::new(StaticModuleResolver {
+                modules
+            })
+        }
+    }
+}
+
 impl Compiler {
-    pub fn new(function_infos: FunctionInfos, starting_heap_id: usize) -> Self {
+    pub fn new(compile_info: CompileInfo) -> Self {
         Self {
+            source: compile_info.source,
             labels: HashMap::new(),
             instructions: vec![],
             consts: vec![],
             functions: vec![],
             label_id: 0,
-            function_infos,
-            starting_heap_id,
-            heap: Heap::new(),
-            loops: vec![]
+            function_infos: compile_info.function_infos,
+            class_infos: compile_info.class_infos,
+            strings: vec![],
+            loops: vec![],
+            path_resolver: compile_info.path_resolver,
+            exports: HashMap::new(),
+            imports: vec![]
         }
     }
 
@@ -145,15 +215,29 @@ impl Compiler {
         unreachable!()
     }
 
-    /// Pre allocates a string and returns the heap object id
-    pub fn pre_allocate_string(&mut self, string: String) -> usize {
-        self.heap.allocate_string(string) + self.starting_heap_id
+    pub fn register_import(&mut self, import: Import) -> usize {
+        let id = self.imports.len();
+        self.imports.push(import);
+        id
     }
 
-    pub fn string_constant(&mut self, string: &str) -> usize {
-        let heap_id = self.pre_allocate_string(string.to_string());
+    /// Pre allocates a string and returns the string id
+    pub fn pre_allocate_string(&mut self, string: String) -> usize {
+        for (index, allocated_string) in self.strings.iter().enumerate() {
+            if *allocated_string == string {
+                return index
+            }
+        }
 
-        self.constant(Value::String(heap_id))
+        let string_id = self.strings.len();
+        self.strings.push(string);
+        string_id
+    }
+
+    pub fn string_constant(&mut self, string: &str) {
+        let string_id = self.pre_allocate_string(string.to_string());
+
+        self.emit(Op::BuildString(string_id));
     }
 
     pub fn constant(&mut self, value: Value) -> usize {
@@ -183,9 +267,8 @@ impl Compiler {
             }
 
             functions.push(Function {
-                // TODO: use real values
-                module_id: 0,
-                argument_count: 0,
+                module_id: None,
+                argument_count: function.argument_count,
                 local_count: function.local_count,
                 code_offset: self.instructions.len(),
                 upvalue_descriptors: function.upvalue_descriptors.clone()
@@ -210,21 +293,21 @@ impl Compiler {
             }
         }).collect();
 
-        fs::write(format!("core/debug/vm/build.dbg"), operations.iter().map(|op| format!("{op:?}")).collect::<Vec<String>>().join("\n")).unwrap();
-
         CompilerBuild {
             operations,
             consts: self.consts,
             functions,
-            heap: self.heap
+            strings: self.strings,
+            exports: self.exports,
+            imports: self.imports
         }
     }
 }
 
-pub fn compile_program(ir: TranslatorOutput) -> CompilerBuild {
-    let mut compiler = Compiler::new(ir.function_infos, 0);
+pub fn compile_program(ir: &TranslatorOutput, compile_info: CompileInfo) -> CompilerBuild {
+    let mut compiler = Compiler::new(compile_info);
 
-    compile_body(ir.program.body, &mut compiler);
+    compile_body(ir.program.body.clone(), &mut compiler);
     compiler.emit(Op::Halt);
 
     compiler.build()
@@ -244,16 +327,14 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
         StatementKind::VariableDefinition { descriptor, expression, .. } => {
             compile_expression(expression, ValueUsage::Needed, compiler);
             for var_ref in descriptor {
-                if var_ref.upvalue {
-                    compiler.emit(Op::StoreCaptured(var_ref.slot));
-                } else {
-                    compiler.emit(Op::Store(var_ref.slot));
-                }
+                store_variable_ref(var_ref, compiler);
             }
         }
         StatementKind::Function { variable, arguments, block, .. } => {
-            compile_function(variable, arguments, block, compiler);
-            compiler.emit(Op::Store(variable.slot));
+            let function_info = compiler.function_infos.get(variable).expect("Function infos not found").clone();
+
+            compile_function(&function_info, arguments, block, compiler);
+            store_variable_ref(variable, compiler);
         }
         StatementKind::For { variable, iterable, statements } => {
             let (start, end) = match iterable {
@@ -345,6 +426,138 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
 
             compiler.jump(&label);
         }
+        StatementKind::Import { specifiers, source } => {
+            let path: PathBuf = source.value.clone().into();
+            let resolved_source  = match compiler.path_resolver.resolve_path(path.clone(), &compiler.source) {
+                Ok(path) => path,
+                _ => path
+            };
+
+            let import_id = compiler.register_import(Import {
+                kind: ImportKind::Specific(specifiers.iter().map(|specifier| specifier.name.clone().unwrap()).collect()),
+                source: resolved_source.to_str().unwrap().to_string()
+            });
+
+            compiler.emit(Op::Import(import_id));
+
+            for specifier in specifiers {
+                store_variable_ref(specifier, compiler);
+            }
+        }
+        StatementKind::Export { declaration } => {
+            match &declaration.kind {
+                StatementKind::Function { variable, arguments, block, .. } => {
+                    let function_info = compiler.function_infos.get(variable).expect("Function infos not found").clone();
+
+                    compile_function(&function_info, arguments, block, compiler);
+                    compiler.emit(Op::Store(variable.slot));
+                    compiler.exports.insert(variable.name.clone().unwrap(), variable.slot);
+                }
+                _ => {}
+            }
+        }
+        StatementKind::Class { variable, methods, fields, .. } => {
+            const SELF_SLOT: usize = 1;
+
+            let class_name = variable.name.as_ref().unwrap();
+            let class_info = compiler.class_infos.get(variable).unwrap().clone();
+
+            let mut static_methods = vec![];
+            let mut instance_methods = vec![];
+
+            for method in methods.iter() {
+                let IRStatementKind::Method { name, arguments, .. } = &method.kind else {
+                    unreachable!()
+                };
+
+                if name == class_name || arguments.get(0).is_some_and(|argument| argument.name.as_ref().unwrap() == "self") {
+                    instance_methods.push(method);
+                } else {
+                    static_methods.push(method);
+                }
+            }
+
+            let constructor = instance_methods.iter().find(|method| {
+                let Statement { kind: StatementKind::Method { name, .. }, .. } = method else {
+                    unreachable!()
+                };
+
+                name == class_name
+            });
+
+            let Some(Statement { kind: StatementKind::Method { arguments, .. }, .. }) = constructor else {
+                unreachable!()
+            };
+
+            let constructor_info = class_info.methods.get(class_name).unwrap();
+
+            compiler.begin_function_with(AbstractFunction {
+                completed: false,
+                instructions: vec![],
+                labels: vec![],
+                upvalue_descriptors: constructor_info.upvalue_descriptors.clone(),
+                local_count: constructor_info.local_count,
+                argument_count: arguments.len()
+            });
+
+
+            for field in fields.iter().rev() {
+                let Statement { kind: ASTStatementKind::Field { visibility: _, name, value }, .. } = field else {
+                    unreachable!()
+                };
+
+                compiler.string_constant(name);
+                compile_expression(value, ValueUsage::Needed, compiler);
+            }
+
+            compiler.emit(Op::BuildObject(fields.len()));
+            compiler.emit(Op::Store(SELF_SLOT));
+            
+            for method in instance_methods.iter().rev() {
+                let Statement { kind: StatementKind::Method { name, arguments, block }, .. } = method else {
+                    unreachable!()
+                };
+
+                if name == class_name {
+                    continue;
+                }
+
+                let method_info = class_info.methods.get(name).unwrap();
+
+                // Load self, load method name, make method closure, bind self to it, write the method to self
+                compiler.emit(Op::Load(SELF_SLOT));
+                compiler.string_constant(name);
+
+                compile_function(method_info, arguments, block, compiler);
+                compiler.emit(Op::Load(SELF_SLOT));
+                compiler.emit(Op::BindSelf);
+                compiler.emit(Op::WriteProperty);
+            }
+            
+            if let Some(Statement { kind: StatementKind::Method { block, .. }, .. }) = constructor {
+                compile_block(block, compiler);
+            }
+
+            compiler.emit(Op::Load(SELF_SLOT));
+            compiler.emit(Op::Return);
+
+            let function_id = compiler.end_function();
+
+            for method in static_methods.iter().rev() {
+                let Statement { kind: StatementKind::Method { name, arguments, block }, .. } = method else {
+                    unreachable!()
+                };
+
+                let method_info = class_info.methods.get(name).unwrap();
+
+                compiler.string_constant(name);
+                compile_function(method_info, arguments, block, compiler);
+            }
+            compiler.emit(Op::MakeClosure(FunctionRef::Id(FunctionId(function_id))));
+            compiler.emit(Op::BuildClass(static_methods.len()));
+
+            store_variable_ref(variable, compiler);
+        }
         _ => todo!()
     }
 }
@@ -354,25 +567,33 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
         ExpressionKind::Literal { r#type, value } => {
             match r#type {
                 LiteralExpressionKind::Literal => {
-                    let value = match value {
-                        ValueHolder::String(string) => {
-                            let heap_id = compiler.pre_allocate_string(string.clone());
-                            Value::String(heap_id)
-                        },
-                        ValueHolder::Number(number) => Value::Float(*number),
-                        ValueHolder::Bool(bool) => Value::Bool(*bool),
-                        _ => todo!()
-                    };
-                    let constant_id = compiler.constant(value);
-                    compiler.emit(Op::Const(constant_id));
+                    if let ValueHolder::String(string) = value {
+                        let string_id = compiler.pre_allocate_string(string.clone());
+
+                        compiler.emit(Op::BuildString(string_id));
+                    } else {
+                        let value = match value {
+                            ValueHolder::Number(number) => Value::Float(*number),
+                            ValueHolder::Bool(bool) => Value::Bool(*bool),
+                            _ => todo!()
+                        };
+
+                        let constant_id = compiler.constant(value);
+                        compiler.emit(Op::Const(constant_id));
+                    }
                 }
                 LiteralExpressionKind::Variable => {
-                    println!("{}", value)
+                    let ValueHolder::String(string) = value else {
+                        unreachable!()
+                    };
+
+                    let string_id = compiler.pre_allocate_string(string.to_string());
+
+                    compiler.emit(Op::LoadNative(string_id));
                 }
                 LiteralExpressionKind::Object(map) => {
                     for (key, value) in map.iter().rev() {
-                        let key_constant = compiler.string_constant(key);
-                        compiler.emit(Op::Const(key_constant));
+                        compiler.string_constant(key);
                         compile_expression(value, ValueUsage::Needed, compiler);
                     }
                     compiler.emit(Op::BuildObject(map.len()));
@@ -388,7 +609,9 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
                         unreachable!()
                     };
 
-                    compile_function(variable, arguments, block, compiler);
+                    let function_info = compiler.function_infos.get(variable).expect("Function infos not found").clone();
+
+                    compile_function(&function_info, arguments, block, compiler);
                 }
             }
         }
@@ -437,25 +660,22 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
             }
         }
         ExpressionKind::Variable(var_ref) => {
-            if var_ref.upvalue {
-                compiler.emit(Op::LoadUpvalue(var_ref.slot));
-            } else {
-                compiler.emit(Op::Load(var_ref.slot));
+            match var_ref.kind {
+                VariableKind::Local => {
+                    compiler.emit(Op::Load(var_ref.slot));
+                }
+                VariableKind::Upvalue => {
+                    compiler.emit(Op::LoadUpvalue(var_ref.slot));
+                }
             }
         }
         ExpressionKind::Call { callee, arguments } => {
             match &callee.kind {
-                ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } => {
-                    if name == "print" {
-                        compile_expression(&arguments[0], ValueUsage::Needed, compiler);
-                        compiler.emit(Op::CallNative(vm::print));
-                    }
-                }
                 _ => {
-                    compile_expression(callee, ValueUsage::Needed, compiler);
                     for argument in arguments.iter().rev() {
                         compile_expression(argument, ValueUsage::Needed, compiler);
                     }
+                    compile_expression(callee, ValueUsage::Needed, compiler);
                     compiler.emit(Op::Call(arguments.len()));
                 }
             }
@@ -493,10 +713,13 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
             match &left.kind {
                 ExpressionKind::Variable(var_ref) => {
                     compile_value(left, operator, right, compiler);
-                    if var_ref.upvalue {
-                        compiler.emit(Op::StoreUpvalue(var_ref.slot));
-                    } else {
-                        compiler.emit(Op::Store(var_ref.slot));
+                    match var_ref.kind {
+                        VariableKind::Local => {
+                            compiler.emit(Op::Store(var_ref.slot));
+                        }
+                        VariableKind::Upvalue => {
+                            compiler.emit(Op::StoreUpvalue(var_ref.slot));
+                        }
                     }
                     return
                 }
@@ -523,15 +746,13 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
     }
 }
 
-fn compile_function(variable: &VariableRef, arguments: &Vec<VariableRef>, block: &IRBlock, compiler: &mut Compiler) {
-    let function_infos = compiler.function_infos.get(variable).expect("Function infos not found");
-
+fn compile_function(function_info: &FunctionInfo, arguments: &Vec<VariableRef>, block: &IRBlock, compiler: &mut Compiler) {
     let abstract_function = AbstractFunction {
         completed: false,
         instructions: vec![],
-        upvalue_descriptors: function_infos.upvalue_descriptors.to_vec(),
+        upvalue_descriptors: function_info.upvalue_descriptors.to_vec(),
         labels: vec![],
-        local_count: function_infos.local_count,
+        local_count: function_info.local_count,
         argument_count: arguments.len()
     };
 
@@ -546,4 +767,15 @@ fn compile_function(variable: &VariableRef, arguments: &Vec<VariableRef>, block:
     let function_id = compiler.end_function();
 
     compiler.emit(Op::MakeClosure(FunctionRef::Id(FunctionId(function_id))));
+}
+
+fn store_variable_ref(var_ref: &VariableRef, compiler: &mut Compiler) {
+    match var_ref.kind {
+        VariableKind::Local => {
+            compiler.emit(Op::Store(var_ref.slot));
+        }
+        VariableKind::Upvalue => {
+            compiler.emit(Op::StoreCaptured(var_ref.slot));
+        }
+    }
 }

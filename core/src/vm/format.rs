@@ -1,14 +1,13 @@
-use crate::parser::{ArrayRef, ObjectRef, ValueHolder};
+use crate::vm::{Heap, Value, ValueUtils};
 use inline_colorization::*;
+use nlf_shared::indexmap::IndexMap;
 
 #[derive(Default)]
 pub struct FormatOptions {
     pub space: Option<usize>
 }
 
-pub fn format_object_ref(object_ref: &ObjectRef, options: FormatOptions) -> String {
-    let object = object_ref.fetch();
-
+pub fn format_object(object: &IndexMap<String, Value>, heap: &Heap, options: FormatOptions) -> String {
     let mut string = String::new();
 
     string.push_str("{");
@@ -29,10 +28,13 @@ pub fn format_object_ref(object_ref: &ObjectRef, options: FormatOptions) -> Stri
         string.push_str(": ");
 
         let mut formatted_value = match value {
-            ValueHolder::String(string) => format_string(string),
-            value => format!("{value}")
+            Value::String(string_id) => {
+                let string = &heap.strings[*string_id];
+                format_string(string)
+            },
+            value => ValueUtils::to_string_pretty(value, heap)
         };
-
+        
         if formatted_value.lines().count() > 1 {
             let lines: Vec<String> = formatted_value.lines().enumerate().map(|(index, line)| format!("{}{line}", if index > 0 { &spaces } else { "" })).collect();
             formatted_value = lines.join("\n");
@@ -57,9 +59,7 @@ pub fn format_object_ref(object_ref: &ObjectRef, options: FormatOptions) -> Stri
     string
 }
 
-pub fn format_array_ref(array_ref: &ArrayRef, options: FormatOptions) -> String {
-    let array = array_ref.fetch();
-
+pub fn format_array(array: &Vec<Value>, heap: &Heap, options: FormatOptions) -> String {
     let mut string = String::new();
 
     string.push_str("[");
@@ -78,8 +78,11 @@ pub fn format_array_ref(array_ref: &ArrayRef, options: FormatOptions) -> String 
         string.push_str(&spaces);
 
         let mut formatted_value = match value {
-            ValueHolder::String(string) => format_string(string),
-            value => format!("{value}")
+            Value::String(string_id) => {
+                let string = &heap.strings[*string_id];
+                format_string(string)
+            },
+            value => ValueUtils::to_string_pretty(value, heap)
         };
 
         if formatted_value.lines().count() > 1 {

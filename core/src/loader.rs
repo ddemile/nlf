@@ -1,10 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc, sync::Arc, time::Instant};
+use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, rc::Rc, sync::Arc};
 
 use parking_lot::Mutex;
 use ron::ser::PrettyConfig;
 
 use crate::{
-    errors::{ErrorSource, LanguageError, LanguageErrorTrait, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext, interpret}, lexer, loader, parser::{self, IRStatement, IRStatementKind, Program, ValueHolder, VariableRef}, stdlib::CoreModules, translator
+    compiler::{self, CompileInfo}, errors::{ErrorSource, LanguageError, LanguageErrorKind, LanguageResult, provide_source}, interpreter::{ModuleContext, ProgramContext}, lexer, loader, new_loader::EntryPoint, new_translator::{self}, parser::{self, IRStatement, IRStatementKind, ValueHolder, VariableRef}, stdlib::CoreModules
 };
 
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ pub struct ModuleSource {
 pub fn resolve_module(path: &str, current_folder: Option<PathBuf>) -> LanguageResult<ModuleSource> {
     let current_dir = env::current_dir().unwrap();
 
-    let resolver = PathResovler {
+    let resolver = PathResolver {
         process_path: current_dir.clone(),
         current_path: if current_folder.is_some() { current_folder.unwrap() } else { current_dir },
     };
@@ -98,22 +98,22 @@ pub struct Module {
     pub contents: Option<Arc<Mutex<String>>>,
 }
 
-struct PathResovler {
-    process_path: PathBuf,
-    current_path: PathBuf
+pub struct PathResolver {
+    pub process_path: PathBuf,
+    pub current_path: PathBuf
 }
 
 #[derive(Debug)]
-enum LoaderError {
+pub enum LoaderError {
     ModuleNotFound(String),
     ImportNotFound(String),
     BoundsViolation(String),
     TODO
 }
 
-impl LanguageErrorTrait for LoaderError {}
+impl LanguageErrorKind for LoaderError {}
 
-impl PathResovler {
+impl PathResolver {
     pub fn resolve(&self, path: PathBuf) -> LanguageResult<PathBuf> {
         let base_path = {
             if path.starts_with("./") || path.starts_with(".\\") {
@@ -183,13 +183,22 @@ impl Module {
             ron::ser::to_string_pretty(&ast, PrettyConfig::default()).unwrap(),
         );
 
-        let ir = translator::translate(ast)?;
+        let ir = new_translator::translate(ast)?;
         let _ = fs::write(
             format!("core/debug/{}-ir.ron", name),
-            ron::ser::to_string_pretty(&ir, PrettyConfig::default()).unwrap(),
+            ron::ser::to_string_pretty(&ir.program, PrettyConfig::default()).unwrap(),
         );
 
+        let build = compiler::compile_program(&ir, CompileInfo {
+            function_infos: ir.function_infos.clone(),
+            class_infos: ir.class_infos.clone(),
+            ..CompileInfo::no_resolver()
+        });
+        
+        let _entry_point = EntryPoint::new(&ir, build);
+
         let statements: Rc<[IRStatement]> = ir
+            .program
             .body
             .iter()
             .map(|statement| match &statement.kind {
@@ -313,18 +322,18 @@ impl Module {
             }
         }
 
-        let statements = module_ref.lock().statements.clone();
+        let _statements = module_ref.lock().statements.clone();
 
+        // vm::run_main(program, build)
 
-        let start = Instant::now();
-        interpret(
-            Program {
-                body: statements,
-            },
-            &mut module_ref.lock().context.clone().unwrap().borrow_mut(),
-        )?;
-        let end = start.elapsed();
-        println!("{end:.2?}");
+        // interpret(
+        //     Program {
+        //         body: statements,
+        //     },
+        //     &mut module_ref.lock().context.clone().unwrap().borrow_mut(),
+        // )?;
+
+        // println!("{end:.2?}");
         
         Ok(())
     }

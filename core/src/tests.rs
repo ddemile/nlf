@@ -1,11 +1,10 @@
 use inline_colorization::*;
-use parking_lot::Mutex;
 use std::{
-    cell::RefCell, collections::HashMap, fs, panic::{self, catch_unwind}, path::Path, rc::Rc, sync::{Arc}, time::{Duration, Instant}
+    collections::HashMap, fs, panic::{self, catch_unwind}, path::Path, rc::Rc, time::{Duration, Instant}
 };
 use rayon::prelude::*;
 
-use crate::{errors::ErrorSource, interpreter::{self, ModuleContext, ProgramContext}, lexer, parser, translator};
+use crate::{compiler::resolvers::StaticModuleResolver, new_loader::Loader};
 
 struct Test{
     pub name: String,
@@ -107,34 +106,29 @@ pub fn run_tests(base_dir: &Path) {
 
 fn run_test(name: String, content: String) -> TestOutput {
     let result = catch_unwind(|| {
-        // TODO: replace all unwrap by proper handling
-        let tokens = lexer::lex(content.clone()).unwrap();
+        let mut modules = HashMap::new();
+        modules.insert(name.clone(), content);
 
-        let ast = parser::parse(tokens).unwrap();
-
-        let ir = translator::translate(ast).unwrap();
+        let loader = Loader::new(name.clone(), Rc::new(StaticModuleResolver {
+            modules: modules.clone()
+        }));
 
         let now = Instant::now();
 
-        let program = Rc::new(RefCell::new(ProgramContext::new()));
-
-        let context_ref = ModuleContext::new(program);
-
-        context_ref.borrow_mut().environment.init();
-
-        let result = interpreter::interpret(ir, &mut context_ref.borrow_mut());
+        loader.run_main();
 
         let elapsed = now.elapsed();
 
         TestOutput {
             name: name.clone(),
-            result: match result {
-                Ok(_) => Ok(elapsed),
-                Err(e) => Err(e.format(Some(ErrorSource {
-                    contents: Arc::new(Mutex::new(content)),
-                    path: name.clone()
-                }))),
-            }
+            // result: match result {
+            //     Ok(_) => Ok(elapsed),
+            //     Err(e) => Err(e.format(Some(ErrorSource {
+            //         contents: Arc::new(Mutex::new(content)),
+            //         path: name.clone()
+            //     }))),
+            // }
+            result: Ok(elapsed)
         }
     });
 

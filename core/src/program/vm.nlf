@@ -1,5 +1,15 @@
-let x = 0
+import { get, increment, set } from "./main.nlf"
 
-for i in 0..10000000 {
-    x = x + i
+set(1)
+
+for i in 0..8 {
+    set(get() * 2)
 }
+
+print(get())
+
+fn test() {
+    print("hello")
+}
+
+test()

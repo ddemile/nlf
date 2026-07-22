@@ -6,7 +6,7 @@ use nlf_shared::{SchemaStore, indexmap::IndexMap};
 use serde::Serialize;
 
 use crate::{
-    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
+    analysis::Span, errors::{LanguageError, LanguageErrorKind}, interpreter::{ClassDefinition, ModuleContext, Object, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
 };
 
 #[derive(Debug)]
@@ -17,7 +17,7 @@ pub enum ParserError {
     InvalidUsage(String)
 }
 
-impl LanguageErrorTrait for ParserError {}
+impl LanguageErrorKind for ParserError {}
 
 #[derive(Serialize, Debug, Clone)]
 pub struct ObjectRef {
@@ -376,13 +376,19 @@ pub enum LiteralExpressionKind {
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VariableKind {
+    Local,
+    Upvalue
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VariableRef {
+    pub kind: VariableKind,
     pub name: Option<String>,
     pub slot: usize,
     pub depth: usize,
     pub start: usize,
-    pub end: usize,
-    pub upvalue: bool
+    pub end: usize
 }
 
 #[derive(Serialize, Debug, Clone)]
