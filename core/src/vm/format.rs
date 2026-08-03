@@ -1,13 +1,13 @@
 use crate::vm::{Heap, Value, ValueUtils};
 use inline_colorization::*;
-use nlf_shared::indexmap::IndexMap;
+use nlf_shared::{indexmap::IndexMap, vm::AbstractHeap};
 
 #[derive(Default)]
 pub struct FormatOptions {
     pub space: Option<usize>
 }
 
-pub fn format_object(object: &IndexMap<String, Value>, heap: &Heap, options: FormatOptions) -> String {
+pub fn format_object(object: &IndexMap<String, Value>, heap: &dyn AbstractHeap, options: FormatOptions) -> String {
     let mut string = String::new();
 
     string.push_str("{");
@@ -29,7 +29,7 @@ pub fn format_object(object: &IndexMap<String, Value>, heap: &Heap, options: For
 
         let mut formatted_value = match value {
             Value::String(string_id) => {
-                let string = &heap.strings[*string_id];
+                let string = &heap.get_string(*string_id);
                 format_string(string)
             },
             value => ValueUtils::to_string_pretty(value, heap)
@@ -59,7 +59,7 @@ pub fn format_object(object: &IndexMap<String, Value>, heap: &Heap, options: For
     string
 }
 
-pub fn format_array(array: &Vec<Value>, heap: &Heap, options: FormatOptions) -> String {
+pub fn format_array(array: &Vec<Value>, heap: &dyn AbstractHeap, options: FormatOptions) -> String {
     let mut string = String::new();
 
     string.push_str("[");
@@ -79,7 +79,7 @@ pub fn format_array(array: &Vec<Value>, heap: &Heap, options: FormatOptions) -> 
 
         let mut formatted_value = match value {
             Value::String(string_id) => {
-                let string = &heap.strings[*string_id];
+                let string = &heap.get_string(*string_id);
                 format_string(string)
             },
             value => ValueUtils::to_string_pretty(value, heap)

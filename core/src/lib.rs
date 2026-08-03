@@ -18,3 +18,4 @@ pub mod compiler;
 pub mod new_translator;
 pub mod new_loader;
 pub mod new_stdlib;
+pub mod new_addons;

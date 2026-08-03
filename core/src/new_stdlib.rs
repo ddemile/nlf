@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use lazy_static::lazy_static;
-use nlf_shared::vm::VMContext;
+use nlf_shared::{errors::LanguageResult, vm::{VMContext, Value}};
 use parking_lot::Mutex;
 use rust_embed::Embed;
 
@@ -19,7 +19,7 @@ lazy_static! {
         Mutex::new(HashMap::new());
 }
 
-pub type NativeFunctionType = fn(VMContext);
+pub type NativeFunctionType = fn(VMContext) -> LanguageResult<()>;
 
 mod global;
 mod modules;

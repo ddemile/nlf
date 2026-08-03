@@ -339,7 +339,7 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
         StatementKind::For { variable, iterable, statements } => {
             let (start, end) = match iterable {
                 Iterable::Range(start, end) => {
-                    (start.clone().unwrap(), end.clone().unwrap())
+                    (start.clone().expect("Both sides of a range expression should be defined"), end.clone().expect("Both sides of a range expression should be defined"))
                 }
                 _ => todo!()
             };

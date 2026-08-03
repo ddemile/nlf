@@ -3,7 +3,7 @@ use std::{io::{self, Write}, time::{SystemTime, UNIX_EPOCH}};
 use nlf_macros::global;
 use nlf_shared::{errors::LanguageResult, indexmap::IndexMap, vm::{Object, VMContext, Value}};
 
-use crate::new_stdlib::MODULE_TABLE;
+use crate::{new_addons::Addon, new_stdlib::MODULE_TABLE};
 
 #[global]
 pub fn print(value: Value, context: VMContext) {
@@ -90,6 +90,21 @@ fn confirm(prompt: Value, context: VMContext) -> LanguageResult<Value> {
 }
 
 #[global]
+fn addon(path: String, context: VMContext) -> LanguageResult<Value> {
+    let addon = Addon::new(&path);
+
+    let mut map: IndexMap<String, Value> = IndexMap::new();
+
+    for (name, function) in addon.functions {
+        let func = Value::Native(context.heap().allocate_native_function(function));
+
+        map.insert(name, func);
+    }
+
+    Ok(Value::Object(context.heap().allocate_object(Object { map })))
+}
+
+#[global]
 fn is_null(arg: Value, _: VMContext) -> LanguageResult<Value> {
     Ok(Value::Bool(matches!(arg, Value::Void)))
 }
@@ -97,4 +112,9 @@ fn is_null(arg: Value, _: VMContext) -> LanguageResult<Value> {
 #[global]
 fn number(string: String, _context: VMContext) -> LanguageResult<Value> {
     Ok(Value::Float(string.parse().unwrap()))
+}
+
+#[global]
+fn panic(message: String, _context: VMContext) -> LanguageResult<Value> {
+    panic!("{message}")
 }

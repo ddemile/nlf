@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use indexmap::IndexMap;
 
-use crate::SchemaStore;
+use crate::{SchemaStore, errors::LanguageResult, vm::VMContext};
 
 pub type AddonCall = extern "Rust" fn(Vec<AddonValue>) -> AddonValue;
 
@@ -65,4 +65,28 @@ pub enum AddonValue {
     Array(Vec<AddonValue>),
     Object(ObjectRef),
     Void
+}
+
+pub type NewAddonCall = extern "Rust" fn(VMContext) -> LanguageResult<()>;
+
+#[derive(Clone)]
+pub struct NewAddonFn {
+    pub name: &'static str,
+    pub call: NewAddonCall
+}
+
+pub struct NewRegistry {
+    pub functions: Vec<NewAddonFn>
+}
+
+impl NewRegistry {
+    pub fn new() -> Self {
+        return Self {
+            functions: vec![]
+        }
+    }
+
+    pub fn register(&mut self, function: NewAddonFn) {
+        self.functions.push(function);
+    }
 }

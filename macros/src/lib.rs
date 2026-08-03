@@ -1,6 +1,6 @@
 use proc_macro::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Block, Ident, Index, Item, ItemFn, LitStr, Stmt, parse::{Parse, ParseStream}, parse_macro_input};
+use syn::{Block, Ident, Index, Item, ItemFn, LitBool, LitStr, Stmt, parse::{Parse, ParseStream}, parse_macro_input};
 
 struct ModuleInput {
     name: LitStr,
@@ -48,7 +48,7 @@ pub fn new_module(input: TokenStream) -> TokenStream {
         if let Stmt::Item(Item::Fn(func)) = stmt {
             let decorated = quote! {
                 #[nlf_macros::new_expose(#name)]
-                #[nlf_macros::native_fn]
+                #[nlf_macros::native_fn("nlf_shared", false)]
                 #func
             };
             output_items.push(decorated);
@@ -67,7 +67,7 @@ pub fn global(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     quote! {
         #[nlf_macros::new_expose]
-        #[nlf_macros::native_fn]
+        #[nlf_macros::native_fn("nlf_shared", false)]
         #input
     }.into()
 }
@@ -166,11 +166,31 @@ fn get_type_ident(input: &syn::Type) -> &Ident {
     }
 }
 
+struct NativeFnAttr {
+    shared_crate_path: syn::Path,
+    is_extern: bool
+}
+
+impl Parse for NativeFnAttr {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let shared_crate_lit: LitStr = input.parse()?;
+        let shared_crate_path: syn::Path = syn::parse_str(&shared_crate_lit.value()).unwrap();
+
+        let _: syn::Token![,] = input.parse()?;
+
+        let is_extern: LitBool = input.parse()?;
+
+        Ok(NativeFnAttr { shared_crate_path, is_extern: is_extern.value })
+    }
+}
+
 #[proc_macro_attribute]
-pub fn native_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn native_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as ItemFn);
     let name = input.sig.ident;
     let name_str = name.to_string();
+
+    let NativeFnAttr { shared_crate_path, is_extern } = parse_macro_input!(attr as NativeFnAttr);
 
     let argument_count = input
         .sig
@@ -194,30 +214,6 @@ pub fn native_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         })
         .collect();
-
-    let mapped_return = match &input.sig.output {
-        syn::ReturnType::Default => {
-            quote! {
-                context.push_value(nlf_shared::vm::Value::Void);
-            }
-        },
-        syn::ReturnType::Type(_, _ty) => {
-            // let ident = get_type_ident(ty).to_string();
-
-            // match ident.as_str() {
-            //     "Value" => {
-            //         quote! {
-            //             context.push_value(return_value);
-            //         }
-            //     }
-            //     _ => todo!()
-            // }
-
-            quote! {
-                context.push_value(return_value.expect("An error occured"));
-            }
-        }
-    };
 
     let mut mapped_types = vec![];
 
@@ -258,20 +254,61 @@ pub fn native_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
+    let mapped_return = match &input.sig.output {
+        syn::ReturnType::Default => {
+            quote! {
+                context.push_value(nlf_shared::vm::Value::Void);
+            }
+        },
+        syn::ReturnType::Type(_, _ty) => {
+            // let ident = get_type_ident(ty).to_string();
+
+            // match ident.as_str() {
+            //     "Value" => {
+            //         quote! {
+            //             context.push_value(return_value);
+            //         }
+            //     }
+            //     _ => todo!()
+            // }
+
+            quote! {
+                context.push_value(return_value?);
+            }
+        }
+    };
+
     let new_name_str = format!("{}_impl", name_str);
     let new_ident = Ident::new(&new_name_str, name.span());
 
     input.sig.ident = new_ident.clone();
 
-    let expanded = quote! {
-        pub fn #name(context: &mut dyn nlf_shared::vm::AbstractVMContext) {
-            #input
+    let body = quote! {
+        #input
 
-            #(#mapped_types)*
-            
-            let return_value = #new_ident(#(#names),*);
+        #(#mapped_types)*
+        
+        let return_value = #new_ident(#(#names),*);
 
-            #mapped_return
+        #mapped_return
+
+        Ok(())
+    };
+
+    let expanded = if is_extern {
+        quote! {
+            #[unsafe(no_mangle)]
+            extern "Rust" fn #name(context: #shared_crate_path::vm::VMContext) -> #shared_crate_path::errors::LanguageResult<()> {
+                let _ = crate::__ADDON_INIT_MARKER;
+                
+                #body
+            }
+        }
+    } else {
+        quote! {
+            pub fn #name(context: #shared_crate_path::vm::VMContext) -> #shared_crate_path::errors::LanguageResult<()> {
+                #body
+            }
         }
     };
 

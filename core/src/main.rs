@@ -2,6 +2,8 @@ use std::{env, path::Path, rc::Rc};
 
 use nlf_core::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver}, errors::LanguageResult, loader::run_main, new_loader::Loader, tests, vm::{self, Value}};
 use clap::Parser;
+use nlf_macros::native_fn;
+use nlf_shared::vm::VMContext;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

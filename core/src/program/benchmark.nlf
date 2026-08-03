@@ -1,0 +1,41 @@
+fn loop_a() {
+    for i in 0..1000000 {}
+}
+
+fn loop_b() {
+    for i in 0..1000000 {
+        let b = 0
+    }
+}
+
+fn run(callback) {
+    let min = 1000000000
+    let max = 0
+
+    let total = 0
+    let count = 100
+
+    for i in 0..count {
+        let start = now()
+        callback()
+        let elapsed = now() - start
+        total += elapsed
+
+        if min > elapsed {
+            min = elapsed
+        }
+        if max < elapsed {
+            max = elapsed
+        }
+    }
+
+    let mean = total / count
+
+    print("-- TEST --")
+    print(min)
+    print(max)
+    print(mean)
+}
+
+run(loop_a)
+run(loop_b)

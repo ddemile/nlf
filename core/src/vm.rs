@@ -5,12 +5,13 @@ use serde::Serialize;
 use smallvec::SmallVec;
 use inline_colorization::*;
 
-use crate::{compiler::{Import, ImportKind}, errors::LanguageResult, new_loader::{EntryPoint, Loader, LoaderRef}, new_stdlib::{self, NativeFunctionType}, vm::format::FormatOptions};
+use crate::{compiler::{Import, ImportKind}, errors::LanguageResult, new_loader::{EntryPoint, Loader, LoaderRef}, new_stdlib::{self, NativeFunctionType}, vm::{format::FormatOptions, prototypes::{ARRAY_PROTOTYPE, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Prototype, STRING_PROTOTYPE}}};
 
 pub use nlf_shared::vm::*;
 
 pub mod programs;
 pub mod format;
+pub mod prototypes;
 
 type UpvalueRef = Rc<RefCell<Value>>;
 
@@ -31,7 +32,7 @@ pub enum FunctionRef {
     Import(usize)
 }
 
-pub struct ValueStack(SmallVec<[Value; 4]>);
+pub struct ValueStack(SmallVec<[Value; 8]>);
 
 impl ValueStack {
     fn new() -> Self {
@@ -77,33 +78,34 @@ impl ValueStack {
 struct ValueUtils;
 
 impl ValueUtils {
-    fn to_string(value: &Value, heap: &Heap) -> String {
+    fn to_string(value: &Value, heap: &dyn AbstractHeap) -> String {
         match value {
-            Value::String(string_id) => format!("{}", heap.strings[*string_id]),
+            Value::String(string_id) => format!("{}", heap.get_string(*string_id)),
             Value::Float(value) => format!("{value}"),
             Value::Int(value) => format!("{value}"),
             Value::Bool(value) => format!("{value}"),
             Value::Closure(_) => format!("fn() {{ TODO }}"),
             Value::Native(_) => format!("fn() {{ native code }}"),
             Value::Object(object_id) => {
-                let object = &heap.objects[*object_id].map;
+                let object = &heap.get_object(*object_id).map;
                 format::format_object(object, heap, FormatOptions {
                     space: if object.len() > 1 { Some(2) } else { None }
                 })
             },
             Value::Array(array_id) => {
-                let array = &heap.arrays[*array_id].vec;
+                let array = &heap.get_array(*array_id).vec;
 
                 format::format_array(array, heap, FormatOptions {
                     space: if array.len() > 1 { Some(2) } else { None }
                 })
             },
             Value::Class(_) => format!("class {{}}"),
+            Value::Method(_) => format!("fn {{ method code }}"),
             Value::Void => format!("Void"),
         }
     }
 
-    fn to_string_pretty(value: &Value, heap: &Heap) -> String {
+    fn to_string_pretty(value: &Value, heap: &dyn AbstractHeap) -> String {
         match value {
             Value::String(_) => Self::to_string(value, heap),
             Value::Float(_) => format!("{color_yellow}{}{color_reset}", Self::to_string(value, heap)),
@@ -114,7 +116,18 @@ impl ValueUtils {
             Value::Object(_) => Self::to_string(value, heap),
             Value::Array(_) => Self::to_string(value, heap),
             Value::Class(_) => Self::to_string(value, heap),
+            Value::Method(_) => Self::to_string(value, heap),
             Value::Void => Self::to_string(value, heap),
+        }
+    }
+
+    fn get_prototype<'a>(value: &'a Value, _heap: &Heap) -> &'a dyn Prototype {
+        match value {
+            Value::Object(_) => &*OBJECT_PROTOTYPE,
+            Value::Array(_) => &*ARRAY_PROTOTYPE,
+            Value::String(_) => &*STRING_PROTOTYPE,
+            Value::Float(_) => &*NUMBER_PROTOTYPE,
+            _ => todo!()
         }
     }
 }
@@ -165,7 +178,8 @@ pub struct Heap {
     pub arrays: Vec<Array>,
     pub closures: Vec<Closure>,
     pub classes: Vec<Class>,
-    pub native_functions: Vec<NativeFunctionType>
+    pub native_functions: Vec<NativeFunctionType>,
+    pub methods: Vec<Method>
 }
 
 impl Heap {
@@ -173,6 +187,13 @@ impl Heap {
     pub fn allocate_closure(&mut self, closure: Closure) -> usize {
         let id = self.closures.len();
         self.closures.push(closure);
+        id
+    }
+
+    #[inline(always)]
+    pub fn allocate_method(&mut self, method: Method) -> usize {
+        let id = self.methods.len();
+        self.methods.push(method);
         id
     }
 
@@ -256,34 +277,38 @@ impl AbstractHeap for Heap {
     }
 
     #[inline(always)]
-    fn allocate_native_function(&mut self, native_function: fn(&mut dyn AbstractVMContext)) -> usize {
+    fn allocate_native_function(&mut self, native_function: NativeFunctionType) -> usize {
         let id = self.native_functions.len();
         self.native_functions.push(native_function);
         id
     }
 
     #[inline(always)]
-    fn get_string(&mut self, string_id: usize) -> &String {
+    fn get_string(&self, string_id: usize) -> &String {
         &self.strings[string_id]
     }
 
     #[inline(always)]
-    fn get_object(&mut self, object_id: usize) -> &Object {
+    fn get_object(&self, object_id: usize) -> &Object {
         &self.objects[object_id]
     }
 
     #[inline(always)]
-    fn get_array(&mut self, array_id: usize) -> &Array {
+    fn get_array(&self, array_id: usize) -> &Array {
         &self.arrays[array_id]
     }
 
+    fn get_array_mut(&mut self, array_id: usize) -> &mut Array {
+        &mut self.arrays[array_id]
+    }
+
     #[inline(always)]
-    fn get_class(&mut self, class_id: usize) -> &Class {
+    fn get_class(&self, class_id: usize) -> &Class {
         &self.classes[class_id]
     }
 
     #[inline(always)]
-    fn get_native_function(&mut self, native_function_id: usize) -> fn(&mut dyn AbstractVMContext) {
+    fn get_native_function(&self, native_function_id: usize) -> NativeFunctionType {
         self.native_functions[native_function_id]
     }
 }
@@ -389,7 +414,7 @@ pub fn run(vm: &mut VM) {
 
         let VM { stack, modules, .. } = vm;
 
-        let module = &modules[frame.module_id];
+        let module = unsafe { modules.get_unchecked(frame.module_id) };
 
         let Some(instruction) = module.code.get(frame.ip) else {
             break
@@ -431,17 +456,21 @@ pub fn run(vm: &mut VM) {
             Op::Store(slot) => {
                 let value = stack.pop();
 
-                frame.locals[*slot] = Local::Value(value);
+                unsafe {
+                    *frame.locals.get_unchecked_mut(*slot) = Local::Value(value)
+                };
             }
             Op::StoreCaptured(slot) => {
                 let value = stack.pop();
 
                 let upvalue_ref = Rc::new(RefCell::new(value));
 
-                frame.locals[*slot] = Local::Upvalue(upvalue_ref);
+                unsafe {
+                    *frame.locals.get_unchecked_mut(*slot) = Local::Upvalue(upvalue_ref)
+                };
             }
             Op::Load(slot) => {
-                stack.push(match &frame.locals[*slot] {
+                stack.push(match unsafe { frame.locals.get_unchecked(*slot) } {
                     Local::Value(value) => *value,
                     Local::Upvalue(upvalue_ref) => upvalue_ref.borrow().clone()
                 });
@@ -566,7 +595,7 @@ pub fn run(vm: &mut VM) {
 
                         let global = vm.heap.native_functions[function_id];
 
-                        global(&mut context);
+                        global(&mut context).expect("An error occured inside a native function");
                     }
                     Value::Class(class_id) => {
                         let mut arguments = vec![];
@@ -585,7 +614,17 @@ pub fn run(vm: &mut VM) {
                         let mut call_locals = vec![Local::Value(Value::Void), Local::Value(closure.self_value)];
                         call_locals.append(&mut arguments);
                         call_locals.resize(function.argument_count + function.local_count, Local::Value(Value::Void));
-                        vm.frames.push(Frame { module_id: closure.module_id, ip: function.code_offset, locals: call_locals, closure: Some(class.constructor_id), import: None });                    }
+                        vm.frames.push(Frame { module_id: closure.module_id, ip: function.code_offset, locals: call_locals, closure: Some(class.constructor_id), import: None });
+                    }
+                    Value::Method(method_id) => {
+                        let method = &vm.heap.methods[method_id];
+
+                        let mut context = VMContext {
+                            vm: NonNull::new(vm_ptr).unwrap()
+                        };
+
+                        method.call(&stack.pop(), &mut context).expect("Method execution failed");
+                    }
                     _ => panic!("Failed to retrieve function")
                 };
             }
@@ -715,32 +754,47 @@ pub fn run(vm: &mut VM) {
 
                 match object {
                     Value::Object(id) => {
-                        let Value::String(string_id) = property else {
-                            panic!("An object should only be indexed using a string")
+                        if let Value::String(string_id) = property {
+                            let property = &vm.heap.strings[string_id];
+
+                            stack.push(*vm.heap.objects[id].get(property).expect("Property doesn't exist"));
+
+                            continue;
                         };
-
-                        let property = &vm.heap.strings[string_id];
-
-                        stack.push(*vm.heap.objects[id].get(property).expect("Property doesn't exist"));
                     }
                     Value::Array(id) => {
-                        let Value::Float(index) = property else {
-                            panic!("An array should only be indexed using an int")
+                        if let Value::Float(index) = property {
+                            stack.push(*vm.heap.arrays[id].get(index as usize).expect("Index out of range"));
+                            continue;
                         };
-
-                        stack.push(*vm.heap.arrays[id].get(index as usize).expect("Index out of range"));
                     }
                     Value::Class(id) => {
-                        let Value::String(string_id) = property else {
-                            panic!("A class should only be indexed using a string")
+                        if let Value::String(string_id) = property {
+                            let property = &vm.heap.strings[string_id];
+
+                            stack.push(*vm.heap.classes[id].static_fields.get(property).expect("Property doesn't exist"));
+                            
+                            continue;
                         };
-
-                        let property = &vm.heap.strings[string_id];
-
-                        stack.push(*vm.heap.classes[id].static_fields.get(property).expect("Property doesn't exist"));
                     }
-                    _ => panic!("Value not indexable")
+                    _ => {}
                 }
+
+                let Value::String(string_id) = property else {
+                    panic!("An object should only be indexed using a string")
+                };
+
+                let property = &vm.heap.strings[string_id];
+
+                let prototype = ValueUtils::get_prototype(&object, &vm.heap);
+
+                let method = prototype.get_method(property).expect("Method not found");
+
+                if let Some(Op::Call(_)) = module.code.get(frame.ip) {
+                    stack.push(object);
+                }
+
+                stack.push(Value::Method(vm.heap.allocate_method(method)));
             }
             Op::WriteProperty => {
                 let value = stack.pop();
@@ -828,8 +882,6 @@ pub struct ExecutionInfo {
 
 fn create_globals() -> Vec<NativeFunctionType> {
     let function_table = new_stdlib::FUNCTION_TABLE.lock();
-
-    println!("{:?}", function_table);
 
     function_table.values().map(|function| *function).collect()
 }

@@ -1,5 +1,7 @@
 use indexmap::IndexMap;
 
+use crate::errors::LanguageResult;
+
 pub type HeapIndex = usize;
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -13,6 +15,7 @@ pub enum Value {
     Object(HeapIndex),
     Array(HeapIndex),
     Class(HeapIndex),
+    Method(HeapIndex),
     Void
 }
 
@@ -77,11 +80,12 @@ pub trait AbstractHeap {
     fn allocate_object(&mut self, object: Object) -> usize;
     fn allocate_array(&mut self, array: Array) -> usize;
     fn allocate_class(&mut self, class: Class) -> usize;
-    fn allocate_native_function(&mut self, native_function: fn(&mut dyn AbstractVMContext)) -> usize;
+    fn allocate_native_function(&mut self, native_function: fn(&mut dyn AbstractVMContext) -> LanguageResult<()>) -> usize;
     
-    fn get_string(&mut self, string_id: usize) -> &String;
-    fn get_object(&mut self, object_id: usize) -> &Object;
-    fn get_array(&mut self, array_id: usize) -> &Array;
-    fn get_class(&mut self, class_id: usize) -> &Class;
-    fn get_native_function(&mut self, native_function_id: usize) -> fn(&mut dyn AbstractVMContext);
+    fn get_string(&self, string_id: usize) -> &String;
+    fn get_object(&self, object_id: usize) -> &Object;
+    fn get_array(&self, array_id: usize) -> &Array;
+    fn get_array_mut(&mut self, array_id: usize) -> &mut Array;
+    fn get_class(&self, class_id: usize) -> &Class;
+    fn get_native_function(&self, native_function_id: usize) -> fn(&mut dyn AbstractVMContext) -> LanguageResult<()>;
 }
