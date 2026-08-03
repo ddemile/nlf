@@ -25,28 +25,6 @@ pub fn module(input: TokenStream) -> TokenStream {
     for stmt in content.stmts {
         if let Stmt::Item(Item::Fn(func)) = stmt {
             let decorated = quote! {
-                #[nlf_macros::expose(#name)]
-                #func
-            };
-            output_items.push(decorated);
-        } else {
-            // leave other items unchanged
-            output_items.push(quote! { #stmt });
-        }
-    }
-
-    TokenStream::from(quote! { #(#output_items)* })
-}
-
-#[proc_macro]
-pub fn new_module(input: TokenStream) -> TokenStream {
-    let ModuleInput { name, content } = parse_macro_input!(input as ModuleInput);
-
-    let mut output_items = Vec::new();
-
-    for stmt in content.stmts {
-        if let Stmt::Item(Item::Fn(func)) = stmt {
-            let decorated = quote! {
                 #[nlf_macros::new_expose(#name)]
                 #[nlf_macros::native_fn("nlf_shared", false)]
                 #func
@@ -132,7 +110,7 @@ pub fn new_expose(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let register_fn = if let Some(lit) = opt.0 {
         quote! {
-            let mut map = crate::new_stdlib::MODULE_TABLE.lock();
+            let mut map = crate::stdlib::MODULE_TABLE.lock();
             map.entry(#lit).or_insert_with(std::collections::HashMap::new).insert(
                 #name_str,
                 #name
@@ -140,7 +118,7 @@ pub fn new_expose(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
-            let mut map = crate::new_stdlib::FUNCTION_TABLE.lock();
+            let mut map = crate::stdlib::FUNCTION_TABLE.lock();
             map.insert(#name_str, #name);
         }
     };

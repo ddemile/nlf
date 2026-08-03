@@ -1,12 +1,12 @@
 use std::{
-    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, str::FromStr
+    collections::HashMap, fmt::Debug, rc::Rc, str::FromStr
 };
 
-use nlf_shared::{SchemaStore, indexmap::IndexMap};
+use nlf_shared::indexmap::IndexMap;
 use serde::Serialize;
 
 use crate::{
-    analysis::Span, errors::{LanguageError, LanguageErrorKind}, interpreter::{ClassDefinition, ModuleContext, Object, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
+    analysis::Span, errors::{LanguageError, LanguageErrorKind, RuntimeError}, lexer::{KeywordKind, TokenKind}
 };
 
 #[derive(Debug)]
@@ -20,125 +20,11 @@ pub enum ParserError {
 impl LanguageErrorKind for ParserError {}
 
 #[derive(Serialize, Debug, Clone)]
-pub struct ObjectRef {
-    #[serde(skip)]
-    pub object: Rc<RefCell<Object>>,
-    #[serde(skip)]
-    pub schema_store: Rc<RefCell<SchemaStore>>,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct ArrayRef {
-    #[serde(skip)]
-    pub object: Rc<RefCell<Object>>,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct RuntimeFunction {
-    pub arguments: Vec<VariableRef>,
-    pub statements: Rc<[IRStatement]>,
-    #[serde(skip)]
-    pub scope: Rc<RefCell<Scope>>,
-    #[serde(skip)]
-    pub context: *mut ModuleContext,  // ← add this back, only here
-}
-
-#[derive(Serialize, Clone)]
-pub struct BuiltInFunction {
-    #[serde(skip)]
-    pub func: Method,
-    #[serde(skip)]
-    pub instance: Rc<ValueHolder>,
-}
-
-impl Debug for BuiltInFunction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Function").finish()
-    }
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub enum FunctionKind {
-    Runtime(RuntimeFunction),
-    BuiltIn(BuiltInFunction),
-}
-
-#[derive(Serialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum ValueHolder {
+pub enum Literal {
     String(String),
     Number(f64),
     Bool(bool),
-    Fn(FunctionKind),
-    Object(ObjectRef),
-    Array(ArrayRef),
-    #[serde(skip)]
-    LazyRef {
-        slot: usize,
-        module: String,
-    },
-    ClassDefinition(ClassDefinition),
-    Void,
-}
-
-impl PartialEq for ValueHolder {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (ValueHolder::String(a), ValueHolder::String(b)) => a == b,
-            (ValueHolder::Number(a), ValueHolder::Number(b)) => a == b,
-            (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a == b,
-            (ValueHolder::Void, ValueHolder::Void) => true,
-            (ValueHolder::Object(a), ValueHolder::Object(b)) => {
-                let a = a.fetch();
-                let b = b.fetch();
-
-                a == b
-            },
-            (ValueHolder::Array(a), ValueHolder::Array(b)) => {
-                let a = a.object.borrow();
-                let b = b.object.borrow();
-
-                a.values == b.values
-            },
-            _ => false, // different variants are never equal
-        }
-    }
-}
-
-impl PartialOrd for ValueHolder {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (ValueHolder::Number(a), ValueHolder::Number(b)) => a.partial_cmp(b),
-            (ValueHolder::String(a), ValueHolder::String(b)) => a.partial_cmp(b),
-            (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a.partial_cmp(b),
-            (ValueHolder::Void, ValueHolder::Void) => Some(std::cmp::Ordering::Equal),
-            _ => None, // different variants cannot be compared
-        }
-    }
-}
-
-impl Into<bool> for ValueHolder {
-    fn into(self) -> bool {
-        match self {
-            Self::Number(a) => a > 0.0,
-            Self::String(a) => a.len() > 0,
-            Self::Bool(a) => a,
-            Self::Array(_) => true,
-            Self::Object(_) => true,
-            Self::ClassDefinition(_) => true,
-            Self::Fn(_) => true,
-            _ => false, // different variants cannot be compared
-        }
-    }
-}
-
-impl Into<i32> for ValueHolder {
-    fn into(self) -> i32 {
-        match self {
-            ValueHolder::Number(a) => a as i32,
-            _ => panic!("Couldn't convert ValueHolder into i32"),
-        }
-    }
+    Void
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -402,7 +288,7 @@ pub struct Expression {
 pub enum ExpressionKind {
     Literal {
         r#type: LiteralExpressionKind,
-        value: ValueHolder,
+        value: Literal,
     },
     Unary {
         left: Box<Expression>,

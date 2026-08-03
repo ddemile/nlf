@@ -1,4 +1,4 @@
-use crate::vm::{Heap, Value, ValueUtils};
+use crate::vm::{Value, ValueUtils};
 use inline_colorization::*;
 use nlf_shared::{indexmap::IndexMap, vm::AbstractHeap};
 

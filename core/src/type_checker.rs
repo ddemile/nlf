@@ -4,7 +4,7 @@ use std::{path::PathBuf, rc::Rc, str::FromStr, sync::Arc};
 use nlf_shared::indexmap::IndexMap;
 use parking_lot::Mutex;
 
-use crate::{analysis::{self, Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, loader::{self}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, DefaultType, Expression, ExpressionKind, FunctionType, Identifier, Iterable, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeId, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}}; 
+use crate::{analysis::{Scope, ScopeId, Span, Symbol, SymbolIndex, SymbolKind, TypedScopeBuilder, get_class_type}, errors::{LanguageError, LanguageResult}, explorer::{self, Visitor}, parser::{ASTBlock, ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Argument, Block, DefaultType, Expression, ExpressionKind, FunctionType, Identifier, Iterable, Literal, LiteralExpressionKind, ParserError, Statement, StatementKind, StatementKindWrapper, Type, TypeArena, TypeId, TypeRef, TypedProgram, TypedStatement, TypedStatementKind, TypedSyntaxTree, VariableDescriptor}}; 
 
 struct TypeChecker {
     pub program: ASTProgram,
@@ -185,24 +185,25 @@ impl TypedTreeSyntaxTransformer {
                 StatementKind::VariableDefinition { ty: defintion_ty, .. } => {
                     return Some(self.arena.lock().get(defintion_ty).clone())
                 }
-                StatementKind::Import { source, .. } => {
-                    let module_source = loader::resolve_module(&source.value, Some(self.path.parent().unwrap().to_path_buf())).ok()?;
+                StatementKind::Import { source: _, .. } => {
+                    todo!();
+                    // let module_source = loader::resolve_module(&source.value, Some(self.path.parent().unwrap().to_path_buf())).ok()?;
 
-                    let contents = loader::read_module(&module_source).ok()?;
+                    // let contents = loader::read_module(&module_source).ok()?;
 
-                    let symbol_index = analysis::get_symbol_index(module_source.path.into(), contents)?;
+                    // let symbol_index = analysis::get_symbol_index(module_source.path.into(), contents)?;
 
-                    let source_symbol = symbol_index.find_export(name);
+                    // let source_symbol = symbol_index.find_export(name);
 
-                    let Some(source_symbol) = source_symbol else {
-                        return None
-                    };
+                    // let Some(source_symbol) = source_symbol else {
+                    //     return None
+                    // };
                     
-                    match source_symbol.kind {
-                        SymbolKind::Function(function_type) => return Some(Type::Function(Box::new(function_type))),
-                        SymbolKind::Class(class_type) => return Some(Type::Class(Box::new(class_type))),
-                        _ => return None
-                    }
+                    // match source_symbol.kind {
+                    //     SymbolKind::Function(function_type) => return Some(Type::Function(Box::new(function_type))),
+                    //     SymbolKind::Class(class_type) => return Some(Type::Class(Box::new(class_type))),
+                    //     _ => return None
+                    // }
                 }
                 _ => {}
             }
@@ -228,17 +229,17 @@ impl TypedTreeSyntaxTransformer {
 
     fn resolve_expression_type(&self, expression: &Expression) -> Option<Type> {
         match &expression.kind {
-            ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } => {
+            ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: Literal::String(name) } => {
                 if let Some(variable_ty) = self.find_variable_type(&name, expression.start) {
                     return Some(variable_ty)
                 }
             }
             ExpressionKind::Member { object, property } => {
-                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } = &object.kind else {
+                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: Literal::String(name) } = &object.kind else {
                     return None
                 };
 
-                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(property) } = &property.kind else {
+                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: Literal::String(property) } = &property.kind else {
                     return None
                 };
 
@@ -356,29 +357,31 @@ fn hoist_types(statements: &Rc<[ASTStatement]>, checker: &mut TypeChecker) -> La
                     hoist_class(&declaration, checker)?
                 }
             }
-            StatementKind::Import { specifiers, source } => {
-                let parent = checker.type_collector.path.parent().unwrap().to_path_buf();
+            StatementKind::Import { specifiers: _, source: _ } => {
+                let _parent = checker.type_collector.path.parent().unwrap().to_path_buf();
 
-                let module_source = loader::resolve_module(&source.value, Some(parent))?;
+                todo!();
 
-                let contents = loader::read_module(&module_source)?;
+                // let module_source = loader::resolve_module(&source.value, Some(parent))?;
 
-                let symbol_index = analysis::get_symbol_index(module_source.path.into(), contents).unwrap();
+                // let contents = loader::read_module(&module_source)?;
 
-                for ident in specifiers {
-                    let source_symbol = symbol_index.find_export(&ident.value);
+                // let symbol_index = analysis::get_symbol_index(module_source.path.into(), contents).unwrap();
 
-                    let Some(source_symbol) = source_symbol else {
-                        return Err(LanguageError::with_source(ParserError::InvalidType(format!("Type not found: {}", ident.value)), ident.start, ident.end))
-                    };
+                // for ident in specifiers {
+                //     let source_symbol = symbol_index.find_export(&ident.value);
+
+                //     let Some(source_symbol) = source_symbol else {
+                //         return Err(LanguageError::with_source(ParserError::InvalidType(format!("Type not found: {}", ident.value)), ident.start, ident.end))
+                //     };
                     
-                    match source_symbol.kind {
-                        SymbolKind::Class(class_type) => {
-                            checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type) }, span: Span { start: ident.start, end: ident.end } });
-                        },
-                        _ => {}
-                    }  
-                }
+                //     match source_symbol.kind {
+                //         SymbolKind::Class(class_type) => {
+                //             checker.hoisted_types.insert(0, LocatedType { ty: Type::Instance { class: Box::new(class_type) }, span: Span { start: ident.start, end: ident.end } });
+                //         },
+                //         _ => {}
+                //     }  
+                // }
             }
             _ => {}
         }
@@ -609,9 +612,9 @@ fn resolve_expression_type(expression: &Expression, arena: Arc<Mutex<TypeArena>>
     match &expression.kind {
         ExpressionKind::Literal { r#type, value } => {
             match (r#type, value) {
-                (LiteralExpressionKind::Literal, ValueHolder::String(_)) => Ok(arena.lock().get_default(DefaultType::String)),
-                (LiteralExpressionKind::Literal, ValueHolder::Number(_)) => Ok(arena.lock().get_default(DefaultType::Number)),
-                (LiteralExpressionKind::Literal, ValueHolder::Bool(_)) => Ok(arena.lock().get_default(DefaultType::Bool)),
+                (LiteralExpressionKind::Literal, Literal::String(_)) => Ok(arena.lock().get_default(DefaultType::String)),
+                (LiteralExpressionKind::Literal, Literal::Number(_)) => Ok(arena.lock().get_default(DefaultType::Number)),
+                (LiteralExpressionKind::Literal, Literal::Bool(_)) => Ok(arena.lock().get_default(DefaultType::Bool)),
                 (LiteralExpressionKind::Function(box StatementKindWrapper::Typed(TypedStatementKind::Function { arguments, return_ty, .. })), _) => {
                     Ok(arena.lock().alloc(Type::Function(Box::new(FunctionType { arguments: arguments.clone(), return_ty: return_ty.clone() }))))
                 }

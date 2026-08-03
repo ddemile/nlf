@@ -29,7 +29,7 @@ fn run(callback) {
         }
     }
 
-    let mean = total / count
+    let mean = total< / count
 
     print("-- TEST --")
     print(min)

@@ -3,7 +3,7 @@
 
 pub mod lexer;
 pub mod parser;
-pub mod interpreter;
+pub mod vm;
 pub mod tests;
 pub mod loader;
 pub mod errors;
@@ -13,9 +13,5 @@ pub mod explorer;
 pub mod analysis;
 pub mod type_checker;
 pub mod type_resolver;
-pub mod vm;
 pub mod compiler;
-pub mod new_translator;
-pub mod new_loader;
-pub mod new_stdlib;
-pub mod new_addons;
+pub mod translator;

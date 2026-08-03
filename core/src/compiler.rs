@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, rc::Rc};
 
 use serde::Serialize;
 
-use crate::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver, NonImplementedModuleResolver, StaticModuleResolver}, lexer::TokenKind, new_translator::TranslatorOutput, parser::{ASTStatementKind, Expression, ExpressionKind, IRBlock, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Statement, StatementKind, StatementKindWrapper, ValueHolder, VariableKind, VariableRef}, vm::{Function, FunctionId, FunctionRef, Op, UpvalueDescriptor, Value}};
+use crate::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver, NonImplementedModuleResolver, StaticModuleResolver}, lexer::TokenKind, translator::TranslatorOutput, parser::{ASTStatementKind, Expression, ExpressionKind, IRBlock, IRStatement, IRStatementKind, Iterable, Literal, LiteralExpressionKind, Statement, StatementKind, StatementKindWrapper, VariableKind, VariableRef}, vm::{Function, FunctionId, FunctionRef, Op, UpvalueDescriptor, Value}};
 
 pub mod resolvers;
 
@@ -567,14 +567,14 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
         ExpressionKind::Literal { r#type, value } => {
             match r#type {
                 LiteralExpressionKind::Literal => {
-                    if let ValueHolder::String(string) = value {
+                    if let Literal::String(string) = value {
                         let string_id = compiler.pre_allocate_string(string.clone());
 
                         compiler.emit(Op::BuildString(string_id));
                     } else {
                         let value = match value {
-                            ValueHolder::Number(number) => Value::Float(*number),
-                            ValueHolder::Bool(bool) => Value::Bool(*bool),
+                            Literal::Number(number) => Value::Float(*number),
+                            Literal::Bool(bool) => Value::Bool(*bool),
                             _ => todo!()
                         };
 
@@ -583,7 +583,7 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
                     }
                 }
                 LiteralExpressionKind::Variable => {
-                    let ValueHolder::String(string) = value else {
+                    let Literal::String(string) = value else {
                         unreachable!()
                     };
 

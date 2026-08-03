@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use parking_lot::Mutex;
 use serde::Serialize;
 
-use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, DefaultType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, Iterable, LiteralExpressionKind, TypeArena, TypeId, TypedStatement, TypedStatementKind, TypedSyntaxTree, ValueHolder, VariableDescriptor}, type_checker};
+use crate::{explorer::{self, Visitor}, lexer, parser::{self, ASTStatement, ASTStatementKind, Argument, ClassType, DefaultType, Expression, ExpressionKind, FieldType, FunctionType, Identifier, Iterable, Literal, LiteralExpressionKind, TypeArena, TypeId, TypedStatement, TypedStatementKind, TypedSyntaxTree, VariableDescriptor}, type_checker};
 
 #[derive(Debug, Clone, Copy, Serialize, Hash, PartialEq, Eq)]
 pub struct Span {
@@ -311,7 +311,7 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
 
     fn visit_expression(&mut self, expression: &Expression) {
         match &expression.kind {
-            ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(name) } => {
+            ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: Literal::String(name) } => {
                 self.define(name.to_string(), SymbolKind::Variable, Span { start: expression.start, end: expression.end });
             }
             ExpressionKind::Member { object, property } => {
@@ -319,7 +319,7 @@ impl Visitor<TypedSyntaxTree> for TypedScopeBuilder {
                     return
                 };
 
-                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(value) } = &property.kind else {
+                let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: Literal::String(value) } = &property.kind else {
                     return
                 };
 
@@ -404,7 +404,7 @@ impl Visitor<TypedSyntaxTree> for CompletionResolver {
     fn visit_expression(&mut self, expression: &Expression) {
         match &expression.kind {
             ExpressionKind::Member { object, property } => {
-                if let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(_value) } = &property.kind {
+                if let ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: Literal::String(_value) } = &property.kind {
                     self.candidates.push(CompletionCandidate { completion_span: Span { start: property.start, end: property.end }, object_span: Span { start: object.start, end: object.end } });
                 }
             }

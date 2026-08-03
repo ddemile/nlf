@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use lazy_static::lazy_static;
+use nlf_shared::{errors::LanguageResult, vm::VMContext};
 use parking_lot::Mutex;
 use rust_embed::Embed;
-
-use crate::{interpreter::{ModuleContext, RuntimeResult}, parser::ValueHolder};
 
 #[derive(Embed)] 
 #[folder = "src/stdlib/modules"] 
@@ -19,26 +18,7 @@ lazy_static! {
         Mutex::new(HashMap::new());
 }
 
-pub type NativeFunctionType = fn(&[ValueHolder], &mut ModuleContext) -> RuntimeResult;
+pub type NativeFunctionType = fn(VMContext) -> LanguageResult<()>;
 
 mod global;
 mod modules;
-
-#[macro_export]
-macro_rules! argument {
-    ($args:expr, $ctor:path, $name:expr, $idx:expr) => {{
-        match $args.get($idx) {
-            Some(v) => match v {
-                $ctor(inner) => inner.clone(),
-                _ => return Err(LanguageError::from(RuntimeError::Custom(format!(
-                    "argument `{}` at index {} had wrong type",
-                    $name, $idx
-                )))),
-            },
-            None => return Err(LanguageError::from(RuntimeError::Custom(format!(
-                "argument `{}` at index {} missing",
-                $name, $idx
-            )))),
-        }
-    }};
-}

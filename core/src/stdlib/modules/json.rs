@@ -1,20 +1,19 @@
 
 use nlf_macros::module;
-use serde_json::Value;
+use nlf_shared::{errors::LanguageResult, vm::{Array, Object, VMContext, Value}};
+use serde_json::Value as JSONValue;
 
-use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::{ArrayRef, ObjectRef, ValueHolder}};
+use crate::{errors::LanguageError, errors::RuntimeError};
 
 module!("json", {
-    fn parse(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
-        let text = argument!(values, ValueHolder::String, "text", 0);
-
+    fn parse(text: String, context: VMContext) -> LanguageResult<Value> {
         let object_map = convert_json_value(&serde_json::from_str(&text).map_err(|_| LanguageError::from(RuntimeError::Custom("Failed to parse JSON".into())))?, context);
 
         Ok(object_map)
     }
 
-    fn stringify(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        serde_json::to_string(&convert_value_holder(&values[0])).map(ValueHolder::String).map_err(|_| LanguageError::from(RuntimeError::Custom("Failed to stringify JSON".into())))
+    fn stringify(value: Value, context: VMContext) -> LanguageResult<Value> {
+        serde_json::to_string(&convert_value_holder(&value, context)).map(|string| Value::String(context.heap().allocate_string(string))).map_err(|_| LanguageError::from(RuntimeError::Custom("Failed to stringify JSON".into())))
     }
 });
 
@@ -22,35 +21,60 @@ fn is_decimal(x: f64) -> bool {
     (x - x.round()).abs() > f64::EPSILON
 }
 
-fn convert_json_value(value: &Value, context: &mut ModuleContext) -> ValueHolder {
+fn convert_json_value(value: &JSONValue, context: VMContext) -> Value {
     match value {
-        Value::Bool(bool) => ValueHolder::Bool(*bool),
-        Value::String(string) => ValueHolder::String(string.clone()),
-        Value::Number(number) => ValueHolder::Number(number.as_f64().unwrap()),
-        Value::Array(array) => ValueHolder::Array(ArrayRef::new(array.iter().map(|value| convert_json_value(value, context)).collect())),
-        Value::Object(object) => ValueHolder::Object(ObjectRef::new(
-            object.iter().map(|(key, value)| (key.clone(), convert_json_value(value, context))).collect(),
-            None,
-            context.get_schema_store()
-        )),
-        Value::Null => ValueHolder::Void
+        JSONValue::Bool(bool) => Value::Bool(*bool),
+        JSONValue::String(string) => Value::String(context.heap().allocate_string(string.clone())),
+        JSONValue::Number(number) => Value::Float(number.as_f64().unwrap()),
+        JSONValue::Array(array) => {
+            let array = Array {
+                vec: array.iter().map(|value| convert_json_value(value, context)).collect()
+            };
+
+            Value::Array(context.heap().allocate_array(array))
+        },
+        JSONValue::Object(object) => {
+            let object = Object {
+                map: object.iter().map(|(key, value)| (key.clone(), convert_json_value(value, context))).collect()
+            };
+
+            Value::Object(context.heap().allocate_object(object))
+        },
+        JSONValue::Null => Value::Void
     }
 }
 
-fn convert_value_holder(value: &ValueHolder) -> Option<Value> {
+fn convert_value_holder(value: &Value, context: VMContext) -> Option<JSONValue> {
     match value {
-        ValueHolder::Bool(bool) => Some(Value::Bool(*bool)),
-        ValueHolder::String(string) => Some(Value::String(string.clone())),
-        ValueHolder::Number(number) => {
+        Value::Bool(bool) => Some(JSONValue::Bool(*bool)),
+        Value::String(string_id) => Some(JSONValue::String(context.heap().get_string(*string_id).clone())),
+        Value::Float(number) => {
             Some(if is_decimal(*number) {
-                Value::Number(serde_json::Number::from_f64(*number).unwrap())
+                JSONValue::Number(serde_json::Number::from_f64(*number).unwrap())
             } else {
-                Value::Number(serde_json::Number::from_u128(*number as u128).unwrap())
+                JSONValue::Number(serde_json::Number::from_u128(*number as u128).unwrap())
             })
         },
-        ValueHolder::Array(array) => Some(Value::Array(array.fetch().iter().filter_map(|value| convert_value_holder(value)).collect())),
-        ValueHolder::Object(object) => Some(Value::Object(object.fetch().into_iter().filter_map(|(key, value)| convert_value_holder(&value).map(|value| (key, value))).collect())),
-        ValueHolder::Void => Some(Value::Null),
+        Value::Array(array_id) => {
+            let vec = context.heap().get_array(*array_id).vec.clone();
+            Some(JSONValue::Array(
+                vec
+                    .iter()
+                    .filter_map(|value| convert_value_holder(value, context))
+                    .collect()
+            ))
+        },
+        Value::Object(object_id) => {
+            let map = context.heap().get_object(*object_id).map.clone();
+            Some(JSONValue::Object(
+                map
+                    .iter()
+                    .filter_map(|(key, value)| convert_value_holder(&value, context)
+                    .map(|value| (key.clone(), value)))
+                    .collect()
+            ))
+        },
+        Value::Void => Some(JSONValue::Null),
         _ => None
     }
 }

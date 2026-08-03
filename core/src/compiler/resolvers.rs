@@ -1,6 +1,6 @@
 use std::{collections::HashMap, env, fs, path::PathBuf};
 
-use crate::{errors::{LanguageError, LanguageResult}, loader::LoaderError, new_loader::{ModuleKind, ModuleSource}, stdlib::CoreModules};
+use crate::{errors::{LanguageError, LanguageResult, LoaderError}, loader::{ModuleKind, ModuleSource}, stdlib::CoreModules};
 
 pub trait ModuleResolver {
     fn resolve_path(&self, path: PathBuf, current_path: &PathBuf) -> LanguageResult<PathBuf>;

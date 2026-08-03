@@ -1,86 +1,58 @@
 use std::f64::consts::PI;
 
 use nlf_macros::module;
-
-use crate::{argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult}, parser::ValueHolder};
+use nlf_shared::{errors::LanguageResult, vm::{VMContext, Value}};
 
 module!("math", {
-    fn sqrt(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.sqrt()))
+    fn sqrt(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.sqrt()))
     }
 
-    fn pow(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let a = argument!(values, ValueHolder::Number, "a", 0);
-        let b = argument!(values, ValueHolder::Number, "b", 1);
-
-        Ok(ValueHolder::Number(a.powf(b)))
+    fn pow(a: f64, b: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(a.powf(b)))
     }
 
-    fn abs(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.abs()))
+    fn abs(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.abs()))
     }
 
-    fn sign(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.signum()))
+    fn sign(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.signum()))
     }
 
-    fn sin(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.sin()))
+    fn sin(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.sin()))
     }
 
-    fn cos(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.cos()))
+    fn cos(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.cos()))
     }
 
-    fn tan(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.tan()))
+    fn tan(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.tan()))
     }
 
-    fn round(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.round()))
+    fn round(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.round()))
     }
 
-    fn floor(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.floor()))
+    fn floor(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.floor()))
     }
 
-    fn ceil(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let x = argument!(values, ValueHolder::Number, "x", 0);
-
-        Ok(ValueHolder::Number(x.ceil()))
+    fn ceil(x: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(x.ceil()))
     }
 
-    fn pi(_values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        Ok(ValueHolder::Number(PI))
+    fn pi(_: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(PI))
     }
 
-    fn min(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let a = argument!(values, ValueHolder::Number, "a", 0);
-        let b = argument!(values, ValueHolder::Number, "b", 1);
-
-        Ok(ValueHolder::Number(a.min(b)))
+    fn min(a: f64, b: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(a.min(b)))
     }
 
-    fn max(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-        let a = argument!(values, ValueHolder::Number, "a", 0);
-        let b = argument!(values, ValueHolder::Number, "b", 1);
-
-        Ok(ValueHolder::Number(a.max(b)))
+    fn max(a: f64, b: f64, _: VMContext) -> LanguageResult<Value> {
+        Ok(Value::Float(a.max(b)))
     }
 });

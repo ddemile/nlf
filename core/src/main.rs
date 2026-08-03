@@ -1,9 +1,7 @@
 use std::{env, path::Path, rc::Rc};
 
-use nlf_core::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver}, errors::LanguageResult, loader::run_main, new_loader::Loader, tests, vm::{self, Value}};
+use nlf_core::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver}, loader::Loader, tests, vm};
 use clap::Parser;
-use nlf_macros::native_fn;
-use nlf_shared::vm::VMContext;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -29,20 +27,6 @@ fn main() {
         return;
     }
 
-    if args.vm {
-        let file = if let Some(value) = args.file { value } else { String::from("core/src/program/vm.nlf") };
-
-        let resolver: Rc<dyn ModuleResolver> = Rc::new(FileSystemModuleResolver {
-            process_path: env::current_dir().unwrap()
-        });
-
-        let loader = Loader::new(file, resolver);
-
-        loader.run_main();
-
-        return;
-    }
-
     if args.tests {
         tests::run_tests(Path::new("core/tests"));
         return;
@@ -50,8 +34,11 @@ fn main() {
 
     let file = if let Some(value) = args.file { value } else { String::from("core/src/program/main.nlf") };
 
-    match run_main(&file) {
-        Ok(_) => (),
-        Err(e) => println!("{}", e.format(None))
-    }
+    let resolver: Rc<dyn ModuleResolver> = Rc::new(FileSystemModuleResolver {
+        process_path: env::current_dir().unwrap()
+    });
+
+    let loader = Loader::new(file, resolver);
+
+    loader.run_main();
 }

@@ -4,7 +4,7 @@ use std::{collections::HashMap, rc::Rc, vec};
 
 use serde::Serialize;
 
-use crate::{compiler::{ClassInfo, ClassInfos, FunctionInfo, FunctionInfos}, errors::{LanguageError, LanguageErrorKind, LanguageResult}, explorer::{self, Visitor}, interpreter::prototypes::Operation, lexer::TokenKind, parser::{ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, Iterable, LiteralExpressionKind, Program, Statement, StatementKind, StatementKindWrapper, ValueHolder, VariableDescriptor, VariableKind, VariableRef}, vm::{UpvalueDescriptor, UpvalueSource}};
+use crate::{compiler::{ClassInfo, ClassInfos, FunctionInfo, FunctionInfos}, errors::{LanguageError, LanguageErrorKind, LanguageResult}, explorer::{self, Visitor}, parser::{ASTProgram, ASTStatement, ASTStatementKind, ASTSyntaxTree, Block, Expression, ExpressionKind, IRProgram, IRStatement, IRStatementKind, Iterable, Literal, LiteralExpressionKind, Program, Statement, StatementKind, StatementKindWrapper, VariableDescriptor, VariableKind, VariableRef}, vm::{UpvalueDescriptor, UpvalueSource}};
 
 #[derive(Debug)]
 pub enum TranslatorError {
@@ -228,7 +228,7 @@ impl Context {
                     ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), .. } => {
                         self.frames.push(Frame);
                     }
-                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: ValueHolder::String(variable_name) } => {
+                    ExpressionKind::Literal { r#type: LiteralExpressionKind::Variable, value: Literal::String(variable_name) } => {
                         if self.name != *variable_name {
                             return
                         }
@@ -558,7 +558,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                 }
             }
 
-            let ExpressionKind::Literal { value: ValueHolder::String(_name), ..  } = &variable.kind else {
+            let ExpressionKind::Literal { value: Literal::String(_name), ..  } = &variable.kind else {
                 return Err(LanguageError::from(TranslatorError::TODO("Cannot access property on type other than a variable".to_string())));
             };
 
@@ -576,7 +576,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
         ExpressionKind::Literal { r#type, value } => {
             match r#type {
                 LiteralExpressionKind::Variable => {
-                    let ValueHolder::String(value) = value else {
+                    let Literal::String(value) = value else {
                         panic!()
                     };
 
@@ -630,20 +630,21 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
             let left = translate_expression(*left.clone(), context)?;
             let right = translate_expression(*right.clone(), context)?;
 
-            if let (ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: left_value }, ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: right_value }) = (&left.kind, &right.kind) {
-                let operation = match operator {
-                    TokenKind::Plus => Operation::Addition,
-                    TokenKind::Minus => Operation::Substraction,
-                    TokenKind::Asterisk => Operation::Multiplication,
-                    TokenKind::Slash => Operation::Division,
-                    TokenKind::Percent => Operation::Modulo,
-                    _ => unreachable!()
-                };
-                return Ok(ExpressionKind::Literal {
-                    r#type: LiteralExpressionKind::Literal,
-                    value: left_value.get_prototype().operate(operation, left_value, right_value)?
-                }.into_expression(left.start, right.end))
-            }
+            // // TODO
+            // if let (ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: left_value }, ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: right_value }) = (&left.kind, &right.kind) {
+            //     let operation = match operator {
+            //         TokenKind::Plus => Operation::Addition,
+            //         TokenKind::Minus => Operation::Substraction,
+            //         TokenKind::Asterisk => Operation::Multiplication,
+            //         TokenKind::Slash => Operation::Division,
+            //         TokenKind::Percent => Operation::Modulo,
+            //         _ => unreachable!()
+            //     };
+            //     return Ok(ExpressionKind::Literal {
+            //         r#type: LiteralExpressionKind::Literal,
+            //         value: left_value.get_prototype().operate(operation, left_value, right_value)?
+            //     }.into_expression(left.start, right.end))
+            // }
 
             ExpressionKind::Binary {
                 left: Box::new(left),

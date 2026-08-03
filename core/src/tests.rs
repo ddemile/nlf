@@ -4,7 +4,7 @@ use std::{
 };
 use rayon::prelude::*;
 
-use crate::{compiler::resolvers::StaticModuleResolver, new_loader::Loader};
+use crate::{compiler::resolvers::StaticModuleResolver, loader::Loader};
 
 struct Test{
     pub name: String,

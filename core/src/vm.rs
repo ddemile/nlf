@@ -1,11 +1,11 @@
 use std::{cell::RefCell, collections::HashMap, ptr::NonNull, rc::{Rc, Weak}, time::Instant};
 
-use nlf_shared::{indexmap::IndexMap, vm::Class};
+use nlf_shared::indexmap::IndexMap;
 use serde::Serialize;
 use smallvec::SmallVec;
 use inline_colorization::*;
 
-use crate::{compiler::{Import, ImportKind}, errors::LanguageResult, new_loader::{EntryPoint, Loader, LoaderRef}, new_stdlib::{self, NativeFunctionType}, vm::{format::FormatOptions, prototypes::{ARRAY_PROTOTYPE, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Prototype, STRING_PROTOTYPE}}};
+use crate::{compiler::{Import, ImportKind}, errors::{LanguageResult, RuntimeError}, loader::{EntryPoint, Loader, LoaderRef}, stdlib::{self, NativeFunctionType}, vm::{format::FormatOptions, prototypes::{ARRAY_PROTOTYPE, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Prototype, STRING_PROTOTYPE}}};
 
 pub use nlf_shared::vm::*;
 
@@ -842,7 +842,7 @@ pub fn run(vm: &mut VM) {
             Op::LoadNative(string_id) => {
                 let string = &module.strings[*string_id];
 
-                let function_table = new_stdlib::FUNCTION_TABLE.lock();
+                let function_table = stdlib::FUNCTION_TABLE.lock();
                 
                 let global_id = function_table.iter().position(|(name, _)| name == string).expect(&format!("Global \"{}\" not found", string));
 
@@ -881,7 +881,7 @@ pub struct ExecutionInfo {
 }
 
 fn create_globals() -> Vec<NativeFunctionType> {
-    let function_table = new_stdlib::FUNCTION_TABLE.lock();
+    let function_table = stdlib::FUNCTION_TABLE.lock();
 
     function_table.values().map(|function| *function).collect()
 }
@@ -1037,3 +1037,5 @@ impl AbstractVMContext for VMContext {
         }
     }
 }
+
+pub type RuntimeResult = Result<Value, RuntimeError>;

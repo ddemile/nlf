@@ -1,9 +1,9 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use lazy_static::lazy_static;
 use nlf_shared::{errors::LanguageResult, vm::{VMContext, Value}};
 
-use crate::{errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, Scope}, parser::{ArrayRef, ValueHolder}, vm::ValueUtils};
+use crate::{errors::{LanguageError, RuntimeError}, vm::{RuntimeResult, ValueUtils}};
 
 #[derive(Eq, Hash, PartialEq, Clone, Copy, Debug)]
 pub enum Operation {
@@ -17,13 +17,13 @@ pub enum Operation {
 #[derive(Clone)]
 pub enum Method {
     BuiltIn(BuiltInMethodFunc),
-    Local(LocalMethodFunc, Rc<RefCell<Scope>>)
+    Local(LocalMethodFunc)
 }
 
 impl Method {
     pub fn call(&self, this: &Value, context: VMContext) -> LanguageResult<()> {
         match self {
-            Method::Local(method, scope) => {
+            Method::Local(_method) => {
                 // method.call(this, arguments, context, scope.clone())
                 todo!()
             },
@@ -41,7 +41,7 @@ pub trait Prototype {
 pub struct LocalPrototype {
     pub _name: String,
     pub operators: Vec<Option<LocalOperatorFunc>>,
-    pub methods: HashMap<String, (LocalMethodFunc, Rc<RefCell<Scope>>)>
+    pub methods: HashMap<String, LocalMethodFunc >
 }
 
 impl std::fmt::Debug for LocalPrototype {
@@ -53,35 +53,36 @@ impl std::fmt::Debug for LocalPrototype {
 }
 
 impl Prototype for LocalPrototype {
-    fn operate(&self, operation: Operation, a: &Value, b: &Value) -> LanguageResult<()> {
+    fn operate(&self, operation: Operation, _a: &Value, _b: &Value) -> LanguageResult<()> {
         let operation_id = operation as usize;
 
         if self.operators.len() <= operation_id {
             return Err(LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))));
         }
 
-        let func: &LocalOperatorFunc = self.operators[operation_id].as_ref().ok_or_else(|| LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
+        let _func: &LocalOperatorFunc = self.operators[operation_id].as_ref().ok_or_else(|| LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
 
         // func.call(a, b)
 
         Ok(())
     }
 
-    fn get_method(&self, name: &str) -> Option<Method> {
-        self.methods.get(name).map(|(method, scope)| Method::Local(method.clone(), scope.clone()))
+    fn get_method(&self, _name: &str) -> Option<Method> {
+        todo!();
+        // self.methods.get(name).map(|(method, scope)| Method::Local(method.clone(), scope.clone()))
     }
 }
 
 pub trait LocalOperatorFuncTrait {
-    fn call(&self, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult;
+    fn call(&self, a: &Value, b: &Value) -> RuntimeResult;
     fn box_clone(&self) -> Box<dyn LocalOperatorFuncTrait>;
 }
 
 impl<T> LocalOperatorFuncTrait for T
 where
-    T: Fn(&ValueHolder, &ValueHolder) -> RuntimeResult + Clone + 'static,
+    T: Fn(&Value, &Value) -> RuntimeResult + Clone + 'static,
 {
-    fn call(&self, a: &ValueHolder, b: &ValueHolder) -> RuntimeResult {
+    fn call(&self, a: &Value, b: &Value) -> RuntimeResult {
         self(a, b)
     }
 
@@ -99,16 +100,16 @@ impl Clone for LocalOperatorFunc {
 }
 
 pub trait LocalMethodFuncTrait {
-    fn call(&self, this: &ValueHolder, arguments: &[ValueHolder], context: &mut ModuleContext, scope: Rc<RefCell<Scope>>) -> RuntimeResult;
+    fn call(&self, this: &Value, arguments: &[Value]) -> RuntimeResult;
     fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait>;
 }
 
 impl<T> LocalMethodFuncTrait for T
 where
-    T: Fn(&ValueHolder, &[ValueHolder], &mut ModuleContext, Rc<RefCell<Scope>>) -> RuntimeResult + Clone + 'static,
+    T: Fn(&Value, &[Value]) -> RuntimeResult + Clone + 'static,
 {
-    fn call(&self, this: &ValueHolder, arguments: &[ValueHolder], context: &mut ModuleContext, scope: Rc<RefCell<Scope>>) -> RuntimeResult {
-        self(this, arguments, context, scope)
+    fn call(&self, this: &Value, arguments: &[Value]) -> RuntimeResult {
+        self(this, arguments)
     }
 
     fn box_clone(&self) -> Box<dyn LocalMethodFuncTrait> {
@@ -141,8 +142,8 @@ impl LocalPrototype {
         self
     }
 
-    pub fn with_method(&mut self, name: &str, func: LocalMethodFunc, scope: Rc<RefCell<Scope>>) -> &mut Self {
-        self.methods.insert(name.to_string(), (func, scope));
+    pub fn with_method(&mut self, name: &str, func: LocalMethodFunc) -> &mut Self {
+        self.methods.insert(name.to_string(), func );
         self
     }
 }
@@ -349,7 +350,7 @@ lazy_static! {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 Ok(ValueHolder::String(instance.to_string()))
+//                 Ok(Value::String(instance.to_string()))
 //             }));
 //         prototype
 //     };
@@ -362,62 +363,62 @@ lazy_static! {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 Ok(ValueHolder::String(instance.to_string()))
+//                 Ok(Value::String(instance.to_string()))
 //             }))
 //             .with_method("len", Arc::new(|instance, args, _context| {
 //                 if args.len() > 0 {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 let ValueHolder::Array(array) = instance else {
+//                 let Value::Array(array) = instance else {
 //                     unreachable!()
 //                 };
 
-//                 Ok(ValueHolder::Number(array.fetch().len() as f64))
+//                 Ok(Value::Number(array.fetch().len() as f64))
 //             }))
 //             .with_method("push", Arc::new(|instance, args, _context| {
 //                 if args.len() > 1 {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 let ValueHolder::Array(array) = instance else {
+//                 let Value::Array(array) = instance else {
 //                     unreachable!()
 //                 };
 
 //                 array.push(args[0].clone());
 
-//                 Ok(ValueHolder::Void)
+//                 Ok(Value::Void)
 //             }))
 //             .with_method("reverse", Arc::new(|instance, args, _context| {
 //                 if args.len() > 0 {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 let ValueHolder::Array(array) = instance else {
+//                 let Value::Array(array) = instance else {
 //                     unreachable!()
 //                 };
 
 //                 array.reverse();
 
-//                 Ok(ValueHolder::Void)
+//                 Ok(Value::Void)
 //             }))
 //             .with_method("join", Arc::new(|instance, args, _context| {
-//                 let Some(ValueHolder::String(separator)) = args.get(0) else {
+//                 let Some(Value::String(separator)) = args.get(0) else {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Expected string at index 0".into())));
 //                 };
 
-//                 let ValueHolder::Array(array) = instance else {
+//                 let Value::Array(array) = instance else {
 //                     unreachable!()
 //                 };
                 
-//                 Ok(ValueHolder::String(array.fetch().iter().map(|arg| arg.to_string()).collect::<Vec<String>>().join(separator)))
+//                 Ok(Value::String(array.fetch().iter().map(|arg| arg.to_string()).collect::<Vec<String>>().join(separator)))
 //             }))
 //             .with_method("find", Arc::new(|instance, args, context| {
-//                 let Some(ValueHolder::Fn(predicate)) = args.get(0) else {
+//                 let Some(Value::Fn(predicate)) = args.get(0) else {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Expected string at index 0".into())));
 //                 };
 
-//                 let ValueHolder::Array(array) = instance else {
+//                 let Value::Array(array) = instance else {
 //                     unreachable!()
 //                 };
 
@@ -431,23 +432,23 @@ lazy_static! {
 //                         }
 //                     };
 
-//                     if let ValueHolder::Bool(true) = result {
+//                     if let Value::Bool(true) = result {
 //                         return Ok(value)
 //                     }
 //                 }
 
-//                 Ok(ValueHolder::Void)
+//                 Ok(Value::Void)
 //             }))
 //             .with_method("contains", Arc::new(|instance, args, _context| {
 //                 let Some(value) = args.get(0) else {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Expected value at index 0".into())));
 //                 };
 
-//                 let ValueHolder::Array(array) = instance else {
+//                 let Value::Array(array) = instance else {
 //                     unreachable!()
 //                 };
                 
-//                 Ok(ValueHolder::Bool(array.fetch().contains(value)))
+//                 Ok(Value::Bool(array.fetch().contains(value)))
 //             }));
 //         prototype
 //     };
@@ -456,7 +457,7 @@ lazy_static! {
 //         let mut prototype = BuiltInPrototype::new("String");
 //         prototype
 //             .with_operator(Operation::Addition, Arc::new(|a, b| {
-//                 let ValueHolder::String(value) = a else {
+//                 let Value::String(value) = a else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected string".to_string())))
 //                 };
 
@@ -464,10 +465,10 @@ lazy_static! {
 
 //                 value.push_str(&b.to_string());
         
-//                 Ok(ValueHolder::String(value))
+//                 Ok(Value::String(value))
 //             }))
 //             .with_method("upper", Arc::new(|instance, args, _| {
-//                 let ValueHolder::String(string) = instance else {
+//                 let Value::String(string) = instance else {
 //                     unreachable!()
 //                 };
 
@@ -475,10 +476,10 @@ lazy_static! {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 Ok(ValueHolder::String(string.to_uppercase()))
+//                 Ok(Value::String(string.to_uppercase()))
 //             }))
 //             .with_method("lower", Arc::new(|instance, args, _| {
-//                 let ValueHolder::String(string) = instance else {
+//                 let Value::String(string) = instance else {
 //                     unreachable!()
 //                 };
 
@@ -486,18 +487,18 @@ lazy_static! {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 Ok(ValueHolder::String(string.to_lowercase()))
+//                 Ok(Value::String(string.to_lowercase()))
 //             }))
 //             .with_method("split", Arc::new(|instance, args, _| {
-//                 let Some(ValueHolder::String(separator)) = args.get(0) else {
+//                 let Some(Value::String(separator)) = args.get(0) else {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Expected string at index 0".into())));
 //                 };
 
-//                 let ValueHolder::String(string) = instance else {
+//                 let Value::String(string) = instance else {
 //                     unreachable!()
 //                 };
 
-//                 Ok(ValueHolder::Array(ArrayRef::new(string.split(separator).map(|item| ValueHolder::String(item.to_string())).collect())))
+//                 Ok(Value::Array(ArrayRef::new(string.split(separator).map(|item| Value::String(item.to_string())).collect())))
 //             }));
 //         prototype
 //     };
@@ -510,62 +511,62 @@ lazy_static! {
 //                     return Err(LanguageError::from(RuntimeError::Custom("Too many arguments".into())));
 //                 }
 
-//                 Ok(ValueHolder::String(instance.to_string()))
+//                 Ok(Value::String(instance.to_string()))
 //             }))
 //             .with_operator(Operation::Addition, Arc::new(|a, b| {
-//                 let ValueHolder::Number(a) = a else {
+//                 let Value::Number(a) = a else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
 
-//                 let ValueHolder::Number(b) = b else {
+//                 let Value::Number(b) = b else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
         
-//                 Ok(ValueHolder::Number(*a + *b))
+//                 Ok(Value::Number(*a + *b))
 //             }))
 //             .with_operator(Operation::Substraction, Arc::new(|a, b| {
-//                 let ValueHolder::Number(a) = a else {
+//                 let Value::Number(a) = a else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
 
-//                 let ValueHolder::Number(b) = b else {
+//                 let Value::Number(b) = b else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
         
-//                 Ok(ValueHolder::Number(*a - *b))
+//                 Ok(Value::Number(*a - *b))
 //             }))
 //             .with_operator(Operation::Multiplication, Arc::new(|a, b| {
-//                 let ValueHolder::Number(a) = a else {
+//                 let Value::Number(a) = a else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
 
-//                 let ValueHolder::Number(b) = b else {
+//                 let Value::Number(b) = b else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
         
-//                 Ok(ValueHolder::Number(*a * *b))
+//                 Ok(Value::Number(*a * *b))
 //             }))
 //             .with_operator(Operation::Division, Arc::new(|a, b| {
-//                 let ValueHolder::Number(a) = a else {
+//                 let Value::Number(a) = a else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
 
-//                 let ValueHolder::Number(b) = b else {
+//                 let Value::Number(b) = b else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
         
-//                 Ok(ValueHolder::Number(*a / *b))
+//                 Ok(Value::Number(*a / *b))
 //             }))
 //             .with_operator(Operation::Modulo, Arc::new(|a, b| {
-//                 let ValueHolder::Number(a) = a else {
+//                 let Value::Number(a) = a else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
 
-//                 let ValueHolder::Number(b) = b else {
+//                 let Value::Number(b) = b else {
 //                     return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
 //                 };
                 
-//                 Ok(ValueHolder::Number(*a % *b))
+//                 Ok(Value::Number(*a % *b))
 //             }));
 //         prototype
 //     };

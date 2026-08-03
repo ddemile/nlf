@@ -1,88 +1,57 @@
-use std::{io::{self, Write}, rc::Rc, sync::{Arc}, time::{SystemTime, UNIX_EPOCH}};
+use std::{io::{self, Write}, time::{SystemTime, UNIX_EPOCH}};
 
-use nlf_shared::indexmap::IndexMap;
-use nlf_macros::expose;
-use nlf_shared::addons::AddonValue;
+use nlf_macros::global;
+use nlf_shared::{errors::LanguageResult, indexmap::IndexMap, vm::{Object, VMContext, Value}};
 
-use crate::{addons::Addon, argument, errors::LanguageError, interpreter::{ModuleContext, RuntimeError, RuntimeResult, prototypes::Method}, parser::{BuiltInFunction, FunctionKind, ObjectRef, ValueHolder}, stdlib::MODULE_TABLE};
+use crate::{addons::Addon, stdlib::MODULE_TABLE};
 
-#[expose]
-fn print(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let arguments: Vec<String> = values
-        .iter()
-        .map(|argument| format!("{argument}"))
-        .collect();
-
-    println!("{}", arguments.join(" "));
-
-    Ok(ValueHolder::Void)
+#[global]
+pub fn print(value: Value, context: VMContext) {
+    println!("{}", context.stringify(&value))
 }
 
-#[expose]
-fn panic(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let message = argument!(values, ValueHolder::String, "message", 0);
-
-    Err(LanguageError::with_source(RuntimeError::Custom(message.clone()), 0, 0))
+#[global]
+pub fn assert(passed: Value, _: VMContext) {
+    if !matches!(passed, Value::Bool(true)) {
+        panic!("Assertion failed")
+    }
 }
 
-#[expose]
-fn now(_values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
+#[global]
+fn now(_: VMContext) -> LanguageResult<Value> {
     let start = SystemTime::now();
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
         .expect("time should go forward");
-    Ok(ValueHolder::Number(since_the_epoch.as_millis_f64()))
+
+    Ok(Value::Float(since_the_epoch.as_millis_f64()))
 }
 
-#[expose]
-fn assert(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let a = match values.get(0).unwrap() {
-        ValueHolder::Bool(f) => f,
-        _ => panic!("Expected bool value"),
-    };
-
-    if !a {
-        return Err(LanguageError::with_source(RuntimeError::Custom("Assertion failed".to_string()), 0, 0));
-    }
-
-    Ok(ValueHolder::Void)
-}
-
-#[expose]
-fn binding(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
-    let name = match values.get(0).unwrap() {
-        ValueHolder::String(f) => f,
-        _ => panic!("Expected test name"),
-    };
-
+#[global]
+fn binding(name: String, context: VMContext) -> LanguageResult<Value> {
     let table = MODULE_TABLE.lock();
 
     if !table.contains_key(name.as_str()) {
-        return Err(LanguageError::from(RuntimeError::Custom(format!("Core module not found: {}", name))))
+        panic!("Core module not found: {}", name)
     }
 
     let module_map = table.get(name.as_str()).unwrap().clone();
 
-    let mut map: IndexMap<String, ValueHolder> = IndexMap::new();
+    let mut map: IndexMap<String, Value> = IndexMap::new();
 
     for (key, value) in module_map {
-        let function = ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
-            func: Method::BuiltIn(Arc::new(move |_, args, ctx| {
-                value.clone()(&args, ctx)
-            })),
-            instance: Rc::new(ValueHolder::Void)
-        }));
+        let function_id = context.heap().allocate_native_function(value);
 
-        map.insert(key.to_string(), function);
+        map.insert(key.to_string(), Value::Native(function_id));
     }
 
-    Ok(ValueHolder::Object(ObjectRef::new(map, None, context.get_schema_store())))
+    let object_id = context.heap().allocate_object(Object { map });
+
+    Ok(Value::Object(object_id))
 }
 
-#[expose]
-fn input(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let prompt = argument!(values, ValueHolder::String, "prompt", 0);
-    
+#[global]
+fn input(prompt: String, context: VMContext) -> LanguageResult<Value> {
     print!("{}", prompt);
     io::stdout().flush().unwrap();
     
@@ -91,12 +60,19 @@ fn input(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult 
         Ok(_goes_into_input_above) => {},
         Err(_no_updates_is_fine) => {},
     }
-    Ok(ValueHolder::String(input.trim().to_string()))
+
+    let string_id = context.heap().allocate_string(input.trim().to_string());
+
+    Ok(Value::String(string_id))
 }
 
-#[expose]
-fn confirm(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let prompt = argument!(values, ValueHolder::String, "prompt", 0);
+#[global]
+fn confirm(prompt: Value, context: VMContext) -> LanguageResult<Value> {
+    let Value::String(string_id) = prompt else {
+        panic!("Expected string")
+    };
+
+    let prompt = context.get_string(string_id);
     
     loop {
         print!("{} [y/n]: ", prompt);
@@ -106,54 +82,39 @@ fn confirm(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResul
         io::stdin().read_line(&mut input).expect("Failed to read line");
 
         match input.trim().to_lowercase().as_str() {
-            "y" | "yes" => return Ok(ValueHolder::Bool(true)),
-            "n" | "no" => return Ok(ValueHolder::Bool(false)),
+            "y" | "yes" => return Ok(Value::Bool(true)),
+            "n" | "no" => return Ok(Value::Bool(false)),
             _ => println!("Please enter 'y' or 'n'."),
         }
     }
 }
 
-#[expose]
-fn addon(values: &[ValueHolder], context: &mut ModuleContext) -> RuntimeResult {
-    let path = argument!(values, ValueHolder::String, "path", 0);
-
+#[global]
+fn addon(path: String, context: VMContext) -> LanguageResult<Value> {
     let addon = Addon::new(&path);
 
-    let mut map: IndexMap<String, ValueHolder> = IndexMap::new();
+    let mut map: IndexMap<String, Value> = IndexMap::new();
 
-    for function in addon.functions {
-        let func = ValueHolder::Fn(FunctionKind::BuiltIn(BuiltInFunction {
-            func: Method::BuiltIn(Arc::new(move |_, args, _ctx| {
-                let args: Vec<AddonValue> = args.iter().map(|arg| {
-                    <ValueHolder as Into<AddonValue>>::into(arg.clone())
-                }).collect();
+    for (name, function) in addon.functions {
+        let func = Value::Native(context.heap().allocate_native_function(function));
 
-                Ok((function.1)(args).into())
-            })),
-            instance: Rc::new(ValueHolder::Void)
-        }));
-
-        map.insert(function.0, func);
+        map.insert(name, func);
     }
 
-    Ok(ValueHolder::Object(ObjectRef::new(map, None, context.get_schema_store())))
+    Ok(Value::Object(context.heap().allocate_object(Object { map })))
 }
 
-#[expose]
-fn is_null(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let Some(arg) = values.get(0) else {
-        return Err(LanguageError::from(RuntimeError::Custom(format!(
-            "argument at index {} missing",
-            0
-        ))))
-    };
-
-    Ok(ValueHolder::Bool(matches!(arg, ValueHolder::Void)))
+#[global]
+fn is_null(arg: Value, _: VMContext) -> LanguageResult<Value> {
+    Ok(Value::Bool(matches!(arg, Value::Void)))
 }
 
-#[expose]
-fn number(values: &[ValueHolder], _context: &mut ModuleContext) -> RuntimeResult {
-    let string = argument!(values, ValueHolder::String, "string", 0);
+#[global]
+fn number(string: String, _context: VMContext) -> LanguageResult<Value> {
+    Ok(Value::Float(string.parse().unwrap()))
+}
 
-    Ok(ValueHolder::Number(string.parse().unwrap()))
+#[global]
+fn panic(message: String, _context: VMContext) -> LanguageResult<Value> {
+    panic!("{message}")
 }
