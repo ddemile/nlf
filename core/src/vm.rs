@@ -249,6 +249,22 @@ impl Heap {
             _ => a == b
         }
     }
+
+    pub fn get_size(&self) -> usize {
+        // TODO: Count size recursively
+
+        let mut total = 0;
+
+        total += self.arrays.len() * size_of::<Array>();
+        total += self.classes.len() * size_of::<Class>();
+        total += self.closures.len() * size_of::<Closure>();
+        total += self.methods.len() * size_of::<Method>();
+        total += self.native_functions.len() * size_of::<NativeFunctionType>();
+        total += self.objects.len() * size_of::<Object>();
+        total += self.strings.len() * size_of::<String>();
+
+        total
+    }
 }
 
 impl AbstractHeap for Heap {
@@ -698,6 +714,7 @@ pub fn step(vm: &mut VM) -> bool {
             vm.frames.pop();
         }
         Op::MakeClosure(reference) => {
+            println!("Heap size: {:.2} MB", vm.heap.get_size() as f64 / 1000000.0);
             match reference {
                 FunctionRef::Id(fn_id) => {
                     let function = &module.functions[fn_id.0];

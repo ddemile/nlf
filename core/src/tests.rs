@@ -6,7 +6,7 @@ use rayon::prelude::*;
 
 use crate::{compiler::resolvers::StaticModuleResolver, loader::Loader};
 
-struct Test{
+struct Test {
     pub name: String,
     pub content: String,
     pub file: String
@@ -27,6 +27,7 @@ pub fn run_tests(base_dir: &Path) {
     panic::set_hook(Box::new(|_| {}));
 
     let mut tests: Vec<Test> = vec![];
+    let mut passed_tests = 0;
 
     for entry in paths {
         let path = entry.unwrap().path();
@@ -90,6 +91,7 @@ pub fn run_tests(base_dir: &Path) {
 
             match task.result {
                 Ok(duration) => {
+                    passed_tests += 1;
                     println!(
                         "  {color_blue}Execution time{color_reset}: {color_yellow}{:.2?}{color_reset}",
                         duration
@@ -100,6 +102,14 @@ pub fn run_tests(base_dir: &Path) {
             }
         }
     };
+
+    println!();
+    if passed_tests == tests.len() {
+        println!("{color_bright_green}All tests passed!{color_reset}")
+    } else {
+        let failed_tests = tests.len() - passed_tests;
+        println!("{color_bright_red}{} test{} failed!{color_reset}", failed_tests, if failed_tests > 1 { "s" } else { "" })
+    }
 
     panic::set_hook(default_hook);
 }
