@@ -1,5 +1,3 @@
-// This version of the translator was fixed to work with the NLF compiler
-
 use std::{collections::HashMap, rc::Rc, vec};
 
 use serde::Serialize;
@@ -67,10 +65,19 @@ struct Scope {
 #[derive(Serialize, Debug, Clone)]
 struct Frame {
     symbol_table: SymbolTable,
-    upvalue_descriptors: Vec<UpvalueDescriptor>
+    upvalue_descriptors: Vec<UpvalueDescriptor>,
+    locals: Vec<VariableKind>
 }
 
 impl Frame {
+    pub fn new() -> Self {
+        Self {
+            symbol_table: SymbolTable::new(),
+            upvalue_descriptors: vec![],
+            locals: vec![]
+        }
+    }
+
     pub fn get_or_register_upvalue(&mut self, upvalue_descriptor: UpvalueDescriptor) -> usize {
         for (index, descriptor) in self.upvalue_descriptors.iter().enumerate() {
             if descriptor.index == upvalue_descriptor.index && descriptor.source == upvalue_descriptor.source {
@@ -99,7 +106,7 @@ impl Context {
     fn get(&mut self, name: &str) -> Option<VariableRef> {
         let mut scopes = self.stack.iter().rev();
 
-        let mut found_variable = true;
+        let mut found_variable = false;
         while let Some(scope) = scopes.next() {
             if let Some(_) = scope.symbol_table.get(name) {
                 found_variable = true;
@@ -177,7 +184,8 @@ impl Context {
             VariableKind::Local
         };
 
-        // TOOD: refactor
+        frame.locals.push(kind.clone());
+
         VariableRef { kind, name: Some(name.to_owned()), slot: id, depth: 0, start: position.0, end: position.1 }
     }
     
@@ -194,7 +202,7 @@ impl Context {
     }
 
     fn enter_frame(&mut self) {
-        self.frames.push(Frame { symbol_table: SymbolTable::new(), upvalue_descriptors: vec![] });
+        self.frames.push(Frame::new());
     }
 
     fn exit_frame(&mut self) -> FunctionInfo {
@@ -202,7 +210,7 @@ impl Context {
 
         let function_info = FunctionInfo {
             upvalue_descriptors: frame.upvalue_descriptors.clone(),
-            local_count: frame.symbol_table.map.len()
+            locals: frame.locals.clone()
         };
 
         self.frames.pop();
@@ -217,13 +225,19 @@ impl Context {
         struct FrameExplorer {
             frames: Vec<Frame>,
             name: String,
-            definition: Option<(ASTStatement, usize)>,
+            definition: Option<usize>,
             position: (usize, usize),
-            upvalue: bool
+            upvalue: bool,
+            stopped: bool,
+            is_argument: bool
         }
 
         impl Visitor<ASTSyntaxTree> for FrameExplorer {
-            fn visit_expression(&mut self, expression: &Expression) {
+            fn visit_expression(&mut self, expression: &Expression) {            
+                if self.stopped {
+                    return;
+                }
+
                 match &expression.kind {
                     ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), .. } => {
                         self.frames.push(Frame);
@@ -233,7 +247,7 @@ impl Context {
                             return
                         }
 
-                        if self.definition.as_ref().unwrap().1 != self.frames.len() {
+                        if self.definition.is_some() && *self.definition.as_ref().unwrap() != self.frames.len() {
                             self.upvalue = true
                         }
                     }
@@ -242,8 +256,17 @@ impl Context {
             }
 
             fn visit_statement(&mut self, statement: &ASTStatement) {
+                if self.stopped {
+                    return;
+                }
+
+                if self.definition.is_some() && self.frames.len() < self.definition.unwrap() && self.is_argument {
+                    self.stopped = true;
+                    return;
+                }
+
                 if self.position.0 >= statement.start && self.position.1 <= statement.end {
-                    self.definition = Some((statement.clone(), self.frames.len()));
+                    self.definition = Some(self.frames.len());
                 }
 
                 match &statement.kind {
@@ -253,8 +276,23 @@ impl Context {
                     _ => {}
                 }
             }
+            
+            fn visit_argument(&mut self, argument: &<ASTSyntaxTree as crate::parser::SyntaxTree>::Argument) {
+                if self.stopped {
+                    return;
+                }
+
+                if self.position.0 >= argument.variable.start && self.position.1 <= argument.variable.end {
+                    self.definition = Some(self.frames.len());
+                    self.is_argument = true;
+                }
+            }
 
             fn leave_expression(&mut self, expression: &Expression) {
+                if self.stopped {
+                    return;
+                }
+
                 match &expression.kind {
                     ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(_), .. } => {
                         self.frames.pop();
@@ -264,6 +302,10 @@ impl Context {
             }
 
             fn leave_statement(&mut self, statement: &ASTStatement) {
+                if self.stopped {
+                    return;
+                }
+
                 match &statement.kind {
                     ASTStatementKind::Function { .. } => {
                         self.frames.pop();
@@ -278,7 +320,9 @@ impl Context {
             name: name.to_string(),
             definition: None,
             position,
-            upvalue: false
+            upvalue: false,
+            stopped: false,
+            is_argument: false
         };
 
         explorer::visit_program(&self.program, &mut visitor);
@@ -297,7 +341,7 @@ pub struct TranslatorOutput {
 pub fn translate(program: ASTProgram) -> LanguageResult<TranslatorOutput> {
     let mut context = Context {
         stack: vec![Scope { kind: ScopeKind::Program, slot_index: 0, symbol_table: SymbolTable::new() }],
-        frames: vec![Frame { symbol_table: SymbolTable::new(), upvalue_descriptors: vec![] }],
+        frames: vec![Frame::new()],
         program: program.clone(),
         function_infos: FunctionInfos::new(),
         class_infos: ClassInfos::new()
@@ -343,8 +387,10 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
             context.enter_frame();
             context.enter_scope(ScopeKind::Function);
             context.set(&variable.value);
-            context.set("self");
-            let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
+            // context.set("self");
+            context.set("0_self");
+            let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set_with_position(&arg.variable.value, (arg.variable.start, arg.variable.end))).collect();
+            // let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
             let block = translate_block(block, context)?;
             context.exit_scope();
             let function_info = context.exit_frame();
@@ -373,7 +419,13 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
                 }
             };
 
-            context.enter_scope(ScopeKind::Loop);
+            context.enter_scope(ScopeKind::Block);
+
+            if let Iterable::Array(_) = iterable {
+                context.set("<array>");
+                context.set("<loop_variable>");
+            }
+
             let var_ref = context.set(&variable.value);
             let statements = translate_body(statements, context)?;
             context.exit_scope();
@@ -471,7 +523,7 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
 
                 context.set(&variable.value);
 
-                let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
+                let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set_with_position(&arg.variable.value, (arg.variable.start, arg.variable.end))).collect();
                 let block = translate_block(block, context)?;
                 context.exit_scope();
                 let method_info = context.exit_frame();
@@ -487,7 +539,7 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
 
             let constructor_info = context.exit_frame();
 
-            class_info.methods.insert(class_name.value, constructor_info);
+            class_info.methods.insert(class_name.value.clone(), constructor_info);
 
             for method in static_methods {
                 let ASTStatementKind::Function { variable, arguments, block, .. } = method.kind else {
@@ -498,7 +550,7 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
                 context.enter_scope(ScopeKind::Function);
 
                 context.set(&variable.value);
-                context.set("self");
+                context.set("0");
 
                 let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
                 let block = translate_block(block, context)?;
@@ -593,7 +645,8 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                     context.enter_frame();
                     context.enter_scope(ScopeKind::Function);
                     context.set(&variable.value);
-                    context.set("self");
+                    // context.set("self");
+                    context.set("0_self");
                     let inner_arguements: Vec<VariableRef> = arguments.iter().map(|arg| context.set(&arg.variable.value)).collect();
                     let block = translate_block(block, context)?;
                     context.exit_scope();
@@ -630,7 +683,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
             let left = translate_expression(*left.clone(), context)?;
             let right = translate_expression(*right.clone(), context)?;
 
-            // // TODO
+            // TODO
             // if let (ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: left_value }, ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: right_value }) = (&left.kind, &right.kind) {
             //     let operation = match operator {
             //         TokenKind::Plus => Operation::Addition,

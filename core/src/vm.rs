@@ -1,11 +1,11 @@
-use std::{cell::RefCell, collections::HashMap, ptr::NonNull, rc::{Rc, Weak}, time::Instant};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, ptr::NonNull, rc::{Rc, Weak}, time::Instant};
 
 use nlf_shared::indexmap::IndexMap;
 use serde::Serialize;
 use smallvec::SmallVec;
 use inline_colorization::*;
 
-use crate::{compiler::{Import, ImportKind}, errors::{LanguageResult, RuntimeError}, loader::{EntryPoint, Loader, LoaderRef}, stdlib::{self, NativeFunctionType}, vm::{format::FormatOptions, prototypes::{ARRAY_PROTOTYPE, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Prototype, STRING_PROTOTYPE}}};
+use crate::{compiler::{Import, ImportKind}, errors::{LanguageResult, RuntimeError}, loader::{EntryPoint, Loader, LoaderRef}, parser::VariableKind, stdlib::{self, NativeFunctionType}, vm::{format::FormatOptions, prototypes::{ARRAY_PROTOTYPE, Method, NUMBER_PROTOTYPE, OBJECT_PROTOTYPE, Operation, Prototype, STRING_PROTOTYPE}}};
 
 pub use nlf_shared::vm::*;
 
@@ -145,17 +145,20 @@ pub enum Op {
     Sub,
     Mul,
     Div,
+    Mod,
+    Neg,
     EQ,
     NEQ,
     LT,
     LTE,
     GT,
     GTE,
-    And,
-    Or,
+    Not,
     Increment(usize),
+    Length,
     Jump(usize),
     JumpIfFalse(usize),
+    JumpIfTrue(usize),
     Call(usize),
     Return,
     MakeClosure(FunctionRef),
@@ -163,11 +166,12 @@ pub enum Op {
     BuildString(usize),
     BuildObject(usize),
     BuildArray(usize),
-    BuildClass(usize),
+    BuildClass,
     ReadProperty,
     WriteProperty,
     Import(HeapIndex),
     LoadNative(usize),
+    Dup,
     Halt
 }
 
@@ -298,6 +302,7 @@ impl AbstractHeap for Heap {
         &self.arrays[array_id]
     }
 
+    #[inline(always)]
     fn get_array_mut(&mut self, array_id: usize) -> &mut Array {
         &mut self.arrays[array_id]
     }
@@ -384,7 +389,8 @@ pub struct Function {
     pub argument_count: usize,
     pub local_count: usize,
     pub code_offset: usize,
-    pub upvalue_descriptors: Vec<UpvalueDescriptor>
+    pub upvalue_descriptors: Vec<UpvalueDescriptor>,
+    pub locals: Vec<VariableKind>
 }
 
 #[derive(Debug)]
@@ -406,474 +412,539 @@ pub fn print(context: &mut dyn AbstractVMContext) {
     context.push_value(Value::Void);
 }
 
+
 pub fn run(vm: &mut VM) {
     loop {
-        let vm_ptr: *mut VM = vm;
-
-        let frame = vm.frames.last_mut().expect("No frame found");
-
-        let VM { stack, modules, .. } = vm;
-
-        let module = unsafe { modules.get_unchecked(frame.module_id) };
-
-        let Some(instruction) = module.code.get(frame.ip) else {
-            break
-        };
-
-        frame.ip += 1;
-
-        match instruction {
-            Op::Const(id) => {
-                stack.push(module.constants[*id]);
-            }
-            Op::Pop => {
-                stack.pop();
-            }
-            Op::Add => {
-                let b = stack.pop_float();
-                let a = stack.pop_float();
-                
-                stack.push(Value::Float(a + b));
-            }
-            Op::Sub => {
-                let b = stack.pop_float();
-                let a = stack.pop_float();
-                
-                stack.push(Value::Float(a - b));
-            }
-            Op::Mul => {
-                let b = stack.pop_float();
-                let a = stack.pop_float();
-                
-                stack.push(Value::Float(a * b));
-            }
-            Op::Div => {
-                let b = stack.pop_float();
-                let a = stack.pop_float();
-                
-                stack.push(Value::Float(a / b));
-            }
-            Op::Store(slot) => {
-                let value = stack.pop();
-
-                unsafe {
-                    *frame.locals.get_unchecked_mut(*slot) = Local::Value(value)
-                };
-            }
-            Op::StoreCaptured(slot) => {
-                let value = stack.pop();
-
-                let upvalue_ref = Rc::new(RefCell::new(value));
-
-                unsafe {
-                    *frame.locals.get_unchecked_mut(*slot) = Local::Upvalue(upvalue_ref)
-                };
-            }
-            Op::Load(slot) => {
-                stack.push(match unsafe { frame.locals.get_unchecked(*slot) } {
-                    Local::Value(value) => *value,
-                    Local::Upvalue(upvalue_ref) => upvalue_ref.borrow().clone()
-                });
-            }
-            Op::StoreUpvalue(slot) => {
-                let value = stack.pop();
-
-                let closure_id = *frame.closure.as_ref().expect("StoreUpvalue in non-closure");
-
-                let closure = &vm.heap.closures[closure_id];
-
-                *closure.upvalues[*slot].borrow_mut() = value;
-
-            }
-            Op::LoadUpvalue(slot) => {
-                let closure_id = *frame.closure.as_ref().expect("LoadUpvalue in non-closure");
-
-                let closure = &vm.heap.closures[closure_id];
-
-                stack.push(closure.upvalues[*slot].borrow().clone());
-            }
-            Op::Jump(position) => {
-                frame.ip = *position;
-                continue;
-            }
-            Op::JumpIfFalse(position) => {
-                if let Value::Bool(false) = stack.pop() {
-                    frame.ip = *position;
-                    continue;
-                }
-            }
-            Op::EQ => {
-                let b = stack.pop();
-                let a = stack.pop();
-
-                stack.push(Value::Bool(vm.heap.check_equality(&a, &b)));
-            }
-            Op::NEQ => {
-                let b = stack.pop();
-                let a = stack.pop();
-
-                stack.push(Value::Bool(!vm.heap.check_equality(&a, &b)));
-            }
-            Op::LT => {
-                let b = stack.pop();
-                let a = stack.pop();
-
-                stack.push(Value::Bool(a < b));
-            }
-            Op::LTE => {
-                let b = stack.pop();
-                let a = stack.pop();
-
-                stack.push(Value::Bool(a <= b));
-            }
-            Op::GT => {
-                let b = stack.pop();
-                let a = stack.pop();
-
-                stack.push(Value::Bool(a > b));
-            }
-            Op::GTE => {
-                let b = stack.pop();
-                let a = stack.pop();
-
-                stack.push(Value::Bool(a >= b));
-            }
-            Op::And => {
-                let b = stack.pop_bool();
-                let a = stack.pop_bool();
-
-                stack.push(Value::Bool(a && b));
-            }
-            Op::Or => {
-                let b = stack.pop_bool();
-                let a = stack.pop_bool();
-
-                stack.push(Value::Bool(a || b));
-            }
-            Op::Increment(slot) => {
-                let value = frame.locals.get_mut(*slot).expect("Local not found");
-
-                let value = match value {
-                    Local::Value(value) => value,
-                    Local::Upvalue(value) => &mut value.borrow_mut()
-                };
-
-                match value {
-                    Value::Float(number) => {
-                        *number += 1.0
-                    }
-                    Value::Int(number) => {
-                        *number += 1
-                    }
-                    _ => panic!("Can only increment numbers")
-                }
-            }
-            Op::Call(argument_count) => {
-                match stack.pop() {
-                    Value::Closure(closure_id) => {
-                        let mut arguments = vec![];
-                        for _ in 0..*argument_count {
-                            arguments.push(Local::Value(stack.pop()));
-                        }
-
-                        let closure = &vm.heap.closures[closure_id];
-
-                        let function_module = &modules[closure.module_id];
-
-                        let function = &function_module.functions[closure.function_id];
-
-                        // 0: The called closure, 1: The closure self value
-                        let mut call_locals = vec![Local::Value(Value::Closure(closure_id)), Local::Value(closure.self_value)];
-                        call_locals.append(&mut arguments);
-                        call_locals.resize(function.argument_count + function.local_count, Local::Value(Value::Void));
-                        vm.frames.push(Frame { module_id: closure.module_id, ip: function.code_offset, locals: call_locals, closure: Some(closure_id), import: None });
-                    }
-                    Value::Native(function_id) => {
-                        let mut context = VMContext {
-                            vm: NonNull::new(vm_ptr).unwrap()
-                        };
-
-                        let global = vm.heap.native_functions[function_id];
-
-                        global(&mut context).expect("An error occured inside a native function");
-                    }
-                    Value::Class(class_id) => {
-                        let mut arguments = vec![];
-                        for _ in 0..*argument_count {
-                            arguments.push(Local::Value(stack.pop()));
-                        }
-
-                        let class = &vm.heap.classes[class_id];
-                        
-                        let closure = &vm.heap.closures[class.constructor_id];
-
-                        let function_module = &modules[closure.module_id];
-
-                        let function = &function_module.functions[closure.function_id];
-
-                        let mut call_locals = vec![Local::Value(Value::Void), Local::Value(closure.self_value)];
-                        call_locals.append(&mut arguments);
-                        call_locals.resize(function.argument_count + function.local_count, Local::Value(Value::Void));
-                        vm.frames.push(Frame { module_id: closure.module_id, ip: function.code_offset, locals: call_locals, closure: Some(class.constructor_id), import: None });
-                    }
-                    Value::Method(method_id) => {
-                        let method = &vm.heap.methods[method_id];
-
-                        let mut context = VMContext {
-                            vm: NonNull::new(vm_ptr).unwrap()
-                        };
-
-                        method.call(&stack.pop(), &mut context).expect("Method execution failed");
-                    }
-                    _ => panic!("Failed to retrieve function")
-                };
-            }
-            Op::Return => {
-                vm.frames.pop();
-            }
-            Op::MakeClosure(reference) => {
-                match reference {
-                    FunctionRef::Id(fn_id) => {
-                        let function = &module.functions[fn_id.0];
-                        
-                        let mut upvalues = vec![];
-
-                        for upvalue_descriptor in function.upvalue_descriptors.iter() {
-                            match upvalue_descriptor.source {
-                                UpvalueSource::Local => {
-                                    let Local::Upvalue(upvalue_ref) = frame.locals[upvalue_descriptor.index].clone() else {
-                                        panic!("Local is not an upvalue")
-                                    };
-
-                                    upvalues.push(upvalue_ref);
-                                }
-                                UpvalueSource::Upvalue => {
-                                    let closure_id = *frame.closure.as_ref().expect("Closure should be defined");
-
-                                    let upvalue_ref = vm.heap.closures[closure_id].upvalues[upvalue_descriptor.index].clone();
-
-                                    upvalues.push(upvalue_ref);
-                                }
-                            }
-                        }
-
-                        let closure = Closure {
-                            module_id: frame.module_id,
-                            function_id: fn_id.0,
-                            upvalues,
-                            self_value: Value::Void
-                        };
-                        
-                        let closure_id = vm.heap.allocate_closure(closure);
-
-                        stack.push(Value::Closure(closure_id));
-                    }
-                    _ => {}
-                }
-            }
-            Op::BindSelf => {
-                let self_value = stack.pop();
-                let closure_id = stack.pop_closure();
-
-                let closure = vm.heap.closures.get_mut(closure_id).expect("Closure not found");
-
-                closure.self_value = self_value;
-
-                stack.push(Value::Closure(closure_id));
-            }
-            Op::BuildString(string_id) => {
-                let string = module.strings[*string_id].clone();
-
-                let object_id = vm.heap.allocate_string(string);
-
-                stack.push(Value::String(object_id));
-            }
-            Op::BuildObject(elements) => {
-                let mut map = IndexMap::new();
-
-                for _ in 0..*elements {
-                    let value = stack.pop();
-                    let key = stack.pop();
-
-                    let Value::String(string_id) = key else {
-                        panic!()
-                    };
-
-                    let key = vm.heap.strings[string_id].clone();
-
-                    map.insert(key, value);
-                }
-
-                let object_id = vm.heap.allocate_object(Object { map });
-
-                stack.push(Value::Object(object_id));
-            }
-            Op::BuildArray(elements) => {
-                let mut vec = vec![];
-
-                for _ in 0..*elements {
-                    let value = stack.pop();
-
-                    vec.push(value);
-                }
-
-                let object_id = vm.heap.allocate_array(Array { vec });
-
-                stack.push(Value::Array(object_id));
-            }
-            Op::BuildClass(static_properties) => {
-                let Value::Closure(constructor_id) = stack.pop() else {
-                    panic!("Tried to build a class using a non-closure constructor")
-                };
-
-                let mut map = IndexMap::new();
-
-                for _ in 0..*static_properties {
-                    let value = stack.pop();
-                    let key = stack.pop();
-
-                    let Value::String(string_id) = key else {
-                        panic!()
-                    };
-
-                    let key = vm.heap.strings[string_id].clone();
-
-                    map.insert(key, value);
-                }
-
-                let class_id = vm.heap.allocate_class(Class {
-                    static_fields: map,
-                    constructor_id
-                });
-
-                stack.push(Value::Class(class_id));
-            }
-            Op::ReadProperty => {
-                let property = stack.pop();
-                let object = stack.pop();
-
-                match object {
-                    Value::Object(id) => {
-                        if let Value::String(string_id) = property {
-                            let property = &vm.heap.strings[string_id];
-
-                            stack.push(*vm.heap.objects[id].get(property).expect("Property doesn't exist"));
-
-                            continue;
-                        };
-                    }
-                    Value::Array(id) => {
-                        if let Value::Float(index) = property {
-                            stack.push(*vm.heap.arrays[id].get(index as usize).expect("Index out of range"));
-                            continue;
-                        };
-                    }
-                    Value::Class(id) => {
-                        if let Value::String(string_id) = property {
-                            let property = &vm.heap.strings[string_id];
-
-                            stack.push(*vm.heap.classes[id].static_fields.get(property).expect("Property doesn't exist"));
-                            
-                            continue;
-                        };
-                    }
-                    _ => {}
-                }
-
-                let Value::String(string_id) = property else {
-                    panic!("An object should only be indexed using a string")
-                };
-
-                let property = &vm.heap.strings[string_id];
-
-                let prototype = ValueUtils::get_prototype(&object, &vm.heap);
-
-                let method = prototype.get_method(property).expect("Method not found");
-
-                if let Some(Op::Call(_)) = module.code.get(frame.ip) {
-                    stack.push(object);
-                }
-
-                stack.push(Value::Method(vm.heap.allocate_method(method)));
-            }
-            Op::WriteProperty => {
-                let value = stack.pop();
-                let property = stack.pop();
-                let object = stack.pop();
-
-                match object {
-                    Value::Object(id) => {
-                        let Value::String(string_id) = property else {
-                            panic!("An object should only be indexed using a string")
-                        };
-
-                        let property = &vm.heap.strings[string_id];
-
-                        vm.heap.objects[id].set(property, value);
-                    }
-                    Value::Array(id) => {
-                        let Value::Float(index) = property else {
-                            panic!("An array should only be indexed using an int")
-                        };
-
-                        vm.heap.arrays[id].set(index as usize, value);
-                    }
-                    Value::Class(id) => {
-                        let Value::String(string_id) = property else {
-                            panic!("A class should only be indexed using a string")
-                        };
-
-                        let property = &vm.heap.strings[string_id];
-
-                        vm.heap.classes[id].static_fields.insert(property.clone(), value);
-                    }
-                    _ => panic!("Value not indexable")
-                }
-            }
-            Op::Import(import_id) => {
-                let import_id = *import_id;
-
-                let import = module.imports[import_id].clone();
-
-                let source = &import.source.clone();
-
-                vm.run_module(source, import);
-            }
-            Op::LoadNative(string_id) => {
-                let string = &module.strings[*string_id];
-
-                let function_table = stdlib::FUNCTION_TABLE.lock();
-                
-                let global_id = function_table.iter().position(|(name, _)| name == string).expect(&format!("Global \"{}\" not found", string));
-
-                stack.push(Value::Native(global_id));
-            }
-            Op::Halt => {
-                if frame.module_id == 0 {
-                    break;
-                }
-
-                let import = frame.import.as_ref().unwrap();
-
-                match &import.kind {
-                    ImportKind::Specific(names) => {
-                        for name in names.iter().rev() {
-                            let slot = module.exports.get(name).expect(&format!("Export \"{}\" not found", name));
-
-                            let Local::Value(value) = frame.locals[*slot] else {
-                                panic!("The export is not stored in a value local")
-                            };
-
-                            stack.push(value);
-                        }
-                    }
-                    _ => todo!()
-                }
-
-                vm.frames.pop();
-            }
+        if step(vm) {
+            break;
         }
     }
+}
+
+#[inline(always)]
+pub fn step(vm: &mut VM) -> bool {
+    let vm_ptr: *mut VM = vm;
+
+    let frame = vm.frames.last_mut().expect("No frame found");
+
+    let VM { stack, modules, .. } = vm;
+
+    let module = unsafe { modules.get_unchecked(frame.module_id) };
+
+    let Some(instruction) = module.code.get(frame.ip) else {
+        return true
+    };
+
+    frame.ip += 1;
+
+    match instruction {
+        Op::Const(id) => {
+            stack.push(module.constants[*id]);
+        }
+        Op::Pop => {
+            stack.pop();
+        }
+        Op::Add => {
+            let b = stack.pop();
+            let a = stack.pop();
+
+            let prototype = ValueUtils::get_prototype(&a, &vm.heap);
+
+            let mut context = VMContext {
+                vm: NonNull::new(vm_ptr).unwrap()
+            };
+            
+            stack.push(prototype.operate(Operation::Addition, &a, &b, &mut context).expect("Addition failed"));
+        }
+        Op::Sub => {
+            let b = stack.pop_float();
+            let a = stack.pop_float();
+            
+            stack.push(Value::Float(a - b));
+        }
+        Op::Mul => {
+            let b = stack.pop_float();
+            let a = stack.pop_float();
+            
+            stack.push(Value::Float(a * b));
+        }
+        Op::Div => {
+            let b = stack.pop_float();
+            let a = stack.pop_float();
+            
+            stack.push(Value::Float(a / b));
+        }
+        Op::Mod => {
+            let b = stack.pop_float();
+            let a = stack.pop_float();
+            
+            stack.push(Value::Float(a % b));
+        }
+        Op::Neg => {
+            let a = stack.pop_float();
+
+            stack.push(Value::Float(-a));
+        }
+        Op::Store(slot) => {
+            let value = stack.pop();
+
+            unsafe {
+                *frame.locals.get_unchecked_mut(*slot) = Local::Value(value)
+            };
+        }
+        Op::StoreCaptured(slot) => {
+            let value = stack.pop();
+
+            let upvalue_ref = Rc::new(RefCell::new(value));
+
+            unsafe {
+                *frame.locals.get_unchecked_mut(*slot) = Local::Upvalue(upvalue_ref)
+            };
+        }
+        Op::Load(slot) => {
+            stack.push(match unsafe { frame.locals.get_unchecked(*slot) } {
+                Local::Value(value) => *value,
+                Local::Upvalue(upvalue_ref) => upvalue_ref.borrow().clone()
+            });
+        }
+        Op::StoreUpvalue(slot) => {
+            let value = stack.pop();
+
+            let closure_id = *frame.closure.as_ref().expect("StoreUpvalue in non-closure");
+
+            let closure = &vm.heap.closures[closure_id];
+
+            *closure.upvalues[*slot].borrow_mut() = value;
+
+        }
+        Op::LoadUpvalue(slot) => {
+            let closure_id = *frame.closure.as_ref().expect("LoadUpvalue in non-closure");
+
+            let closure = &vm.heap.closures[closure_id];
+
+            stack.push(closure.upvalues[*slot].borrow().clone());
+        }
+        Op::Jump(position) => {
+            frame.ip = *position;
+            return false;
+        }
+        Op::JumpIfFalse(position) => {
+            if let Value::Bool(false) | Value::Void = stack.pop() {
+                frame.ip = *position;
+                return false;
+            }
+        }
+        Op::JumpIfTrue(position) => {
+            if !matches!(stack.pop(), Value::Bool(false) | Value::Void) {
+                frame.ip = *position;
+                return false;
+            }
+        }
+        Op::EQ => {
+            let b = stack.pop();
+            let a = stack.pop();
+
+            stack.push(Value::Bool(vm.heap.check_equality(&a, &b)));
+        }
+        Op::NEQ => {
+            let b = stack.pop();
+            let a = stack.pop();
+
+            stack.push(Value::Bool(!vm.heap.check_equality(&a, &b)));
+        }
+        Op::LT => {
+            let b = stack.pop();
+            let a = stack.pop();
+
+            stack.push(Value::Bool(a < b));
+        }
+        Op::LTE => {
+            let b = stack.pop();
+            let a = stack.pop();
+
+            stack.push(Value::Bool(a <= b));
+        }
+        Op::GT => {
+            let b = stack.pop();
+            let a = stack.pop();
+
+            stack.push(Value::Bool(a > b));
+        }
+        Op::GTE => {
+            let b = stack.pop();
+            let a = stack.pop();
+
+            stack.push(Value::Bool(a >= b));
+        }
+        Op::Not => {
+            let a = stack.pop_bool();
+
+            stack.push(Value::Bool(!a));
+        }
+        Op::Increment(slot) => {
+            let value = frame.locals.get_mut(*slot).expect("Local not found");
+
+            let value = match value {
+                Local::Value(value) => value,
+                Local::Upvalue(value) => &mut value.borrow_mut()
+            };
+
+            match value {
+                Value::Float(number) => {
+                    *number += 1.0
+                }
+                Value::Int(number) => {
+                    *number += 1
+                }
+                _ => panic!("Can only increment numbers")
+            }
+        }
+        Op::Length => {
+            let Value::Array(array_id) = stack.pop() else {
+                panic!("Op::Length only works on arrays")
+            };
+
+            stack.push(Value::Float(vm.heap.get_array(array_id).vec.len() as f64));
+        }
+        Op::Call(argument_count) => {
+            match stack.pop() {
+                Value::Closure(closure_id) => {
+                    let closure = &vm.heap.closures[closure_id];
+
+                    let function_module = &modules[closure.module_id];
+
+                    let function = &function_module.functions[closure.function_id];
+
+                    // if function.argument_count != *argument_count  {
+                    //     panic!("Expected {} argument(s), got {}", function.argument_count, argument_count)
+                    // }
+
+                    let create_argument = |index: usize, value: Value| -> Local {
+                        match function.locals[index] {
+                            VariableKind::Local => {
+                                Local::Value(value)
+                            }
+                            VariableKind::Upvalue => {
+                                Local::Upvalue(Rc::new(RefCell::new(value)))
+                            }
+                        }
+                    };
+
+                    let mut arguments = vec![];
+                    for i in 0..*argument_count {
+                        let local_index = i + 2;
+                        arguments.push(create_argument(local_index, stack.pop()));
+                    }
+
+                    // 0: The called closure, 1: The closure self value
+                    let mut call_locals = vec![create_argument(0, Value::Closure(closure_id)), create_argument(1, closure.self_value)];
+                    call_locals.append(&mut arguments);
+                    call_locals.resize(function.argument_count + function.local_count, Local::Value(Value::Void));
+
+                    vm.frames.push(Frame { module_id: closure.module_id, ip: function.code_offset, locals: call_locals, closure: Some(closure_id), import: None });
+                }
+                Value::Native(function_id) => {
+                    let mut context = VMContext {
+                        vm: NonNull::new(vm_ptr).unwrap()
+                    };
+
+                    let global = vm.heap.native_functions[function_id];
+
+                    global(&mut context).expect("An error occured inside a native function");
+                }
+                Value::Class(class_id) => {
+                    let class = &vm.heap.classes[class_id];
+                    
+                    let closure = &vm.heap.closures[class.constructor_id];
+
+                    let function_module = &modules[closure.module_id];
+
+                    let function = &function_module.functions[closure.function_id];
+
+                    let mut upvalue_locals = HashSet::new();
+
+                    for descriptor in function.upvalue_descriptors.iter() {
+                        upvalue_locals.insert(descriptor.index);
+                    }
+
+                    let mut arguments = vec![];
+                    for i in 0..*argument_count {
+                        let local_index = i + 2;
+                        if upvalue_locals.contains(&local_index) {
+                            arguments.push(Local::Value(stack.pop()));
+                        } else {
+                            arguments.push(Local::Upvalue(Rc::new(RefCell::new(stack.pop()))));
+                        }
+                    }
+
+                    let mut call_locals = vec![Local::Value(Value::Void), Local::Value(closure.self_value)];
+                    call_locals.append(&mut arguments);
+                    call_locals.resize(function.argument_count + function.local_count, Local::Value(Value::Void));
+                    vm.frames.push(Frame { module_id: closure.module_id, ip: function.code_offset, locals: call_locals, closure: Some(class.constructor_id), import: None });
+                }
+                Value::Method(method_id) => {
+                    let method = &vm.heap.methods[method_id];
+
+                    let mut context = VMContext {
+                        vm: NonNull::new(vm_ptr).unwrap()
+                    };
+
+                    method.call(&stack.pop(), &mut context).expect("Method execution failed");
+                }
+                _ => panic!("Failed to retrieve function")
+            };
+        }
+        Op::Return => {
+            vm.frames.pop();
+        }
+        Op::MakeClosure(reference) => {
+            match reference {
+                FunctionRef::Id(fn_id) => {
+                    let function = &module.functions[fn_id.0];
+                    
+                    let mut upvalues = vec![];
+
+                    for upvalue_descriptor in function.upvalue_descriptors.iter() {
+                        match upvalue_descriptor.source {
+                            UpvalueSource::Local => {
+                                let Local::Upvalue(upvalue_ref) = frame.locals[upvalue_descriptor.index].clone() else {
+                                    panic!("Local is not an upvalue")
+                                };
+
+                                upvalues.push(upvalue_ref);
+                            }
+                            UpvalueSource::Upvalue => {
+                                let closure_id = *frame.closure.as_ref().expect("Closure should be defined");
+
+                                let upvalue_ref = vm.heap.closures[closure_id].upvalues[upvalue_descriptor.index].clone();
+
+                                upvalues.push(upvalue_ref);
+                            }
+                        }
+                    }
+
+                    let closure = Closure {
+                        module_id: frame.module_id,
+                        function_id: fn_id.0,
+                        upvalues,
+                        self_value: Value::Void
+                    };
+                    
+                    let closure_id = vm.heap.allocate_closure(closure);
+
+                    stack.push(Value::Closure(closure_id));
+                }
+                _ => {}
+            }
+        }
+        Op::BindSelf => {
+            let self_value = stack.pop();
+            let closure_id = stack.pop_closure();
+
+            let closure = vm.heap.closures.get_mut(closure_id).expect("Closure not found");
+
+            closure.self_value = self_value;
+
+            stack.push(Value::Closure(closure_id));
+        }
+        Op::BuildString(string_id) => {
+            let string = module.strings[*string_id].clone();
+
+            let object_id = vm.heap.allocate_string(string);
+
+            stack.push(Value::String(object_id));
+        }
+        Op::BuildObject(elements) => {
+            let mut map = IndexMap::new();
+
+            for _ in 0..*elements {
+                let value = stack.pop();
+                let key = stack.pop();
+
+                let Value::String(string_id) = key else {
+                    panic!()
+                };
+
+                let key = vm.heap.strings[string_id].clone();
+
+                map.insert(key, value);
+            }
+
+            let object_id = vm.heap.allocate_object(Object { map });
+
+            stack.push(Value::Object(object_id));
+        }
+        Op::BuildArray(elements) => {
+            let mut vec = vec![];
+
+            for _ in 0..*elements {
+                let value = stack.pop();
+
+                vec.push(value);
+            }
+
+            let object_id = vm.heap.allocate_array(Array { vec });
+
+            stack.push(Value::Array(object_id));
+        }
+        Op::BuildClass => {
+            let Value::Closure(constructor_id) = stack.pop() else {
+                panic!("Tried to build a class using a non-closure constructor")
+            };
+
+            // let mut map: IndexMap<_, _> = IndexMap::new();
+
+            // for _ in 0..*static_properties {
+            //     let value = stack.pop();
+            //     let key = stack.pop();
+
+            //     let Value::String(string_id) = key else {
+            //         panic!()
+            //     };
+
+            //     let key = vm.heap.strings[string_id].clone();
+
+            //     map.insert(key, value);
+            // }
+
+            let class_id = vm.heap.allocate_class(Class {
+                static_fields: IndexMap::new(),
+                constructor_id
+            });
+
+            stack.push(Value::Class(class_id));
+        }
+        Op::ReadProperty => {
+            let property = stack.pop();
+            let object = stack.pop();
+
+            match object {
+                Value::Object(id) => {
+                    if let Value::String(string_id) = property {
+                        let property = &vm.heap.strings[string_id];
+
+                        stack.push(*vm.heap.objects[id].get(property).expect("Property doesn't exist"));
+
+                        return false;
+                    };
+                }
+                Value::Array(id) => {
+                    if let Value::Float(index) = property {
+                        stack.push(*vm.heap.arrays[id].get(index as usize).expect("Index out of range"));
+                        return false;
+                    };
+                }
+                Value::Class(id) => {
+                    if let Value::String(string_id) = property {
+                        let property = &vm.heap.strings[string_id];
+
+                        stack.push(*vm.heap.classes[id].static_fields.get(property).expect("Property doesn't exist"));
+                        
+                        return false;
+                    };
+                }
+                _ => {}
+            }
+
+            let Value::String(string_id) = property else {
+                panic!("An object should only be indexed using a string")
+            };
+
+            let property = &vm.heap.strings[string_id];
+
+            let prototype = ValueUtils::get_prototype(&object, &vm.heap);
+
+            let method = prototype.get_method(property).expect(&format!("Method \"{property}\" not found"));
+
+            if let Some(Op::Call(_)) = module.code.get(frame.ip) {
+                stack.push(object);
+            }
+
+            stack.push(Value::Method(vm.heap.allocate_method(method)));
+        }
+        Op::WriteProperty => {
+            let value = stack.pop();
+            let property = stack.pop();
+            let object = stack.pop();
+
+            match object {
+                Value::Object(id) => {
+                    let Value::String(string_id) = property else {
+                        panic!("An object should only be indexed using a string")
+                    };
+
+                    let property = &vm.heap.strings[string_id];
+
+                    vm.heap.objects[id].set(property, value);
+                }
+                Value::Array(id) => {
+                    let Value::Float(index) = property else {
+                        panic!("An array should only be indexed using an int")
+                    };
+
+                    vm.heap.arrays[id].set(index as usize, value);
+                }
+                Value::Class(id) => {
+                    let Value::String(string_id) = property else {
+                        panic!("A class should only be indexed using a string")
+                    };
+
+                    let property = &vm.heap.strings[string_id];
+
+                    vm.heap.classes[id].static_fields.insert(property.clone(), value);
+                }
+                _ => panic!("Value not indexable")
+            }
+        }
+        Op::Import(import_id) => {
+            let import_id = *import_id;
+
+            let import = module.imports[import_id].clone();
+
+            let source = &import.source.clone();
+
+            vm.run_module(source, import);
+        }
+        Op::LoadNative(string_id) => {
+            let string = &module.strings[*string_id];
+
+            let function_table = stdlib::FUNCTION_TABLE.lock();
+            
+            let global_id = function_table.iter().position(|(name, _)| name == string).expect(&format!("Global \"{}\" not found", string));
+
+            stack.push(Value::Native(global_id));
+        }
+        Op::Dup => {
+            stack.push(*stack.0.last().unwrap());
+        }
+        Op::Halt => {
+            if frame.module_id == 0 {
+                return true;
+            }
+
+            let import = frame.import.as_ref().unwrap();
+
+            match &import.kind {
+                ImportKind::Specific(names) => {
+                    for name in names.iter().rev() {
+                        let slot = module.exports.get(name).expect(&format!("Export \"{}\" not found", name));
+
+                        let value = match &frame.locals[*slot] {
+                            Local::Value(value) => *value,
+                            Local::Upvalue(value) => *value.borrow()
+                        };
+
+                        stack.push(value);
+                    }
+                }
+                _ => todo!()
+            }
+
+            vm.frames.pop();
+        }
+    }
+
+    false
 }
 
 pub struct ExecutionInfo {
@@ -1034,6 +1105,41 @@ impl AbstractVMContext for VMContext {
     fn heap(&mut self) -> &mut dyn AbstractHeap {
         unsafe {
             &mut self.vm.as_mut().heap
+        }
+    }
+    
+    fn call(&mut self, callee: &Value, arguments: Vec<Value>) -> LanguageResult<Value> {
+        let mut vm: &mut VM = unsafe { self.vm.as_mut() };
+
+        match callee {
+            Value::Closure(closure_id) => {
+                let closure = &vm.heap.closures[*closure_id];
+
+                let function_module = &vm.modules[closure.module_id];
+
+                let function = &function_module.functions[closure.function_id];
+
+                let mut call_locals = vec![Local::Value(Value::Closure(*closure_id)), Local::Value(closure.self_value)];
+                call_locals.append(&mut arguments.iter().map(|value| Local::Value(*value)).collect());
+                call_locals.resize(function.argument_count + function.local_count, Local::Value(Value::Void));
+
+                let start_frame = vm.frames.len();
+
+                vm.frames.push(Frame { module_id: closure.module_id, ip: function.code_offset, locals: call_locals, closure: Some(*closure_id), import: None });
+
+                loop {
+                    if step(&mut vm) {
+                        break;
+                    }
+
+                    if start_frame == vm.frames.len() {
+                        break;
+                    }
+                }
+
+                Ok(vm.stack.pop())
+            }
+            _ => panic!("Only closure can be called from the VM context")
         }
     }
 }

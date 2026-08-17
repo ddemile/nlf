@@ -33,7 +33,7 @@ impl Method {
 }
 
 pub trait Prototype {
-    fn operate(&self, operation: Operation, a: &Value, b: &Value) -> LanguageResult<()>;
+    fn operate(&self, operation: Operation, a: &Value, b: &Value, context: VMContext) -> LanguageResult<Value>;
     fn get_method(&self, name: &str) -> Option<Method>;
 }
 
@@ -53,7 +53,7 @@ impl std::fmt::Debug for LocalPrototype {
 }
 
 impl Prototype for LocalPrototype {
-    fn operate(&self, operation: Operation, _a: &Value, _b: &Value) -> LanguageResult<()> {
+    fn operate(&self, operation: Operation, _a: &Value, _b: &Value, _context: VMContext) -> LanguageResult<Value> {
         let operation_id = operation as usize;
 
         if self.operators.len() <= operation_id {
@@ -64,7 +64,7 @@ impl Prototype for LocalPrototype {
 
         // func.call(a, b)
 
-        Ok(())
+        Ok(Value::Void)
     }
 
     fn get_method(&self, _name: &str) -> Option<Method> {
@@ -157,7 +157,7 @@ pub struct BuiltInPrototype {
 }
 
 impl Prototype for BuiltInPrototype {
-    fn operate(&self, operation: Operation, a: &Value, b: &Value) -> LanguageResult<()> {
+    fn operate(&self, operation: Operation, a: &Value, b: &Value, context: VMContext) -> LanguageResult<Value> {
         let operation_id = operation as usize;
 
         if self.operators.len() <= operation_id {
@@ -166,7 +166,7 @@ impl Prototype for BuiltInPrototype {
 
         let func: &BuiltInOperatorFunc = self.operators[operation_id].as_ref().ok_or_else(|| LanguageError::from(RuntimeError::OperationNotSupported(format!("{:?}", operation))))?;
 
-        func(a, b)
+        func(a, b, context)
     }
 
     fn get_method(&self, name: &str) -> Option<Method> {
@@ -174,7 +174,7 @@ impl Prototype for BuiltInPrototype {
     }
 }
 
-pub type BuiltInOperatorFunc = Arc<dyn Fn(&Value, &Value) -> LanguageResult<()> + Send + Sync>;
+pub type BuiltInOperatorFunc = Arc<dyn Fn(&Value, &Value, VMContext) -> LanguageResult<Value> + Send + Sync>;
 pub type BuiltInMethodFunc = Arc<dyn Fn(&Value, VMContext) -> LanguageResult<()> + Send + Sync>;
 
 impl std::fmt::Debug for BuiltInPrototype {
@@ -293,6 +293,27 @@ lazy_static! {
 
                 Ok(())
             }))
+            .with_method("find", Arc::new(|instance, context| {
+                let Value::Array(array_id) = instance else {
+                    unreachable!()
+                };
+
+                let predicate = context.pop_value();
+                let array = context.heap().get_array(*array_id).clone();
+
+                for value in array.vec {
+                    let result = context.call(&predicate, vec![value]);
+
+                    if let Ok(Value::Bool(true)) = result {
+                        context.push_value(value);
+                        return Ok(())
+                    }
+                }
+
+                context.push_value(Value::Void);
+
+                Ok(())
+            }))
             .with_method("contains", Arc::new(|instance, context| {
                 let Value::Array(array_id) = instance else {
                     unreachable!()
@@ -321,6 +342,20 @@ lazy_static! {
                 context.push_value(Value::String(string_id));
 
                 Ok(())
+            }))
+            .with_operator(Operation::Addition, Arc::new(|a, b, context| {
+                let Value::String(a_id) = a else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected string".to_string())))
+                };
+
+                let a = context.heap().get_string(*a_id).clone();
+                let b = ValueUtils::to_string(b, context.heap());
+
+                let result = a + &b;
+
+                let string_id = context.heap().allocate_string(result);
+
+                Ok(Value::String(string_id))
             }));
         prototype
     };
@@ -336,6 +371,17 @@ lazy_static! {
                 context.push_value(Value::String(string_id));
 
                 Ok(())
+            }))
+            .with_operator(Operation::Addition, Arc::new(|a, b, _context| {
+                let Value::Float(a) = a else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                };
+
+                let Value::Float(b) = b else {
+                    return Err(LanguageError::from(RuntimeError::InvalidType("Expected number".to_string())))
+                };
+
+                Ok(Value::Float(a + b))
             }));
         prototype
     };

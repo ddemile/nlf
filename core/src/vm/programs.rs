@@ -42,7 +42,7 @@ pub fn run_test_program() {
     compiler.end_function();
 
     // Mutator function
-    compiler.begin_function(vec![UpvalueDescriptor { index: 0, source: UpvalueSource::Local }]);
+    compiler.begin_function(vec![UpvalueDescriptor { index: 0, source: UpvalueSource::Local }], vec![]);
     compiler.emit(Op::LoadUpvalue(0));
     // compiler.emit(Op::CallNative(print));
     compiler.emit(Op::Pop);
@@ -78,7 +78,7 @@ pub fn run_test_program() {
                 Value::Int(69420)
             ],
             strings: vec![],
-            functions: vec![Function { module_id: None, argument_count: 0, local_count: 0, code_offset: 3, upvalue_descriptors: vec![] }],
+            functions: vec![Function { module_id: None, argument_count: 0, local_count: 0, code_offset: 3, upvalue_descriptors: vec![], locals: vec![] }],
             exports: HashMap::new(),
             imports: vec![]
         }
@@ -91,7 +91,7 @@ pub fn run_imports_test_program() {
     let _lib = {
         let mut compiler = Compiler::new(CompileInfo::no_resolver());
 
-        compiler.begin_function(vec![]);
+        compiler.begin_function(vec![], vec![]);
         compiler.emit(Op::Load(1));
         compiler.emit(Op::Load(2));
         compiler.emit(Op::Add);

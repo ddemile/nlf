@@ -103,7 +103,9 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
         }
         StatementKind::Method { name, arguments, block } => {
             let scope = visitor.enter_scope(block.get_span());
-            // TODO: find where Method is instanciated
+            // for argument in arguments {
+            //     visitor.visit_argument(argument);
+            // }
             // walk_block(visitor, block);
             visitor.exit_scope(scope);
 

@@ -29,9 +29,9 @@ fn run(callback) {
         }
     }
 
-    let mean = total< / count
+    let mean = total / count
 
-    print("-- TEST --")
+    print("-- BENCHMARK --")
     print(min)
     print(max)
     print(mean)

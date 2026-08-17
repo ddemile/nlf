@@ -102,9 +102,8 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
 
                 if code[cursor..].starts_with("//") {
                     while !matches!(char_at(cursor), Some('\n')) && cursor < code.len() {
-                        cursor += 1;
+                        cursor += char_at(cursor).unwrap().len_utf8();
                     }
-                    cursor += 1;
                 }
 
                 let mut longest_match = "";

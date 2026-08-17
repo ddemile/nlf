@@ -31,6 +31,8 @@ pub trait AbstractVMContext {
     fn stringify(&mut self, value: &Value) -> String;
 
     fn heap(&mut self) -> &mut dyn AbstractHeap;
+
+    fn call(&mut self, callee: &Value, arguments: Vec<Value>) -> LanguageResult<Value>;
 }
 
 pub type VMContext<'a> = &'a mut dyn AbstractVMContext;

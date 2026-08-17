@@ -20,7 +20,8 @@ pub struct Import {
 
 enum UnresolvedOp {
     Jump(String),
-    JumpIfFalse(String)
+    JumpIfFalse(String),
+    JumpIfTrue(String)
 }
 
 enum Instruction {
@@ -40,7 +41,7 @@ pub struct AbstractFunction {
     upvalue_descriptors: Vec<UpvalueDescriptor>,
     labels: Vec<String>,
     argument_count: usize, 
-    local_count: usize
+    locals: Vec<VariableKind>
 }
 
 #[derive(Clone)]
@@ -80,7 +81,7 @@ pub type ClassInfos = HashMap<VariableRef, ClassInfo>;
 #[derive(Serialize, Debug, Clone)]
 pub struct FunctionInfo {
     pub upvalue_descriptors: Vec<UpvalueDescriptor>,
-    pub local_count: usize
+    pub locals: Vec<VariableKind>
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -193,12 +194,16 @@ impl Compiler {
         self.emit_instruction(Instruction::Unresolved(UnresolvedOp::JumpIfFalse(label.to_string())));
     }
 
+    pub fn jump_if_true(&mut self, label: &str) {
+        self.emit_instruction(Instruction::Unresolved(UnresolvedOp::JumpIfTrue(label.to_string())));
+    }
+
     pub fn begin_function_with(&mut self, abstract_function: AbstractFunction) {
         self.functions.push(abstract_function);
     }
 
-    pub fn begin_function(&mut self, upvalue_descriptors: Vec<UpvalueDescriptor>) {
-        self.begin_function_with(AbstractFunction { instructions: vec![], completed: false, upvalue_descriptors, labels: vec![], local_count: 0, argument_count: 0 });
+    pub fn begin_function(&mut self, upvalue_descriptors: Vec<UpvalueDescriptor>, locals: Vec<VariableKind>) {
+        self.begin_function_with(AbstractFunction { instructions: vec![], completed: false, upvalue_descriptors, labels: vec![], argument_count: 0, locals });
     }
 
     pub fn end_function(&mut self) -> usize {
@@ -269,9 +274,10 @@ impl Compiler {
             functions.push(Function {
                 module_id: None,
                 argument_count: function.argument_count,
-                local_count: function.local_count,
+                local_count: function.locals.len(),
                 code_offset: self.instructions.len(),
-                upvalue_descriptors: function.upvalue_descriptors.clone()
+                upvalue_descriptors: function.upvalue_descriptors.clone(),
+                locals: function.locals.clone()
             });
 
             self.instructions.append(&mut function.instructions);
@@ -287,6 +293,9 @@ impl Compiler {
                         }
                         UnresolvedOp::JumpIfFalse(label) => {
                             Op::JumpIfFalse(Self::resolve_label(&labels, &label))
+                        }
+                        UnresolvedOp::JumpIfTrue(label) => {
+                            Op::JumpIfTrue(Self::resolve_label(&labels, &label))
                         }
                     }
                 }
@@ -337,39 +346,74 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
             store_variable_ref(variable, compiler);
         }
         StatementKind::For { variable, iterable, statements } => {
-            let (start, end) = match iterable {
-                Iterable::Range(start, end) => {
-                    (start.clone().expect("Both sides of a range expression should be defined"), end.clone().expect("Both sides of a range expression should be defined"))
-                }
-                _ => todo!()
-            };
-            
-            compile_expression(&start, ValueUsage::Needed, compiler);
-            compiler.emit(Op::Store(variable.slot));
-
             let loop_start = compiler.generate_label();
-            let loop_next_iteration = compiler.generate_label();
             let loop_end = compiler.generate_label();
 
-            compiler.loops.push(Loop { next_iteration_label: loop_next_iteration.clone(), end_label: loop_end.clone() });
+            match iterable {
+                Iterable::Range(start, end) => {
+                    let (start, end) = (start.clone().expect("Both sides of a range expression should be defined"), end.clone().expect("Both sides of a range expression should be defined"));
 
-            compiler.label(&loop_start);
+                    compile_expression(&start, ValueUsage::Needed, compiler);
+                    compiler.emit(Op::Store(variable.slot));
 
-            compile_body(statements.clone(), compiler);
+                    compiler.loops.push(Loop { next_iteration_label: loop_start.clone(), end_label: loop_end.clone() });
 
-            compiler.label(&loop_next_iteration);
+                    compiler.label(&loop_start);
 
-            compiler.emit(Op::Increment(variable.slot));
+                    compiler.emit(Op::Load(variable.slot));
+                    compile_expression(&end, ValueUsage::Needed, compiler);
+                    compiler.emit(Op::GTE);
 
-            compiler.emit(Op::Load(variable.slot));
-            compile_expression(&end, ValueUsage::Needed, compiler);
-            compiler.emit(Op::GTE);
+                    compiler.jump_if_true(&loop_end);
 
-            compiler.jump_if_false(&loop_start);
+                    compile_body(statements.clone(), compiler);
 
-            compiler.label(&loop_end);
+                    compiler.emit(Op::Increment(variable.slot));
 
-            compiler.loops.pop();
+                    compiler.jump(&loop_start);
+
+                    compiler.label(&loop_end);
+
+                    compiler.loops.pop();
+                }
+                Iterable::Array(array) => {
+                    const ARRAY_SLOT: usize = 0;
+                    const LOOP_VARIABLE_SLOT: usize = 1;
+
+                    compile_expression(array, ValueUsage::Needed, compiler);
+                    compiler.emit(Op::Store(ARRAY_SLOT));
+                    
+                    let zero = compiler.constant(Value::Float(0.0));
+                    compiler.emit(Op::Const(zero));
+                    compiler.emit(Op::Store(LOOP_VARIABLE_SLOT));
+
+                    compiler.loops.push(Loop { next_iteration_label: loop_start.clone(), end_label: loop_end.clone() });
+
+                    compiler.label(&loop_start);
+    
+                    compiler.emit(Op::Load(LOOP_VARIABLE_SLOT));
+                    compiler.emit(Op::Load(ARRAY_SLOT));
+                    compiler.emit(Op::Length);
+                    compiler.emit(Op::GTE);
+
+                    compiler.jump_if_true(&loop_end);
+
+                    compiler.emit(Op::Load(ARRAY_SLOT));
+                    compiler.emit(Op::Load(LOOP_VARIABLE_SLOT));
+                    compiler.emit(Op::ReadProperty);
+                    compiler.emit(Op::Store(variable.slot));
+
+                    compile_body(statements.clone(), compiler);
+
+                    compiler.emit(Op::Increment(LOOP_VARIABLE_SLOT));
+
+                    compiler.jump(&loop_start);
+
+                    compiler.label(&loop_end);
+
+                    compiler.loops.pop();
+                }
+            };
         }
         StatementKind::While { condition, statements } => {
             let loop_start = compiler.generate_label();
@@ -453,6 +497,10 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
                     compiler.emit(Op::Store(variable.slot));
                     compiler.exports.insert(variable.name.clone().unwrap(), variable.slot);
                 }
+                StatementKind::Class { variable, .. } => {
+                    compile_statement(declaration, compiler);
+                    compiler.exports.insert(variable.name.clone().unwrap(), variable.slot);
+                }
                 _ => {}
             }
         }
@@ -496,8 +544,8 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
                 instructions: vec![],
                 labels: vec![],
                 upvalue_descriptors: constructor_info.upvalue_descriptors.clone(),
-                local_count: constructor_info.local_count,
-                argument_count: arguments.len()
+                argument_count: arguments.len(),
+                locals: constructor_info.locals.clone()
             });
 
 
@@ -543,6 +591,10 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
 
             let function_id = compiler.end_function();
 
+            compiler.emit(Op::MakeClosure(FunctionRef::Id(FunctionId(function_id))));
+            compiler.emit(Op::BuildClass);
+            store_variable_ref(variable, compiler);
+
             for method in static_methods.iter().rev() {
                 let Statement { kind: StatementKind::Method { name, arguments, block }, .. } = method else {
                     unreachable!()
@@ -550,13 +602,11 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
 
                 let method_info = class_info.methods.get(name).unwrap();
 
+                compiler.emit(Op::Load(variable.slot));
                 compiler.string_constant(name);
                 compile_function(method_info, arguments, block, compiler);
+                compiler.emit(Op::WriteProperty);
             }
-            compiler.emit(Op::MakeClosure(FunctionRef::Id(FunctionId(function_id))));
-            compiler.emit(Op::BuildClass(static_methods.len()));
-
-            store_variable_ref(variable, compiler);
         }
         _ => todo!()
     }
@@ -624,6 +674,20 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
                 TokenKind::Minus => compiler.emit(Op::Sub),
                 TokenKind::Asterisk => compiler.emit(Op::Mul),
                 TokenKind::Slash => compiler.emit(Op::Div),
+                TokenKind::Percent => compiler.emit(Op::Mod),
+                _ => unreachable!()
+            }
+        }
+        ExpressionKind::Unary { left, operator } => {
+            compile_expression(left, ValueUsage::Needed, compiler);
+
+            match operator {
+                TokenKind::Minus => {
+                    compiler.emit(Op::Neg);
+                }
+                TokenKind::Bang => {
+                    compiler.emit(Op::Not);
+                }
                 _ => unreachable!()
             }
         }
@@ -650,24 +714,28 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
             }
         }
         ExpressionKind::Logical { left, operator, right } => {
+            let end_label = compiler.generate_label();
+
             compile_expression(left, ValueUsage::Needed, compiler);
-            compile_expression(right, ValueUsage::Needed, compiler);
+            compiler.emit(Op::Dup);
 
             match operator {
-                TokenKind::And => compiler.emit(Op::And),
-                TokenKind::Or => compiler.emit(Op::Or),
+                TokenKind::And => {
+                    compiler.jump_if_false(&end_label);
+
+                },
+                TokenKind::Or => {
+                    compiler.jump_if_true(&end_label);
+                },
                 _ => unreachable!()
             }
+
+            compiler.emit(Op::Pop);
+            compile_expression(right, ValueUsage::Needed, compiler);     
+            compiler.label(&end_label);
         }
         ExpressionKind::Variable(var_ref) => {
-            match var_ref.kind {
-                VariableKind::Local => {
-                    compiler.emit(Op::Load(var_ref.slot));
-                }
-                VariableKind::Upvalue => {
-                    compiler.emit(Op::LoadUpvalue(var_ref.slot));
-                }
-            }
+            load_variable_ref(var_ref, compiler);
         }
         ExpressionKind::Call { callee, arguments } => {
             match &callee.kind {
@@ -706,12 +774,26 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
                         compile_expression(right, ValueUsage::Needed, compiler);
                         compiler.emit(Op::Div);
                     }
+                    TokenKind::PercentEqual => {
+                        compile_expression(left, ValueUsage::Needed, compiler);
+                        compile_expression(right, ValueUsage::Needed, compiler);
+                        compiler.emit(Op::Mod);
+                    }
                     _ => unreachable!()
                 }
             }
 
             match &left.kind {
                 ExpressionKind::Variable(var_ref) => {
+                    if matches!(left.kind, ExpressionKind::Variable(_)) && matches!(right.kind, ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: Literal::Number(1.0) }) {
+                        let ExpressionKind::Variable(VariableRef { slot, .. }) = left.kind else {
+                            unreachable!()
+                        };
+
+                        compiler.emit(Op::Increment(slot));
+                        return
+                    }
+
                     compile_value(left, operator, right, compiler);
                     match var_ref.kind {
                         VariableKind::Local => {
@@ -738,7 +820,6 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
             compile_expression(property, ValueUsage::Needed, compiler);
             compiler.emit(Op::ReadProperty);
         }
-        _ => todo!("Expression kind not covered")
     }
 
     if matches!(usage, ValueUsage::Discard) {
@@ -752,8 +833,8 @@ fn compile_function(function_info: &FunctionInfo, arguments: &Vec<VariableRef>, 
         instructions: vec![],
         upvalue_descriptors: function_info.upvalue_descriptors.to_vec(),
         labels: vec![],
-        local_count: function_info.local_count,
-        argument_count: arguments.len()
+        argument_count: arguments.len(),
+        locals: function_info.locals.to_vec()
     };
 
     compiler.begin_function_with(abstract_function);
@@ -776,6 +857,17 @@ fn store_variable_ref(var_ref: &VariableRef, compiler: &mut Compiler) {
         }
         VariableKind::Upvalue => {
             compiler.emit(Op::StoreCaptured(var_ref.slot));
+        }
+    }
+}
+
+fn load_variable_ref(var_ref: &VariableRef, compiler: &mut Compiler) {
+    match var_ref.kind {
+        VariableKind::Local => {
+            compiler.emit(Op::Load(var_ref.slot));
+        }
+        VariableKind::Upvalue => {
+            compiler.emit(Op::LoadUpvalue(var_ref.slot));
         }
     }
 }
