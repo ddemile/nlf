@@ -1,0 +1,18 @@
+[package]
+name = "nlf-wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2.127"
+nlf-core = { path = "../core"}
+nlf-shared = { path = "../shared" }
+nlf-macros = { path = "../macros" }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+console_error_panic_hook = "0.1.7"
+
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]

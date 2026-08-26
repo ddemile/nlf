@@ -143,8 +143,12 @@ impl LoaderRef {
         
         drop(loader);
     
-        let start = Instant::now();
-        vm::run(&mut vm.borrow_mut());
-        println!("{:2?}", start.elapsed())
+        if cfg!(not(target_arch = "wasm32")) {
+            let start = Instant::now();
+            vm::run(&mut vm.borrow_mut());
+            println!("{:2?}", start.elapsed())
+        } else {
+            vm::run(&mut vm.borrow_mut());
+        }
     }
 }

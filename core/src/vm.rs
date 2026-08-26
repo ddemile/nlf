@@ -999,10 +999,14 @@ pub fn execute(loader: LoaderRef, modules: Vec<ModuleData>, excution_info: Execu
         loader: Rc::downgrade(&loader.0)
     };
 
-    let start = Instant::now();
-    run(&mut vm);
-    let end = start.elapsed();
-    println!("{end:.2?}");
+    if cfg!(not(target_arch = "wasm32")) {
+        let start = Instant::now();
+        run(&mut vm);
+        let end = start.elapsed();
+        println!("{end:.2?}");
+    } else {
+        run(&mut vm);
+    }
     
     assert!(vm.stack.0.len() == 0, "Stack is not empty")
 }

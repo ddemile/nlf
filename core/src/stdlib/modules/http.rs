@@ -4,6 +4,7 @@ use nlf_shared::{errors::LanguageResult, vm::{VMContext, Value}};
 use crate::{errors::LanguageError, errors::RuntimeError};
 
 module!("http", {
+    #[cfg(not(target_arch = "wasm32"))]
     fn get(url: String, context: VMContext) -> LanguageResult<Value> {
         reqwest::blocking::get(url)
             .map_err(|e| LanguageError::from(RuntimeError::Custom(format!("HTTP request failed: {}", e))))?

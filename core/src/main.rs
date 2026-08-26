@@ -1,6 +1,6 @@
 use std::{env, path::Path, rc::Rc};
 
-use nlf_core::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver}, loader::Loader, tests, vm};
+use nlf_core::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver}, loader::Loader, vm};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -28,8 +28,12 @@ fn main() {
     }
 
     if args.tests {
-        tests::run_tests(Path::new("core/tests"));
-        return;
+        if cfg!(not(target_arch = "wasm32")) {
+            nlf_core::tests::run_tests(Path::new("core/tests"));
+            return;
+        } else {
+            panic!("Tests are not supported in the browser")
+        }
     }
 
     let file = if let Some(value) = args.file { value } else { String::from("core/src/program/main.nlf") };

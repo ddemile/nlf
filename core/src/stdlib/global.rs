@@ -1,9 +1,9 @@
-use std::{io::{self, Write}, time::{SystemTime, UNIX_EPOCH}};
+use std::io::{self, Write};
 
 use nlf_macros::global;
 use nlf_shared::{errors::LanguageResult, indexmap::IndexMap, vm::{Object, VMContext, Value}};
 
-use crate::{addons::Addon, stdlib::MODULE_TABLE};
+use crate::stdlib::MODULE_TABLE;
 
 #[global]
 pub fn print(value: Value, context: VMContext) {
@@ -17,8 +17,11 @@ pub fn assert(passed: Value, _: VMContext) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[global]
 fn now(_: VMContext) -> LanguageResult<Value> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     let start = SystemTime::now();
     let since_the_epoch = start
         .duration_since(UNIX_EPOCH)
@@ -89,8 +92,11 @@ fn confirm(prompt: Value, context: VMContext) -> LanguageResult<Value> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[global]
 fn addon(path: String, context: VMContext) -> LanguageResult<Value> {
+    use crate::addons::Addon;
+
     let addon = Addon::new(&path);
 
     let mut map: IndexMap<String, Value> = IndexMap::new();
