@@ -714,7 +714,7 @@ pub fn step(vm: &mut VM) -> bool {
             vm.frames.pop();
         }
         Op::MakeClosure(reference) => {
-            println!("Heap size: {:.2} MB", vm.heap.get_size() as f64 / 1000000.0);
+            // println!("Heap size: {:.2} MB", vm.heap.get_size() as f64 / 1000000.0);
             match reference {
                 FunctionRef::Id(fn_id) => {
                     let function = &module.functions[fn_id.0];

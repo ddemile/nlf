@@ -26,6 +26,10 @@ nlf-shared = { path = "../shared"}
 nlf-macros = { path = "../macros" }
 smallvec = { version = "1.15.1", features = ["union"] }
 ron = "0.12.1"
+toml = "1.1.6"
+anyhow = "1.0.104"
+tokio = { version = "1.53.1", features = ["full"] }
+semver = { version = "1.0.28", features = ["serde"] }
 
 [[bin]]
 name = "nlf"

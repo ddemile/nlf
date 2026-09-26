@@ -17,3 +17,5 @@ pub mod type_checker;
 pub mod type_resolver;
 pub mod compiler;
 pub mod translator;
+pub mod manifest;
+pub mod package_manager;
