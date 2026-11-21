@@ -1,4 +1,4 @@
-use crate::{errors::{LanguageError, LanguageResult}, expect_array, expect_boolean, expect_comma_separated_group, expect_identifier, expect_number, expect_object, expect_string, expect_token, lexer::{Token, TokenKind}, parser::{ASTStatement, Expression, ExpressionKind, LiteralExpressionKind, Parser, ParserError, StatementKindWrapper, ValueHolder, expect_lambda}};
+use crate::{errors::{LanguageError, LanguageResult}, expect_array, expect_boolean, expect_comma_separated_group, expect_identifier, expect_number, expect_object, expect_string, expect_token, lexer::{Token, TokenKind}, parser::{ASTStatement, Expression, ExpressionKind, Literal, LiteralExpressionKind, Parser, ParserError, StatementKindWrapper, expect_lambda}};
 
 fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
     let token = match parser.peek() {
@@ -25,7 +25,7 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
         let checkpoint = parser.cursor;
 
         if let Ok(ASTStatement { kind, start, end }) = expect_lambda(parser) {
-            return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKindWrapper::AST(kind))), value: ValueHolder::Void }.into_expression(start, end))
+            return Ok(ExpressionKind::Literal { r#type: LiteralExpressionKind::Function(Box::new(StatementKindWrapper::AST(kind))), value: Literal::Void }.into_expression(start, end))
         }
 
         parser.cursor = checkpoint;
@@ -42,27 +42,27 @@ fn parse_prefix(parser: &mut Parser) -> LanguageResult<Expression> {
     let expression_kind: ExpressionKind = match parser.peek().map(|token| &token.kind) {
         Some(TokenKind::StringLiteral { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
-            value: ValueHolder::String(expect_string!(parser).value) 
+            value: Literal::String(expect_string!(parser).value) 
         },
         Some(TokenKind::NumericLiteral { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
-            value: ValueHolder::Number(expect_number!(parser).parse().unwrap()) 
+            value: Literal::Number(expect_number!(parser).parse().unwrap()) 
         },
         Some(TokenKind::BooleanLiteral { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Literal,
-            value: ValueHolder::Bool(expect_boolean!(parser)) 
+            value: Literal::Bool(expect_boolean!(parser)) 
         },
         Some(TokenKind::Identifier { .. }) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Variable,
-            value: ValueHolder::String(expect_identifier!(parser).value)
+            value: Literal::String(expect_identifier!(parser).value)
         },
         Some(TokenKind::OpeningSquareBracket) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Array(expect_array!(parser)),
-            value: ValueHolder::Void
+            value: Literal::Void
         },
         Some(TokenKind::OpeningBracket) => ExpressionKind::Literal {
             r#type: LiteralExpressionKind::Object(expect_object!(parser)),
-            value: ValueHolder::Void
+            value: Literal::Void
         },
         _ => parser.error()?
     };
@@ -143,7 +143,7 @@ pub fn parse_expression(parser: &mut Parser, min_bp: u8) -> LanguageResult<Expre
                         ))
                     }
 
-                    let rhs = ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String("<lax>".to_string()) }.into_expression(separation_token.as_ref().unwrap().end, separation_token.as_ref().unwrap().end);
+                    let rhs = ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: Literal::String("<lax>".to_string()) }.into_expression(separation_token.as_ref().unwrap().end, separation_token.as_ref().unwrap().end);
                     let start = lhs.start;
                     let end = rhs.end;
                     return Ok(ExpressionKind::Member { object: Box::new(lhs), property: Box::new(rhs) }.into_expression(start, end))
@@ -164,7 +164,7 @@ pub fn parse_expression(parser: &mut Parser, min_bp: u8) -> LanguageResult<Expre
                             ))
                         }
 
-                        let rhs = ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String("<lax>".to_string()) }.into_expression(separation_token.unwrap().end, token.start);
+                        let rhs = ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: Literal::String("<lax>".to_string()) }.into_expression(separation_token.unwrap().end, token.start);
                         let start = lhs.start;
                         let end = rhs.end;
                         return Ok(ExpressionKind::Member { object: Box::new(lhs), property: Box::new(rhs) }.into_expression(start, end))
@@ -179,7 +179,7 @@ pub fn parse_expression(parser: &mut Parser, min_bp: u8) -> LanguageResult<Expre
                     separation_token.unwrap().end
                 };
                 
-                ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: ValueHolder::String(name) }.into_expression(start, token.end)
+                ExpressionKind::Literal { r#type: LiteralExpressionKind::Literal, value: Literal::String(name) }.into_expression(start, token.end)
             };
 
             if bracket_notation {

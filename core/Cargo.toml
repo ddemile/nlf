@@ -16,7 +16,7 @@ libloading = "0.9.0"
 parking_lot = "0.12.5"
 rand = "0.9.2"
 rayon = "1.11.0"
-reqwest = { version = "0.12.14", features = ["blocking", "json"] }
+reqwest = { version = "0.12.14", features = ["blocking", "json", "stream", "multipart"] }
 rust-embed = { version = "8.9.0", features = ["include-exclude"]}
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.145", features = ["preserve_order"] }
@@ -26,6 +26,13 @@ nlf-shared = { path = "../shared"}
 nlf-macros = { path = "../macros" }
 smallvec = { version = "1.15.1", features = ["union"] }
 ron = "0.12.1"
+toml = "1.1.6"
+anyhow = "1.0.104"
+tokio = { version = "1.53.1", features = ["full"] }
+semver = { version = "1.0.28", features = ["serde"] }
+futures-util = "0.3.34"
+flate2 = "1.1.10"
+tar = "0.4.46"
 
 [[bin]]
 name = "nlf"

@@ -1,15 +1,23 @@
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 #![feature(duration_millis_float)]
+#![feature(associated_type_defaults)]
 
 pub mod lexer;
 pub mod parser;
-pub mod translator;
-pub mod interpreter;
+pub mod vm;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tests;
 pub mod loader;
 pub mod errors;
 pub mod stdlib;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod addons;
 pub mod explorer;
 pub mod analysis;
-pub mod type_checker;
+// pub mod type_checker;
+// pub mod type_resolver;
+pub mod type_experiments;
+pub mod compiler;
+pub mod translator;
+pub mod manifest;
+pub mod package_manager;

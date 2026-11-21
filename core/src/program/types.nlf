@@ -1,0 +1,13 @@
+type Jean = unknown;
+
+class Test {
+    public test: Jean = "test"
+
+    fn my_func(arg: Jean): Test {
+
+    }
+}
+
+fn test() {
+    
+}

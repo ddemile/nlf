@@ -5,7 +5,8 @@ members = [
     "shared",
     "macros",
     "lsp",
-    "addon-maker"
+    "addon-maker",
+    "wasm"
 ]
 
 [workspace.package]
@@ -15,3 +16,9 @@ edition = "2024"
 [profile.profiling]
 inherits = "release"
 debug = true
+
+[profile.dev]
+debug = "line-tables-only"
+
+[build]
+rustflags = ["-Z", "threads=8"]

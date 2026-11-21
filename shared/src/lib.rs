@@ -1,7 +1,10 @@
 pub mod addons;
+pub mod vm;
+pub mod errors;
 // pub mod numbers;
 
 pub use indexmap;
+pub use parking_lot;
 
 pub const NLF_VERSION: &str = env!("CARGO_PKG_VERSION");
 

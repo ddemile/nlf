@@ -66,6 +66,7 @@ pub enum KeywordKind {
     Fn,
     Return,
     Break,
+    Continue,
     Throw,
     Try,
     Catch,
@@ -76,7 +77,8 @@ pub enum KeywordKind {
     Class,
     Public,
     Protected,
-    Private
+    Private,
+    Type
 }
 
 pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
@@ -101,9 +103,8 @@ pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
 
                 if code[cursor..].starts_with("//") {
                     while !matches!(char_at(cursor), Some('\n')) && cursor < code.len() {
-                        cursor += 1;
+                        cursor += char_at(cursor).unwrap().len_utf8();
                     }
-                    cursor += 1;
                 }
 
                 let mut longest_match = "";
@@ -175,6 +176,7 @@ pub fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("fn", TokenKind::Keyword(KeywordKind::Fn));
     map.insert("return", TokenKind::Keyword(KeywordKind::Return));
     map.insert("break", TokenKind::Keyword(KeywordKind::Break));
+    map.insert("continue", TokenKind::Keyword(KeywordKind::Continue));
     map.insert("throw", TokenKind::Keyword(KeywordKind::Throw));
     map.insert("try", TokenKind::Keyword(KeywordKind::Try));
     map.insert("catch", TokenKind::Keyword(KeywordKind::Catch));
@@ -186,6 +188,7 @@ pub fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("public", TokenKind::Keyword(KeywordKind::Public));
     map.insert("protected", TokenKind::Keyword(KeywordKind::Protected));
     map.insert("private", TokenKind::Keyword(KeywordKind::Private));
+    map.insert("type", TokenKind::Keyword(KeywordKind::Type));
 
     // Booleans
     map.insert("true", TokenKind::BooleanLiteral { value: true });

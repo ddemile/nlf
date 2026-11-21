@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 macros = { path = "./macros"}
 nlf-shared = { path = "../shared" }
+nlf-macros = { path = "../macros"}

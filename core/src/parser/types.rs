@@ -1,12 +1,12 @@
 use std::{
-    cell::RefCell, collections::HashMap, fmt::{self, Debug}, rc::Rc, str::FromStr
+    collections::HashMap, fmt::Debug, rc::Rc, str::FromStr
 };
 
-use nlf_shared::{SchemaStore, indexmap::IndexMap};
+use nlf_shared::indexmap::IndexMap;
 use serde::Serialize;
 
 use crate::{
-    analysis::Span, errors::{LanguageError, LanguageErrorTrait}, interpreter::{ClassDefinition, ModuleContext, Object, RuntimeError, Scope, prototypes::Method}, lexer::{KeywordKind, TokenKind}
+    analysis::Span, errors::{LanguageError, LanguageErrorKind, RuntimeError}, lexer::{KeywordKind, TokenKind}
 };
 
 #[derive(Debug)]
@@ -17,128 +17,14 @@ pub enum ParserError {
     InvalidUsage(String)
 }
 
-impl LanguageErrorTrait for ParserError {}
+impl LanguageErrorKind for ParserError {}
 
 #[derive(Serialize, Debug, Clone)]
-pub struct ObjectRef {
-    #[serde(skip)]
-    pub object: Rc<RefCell<Object>>,
-    #[serde(skip)]
-    pub schema_store: Rc<RefCell<SchemaStore>>,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct ArrayRef {
-    #[serde(skip)]
-    pub object: Rc<RefCell<Object>>,
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub struct RuntimeFunction {
-    pub arguments: Vec<VariableRef>,
-    pub statements: Rc<[IRStatement]>,
-    #[serde(skip)]
-    pub scope: Rc<RefCell<Scope>>,
-    #[serde(skip)]
-    pub context: *mut ModuleContext,  // ← add this back, only here
-}
-
-#[derive(Serialize, Clone)]
-pub struct BuiltInFunction {
-    #[serde(skip)]
-    pub func: Method,
-    #[serde(skip)]
-    pub instance: Rc<ValueHolder>,
-}
-
-impl Debug for BuiltInFunction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Function").finish()
-    }
-}
-
-#[derive(Serialize, Debug, Clone)]
-pub enum FunctionKind {
-    Runtime(RuntimeFunction),
-    BuiltIn(BuiltInFunction),
-}
-
-#[derive(Serialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum ValueHolder {
+pub enum Literal {
     String(String),
     Number(f64),
     Bool(bool),
-    Fn(FunctionKind),
-    Object(ObjectRef),
-    Array(ArrayRef),
-    #[serde(skip)]
-    LazyRef {
-        slot: usize,
-        module: String,
-    },
-    ClassDefinition(ClassDefinition),
-    Void,
-}
-
-impl PartialEq for ValueHolder {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (ValueHolder::String(a), ValueHolder::String(b)) => a == b,
-            (ValueHolder::Number(a), ValueHolder::Number(b)) => a == b,
-            (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a == b,
-            (ValueHolder::Void, ValueHolder::Void) => true,
-            (ValueHolder::Object(a), ValueHolder::Object(b)) => {
-                let a = a.fetch();
-                let b = b.fetch();
-
-                a == b
-            },
-            (ValueHolder::Array(a), ValueHolder::Array(b)) => {
-                let a = a.object.borrow();
-                let b = b.object.borrow();
-
-                a.values == b.values
-            },
-            _ => false, // different variants are never equal
-        }
-    }
-}
-
-impl PartialOrd for ValueHolder {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (ValueHolder::Number(a), ValueHolder::Number(b)) => a.partial_cmp(b),
-            (ValueHolder::String(a), ValueHolder::String(b)) => a.partial_cmp(b),
-            (ValueHolder::Bool(a), ValueHolder::Bool(b)) => a.partial_cmp(b),
-            (ValueHolder::Void, ValueHolder::Void) => Some(std::cmp::Ordering::Equal),
-            _ => None, // different variants cannot be compared
-        }
-    }
-}
-
-impl Into<bool> for ValueHolder {
-    fn into(self) -> bool {
-        match self {
-            Self::Number(a) => a > 0.0,
-            Self::String(a) => a.len() > 0,
-            Self::Bool(a) => a,
-            Self::Array(_) => true,
-            Self::Object(_) => true,
-            Self::ClassDefinition(_) => true,
-            Self::Fn(_) => true,
-            _ => false, // different variants cannot be compared
-        }
-    }
-}
-
-impl Into<i32> for ValueHolder {
-    fn into(self) -> i32 {
-        match self {
-            ValueHolder::Number(a) => a as i32,
-            _ => panic!("Couldn't convert ValueHolder into i32"),
-        }
-    }
+    Void
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -184,6 +70,12 @@ pub struct Identifier {
     pub end: usize
 }
 
+impl Identifier {
+    pub fn get_span(&self) -> Span {
+        Span { start: self.start, end: self.end }
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub enum VariableDescriptor {
     Identifier(Identifier),
@@ -207,12 +99,14 @@ pub struct Statement<T> {
 pub type ASTStatement = Statement<ASTStatementKind>;
 pub type IRStatement = Statement<IRStatementKind>;
 pub type TypedStatement = Statement<TypedStatementKind>;
+pub type TyStatement = Statement<TyStatementKind>;
 
 pub trait SyntaxTree: Clone {
     type Variable: Serialize + Clone;
     type Descriptor: Serialize + Clone;
     type Type: Serialize + Clone;
     type Argument: Serialize + Clone;
+    type Specifier: Serialize + Clone = Self::Variable;
     
     fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper;
 
@@ -249,9 +143,10 @@ pub enum StatementKind<A: SyntaxTree> {
         expression: Expression,
     },
     Break,
+    Continue,
     Block(Block<Statement<Self>>),
     Import {
-        specifiers: Vec<A::Variable>,
+        specifiers: Vec<A::Specifier>,
         source: StringLiteral,
     },
     Export {
@@ -268,6 +163,8 @@ pub enum StatementKind<A: SyntaxTree> {
         visibility: Visibility,
         name: String,
         value: Expression,
+        type_ref: Option<TypeRef>,
+        ty: TypeId
     },
     Method {
         name: String,
@@ -278,6 +175,11 @@ pub enum StatementKind<A: SyntaxTree> {
         descriptor: A::Descriptor,
         expression: Expression,
         type_ref: Option<TypeRef>,
+        ty: A::Type
+    },
+    TypeAlias {
+        ident: Identifier,
+        type_ref: TypeRef,
         ty: A::Type
     }
 }
@@ -330,9 +232,9 @@ impl SyntaxTree for IRSyntaxTree {
 pub struct TypedSyntaxTree;
 
 impl SyntaxTree for TypedSyntaxTree {
-    type Argument = Argument<Identifier, Self::Type>;
+    type Argument = Argument<Identifier, TypeId>;
     type Descriptor = VariableDescriptor;
-    type Type = Type;
+    type Type = TypeId;
     type Variable = Identifier;
 
     fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper {
@@ -348,9 +250,33 @@ impl SyntaxTree for TypedSyntaxTree {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TySyntaxTree;
+
+impl SyntaxTree for TySyntaxTree {
+    type Argument = Argument<Identifier, TypeId>;
+    type Descriptor = VariableDescriptor;
+    type Type = TypeId;
+    type Variable = Identifier;
+    type Specifier = (Identifier, TypeId);
+
+    fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper {
+        StatementKindWrapper::Ty(statement_kind)
+    }
+
+    fn unwrap_statement_kind_wrapper(statement_kind_wrapper: StatementKindWrapper) -> StatementKind<Self> {
+        let StatementKindWrapper::Ty(statement_kind) = statement_kind_wrapper else {
+            unreachable!()
+        };
+
+        statement_kind
+    }
+}
+
 pub type ASTStatementKind = StatementKind<ASTSyntaxTree>;
 pub type IRStatementKind = StatementKind<IRSyntaxTree>; 
-pub type TypedStatementKind = StatementKind<TypedSyntaxTree>; 
+pub type TypedStatementKind = StatementKind<TypedSyntaxTree>;
+pub type TyStatementKind = StatementKind<TySyntaxTree>; 
 
 impl<A: SyntaxTree> StatementKind<A> {
     pub fn into_statement(self, start: usize, end: usize) -> Statement<Self> {
@@ -362,6 +288,7 @@ impl<A: SyntaxTree> StatementKind<A> {
 pub enum StatementKindWrapper {
     AST(ASTStatementKind),
     Typed(TypedStatementKind),
+    Ty(StatementKind<TySyntaxTree>),
     IR(IRStatementKind)
 }
 
@@ -374,8 +301,15 @@ pub enum LiteralExpressionKind {
     Function(Box<StatementKindWrapper>)
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VariableKind {
+    Local,
+    Upvalue
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VariableRef {
+    pub kind: VariableKind,
     pub name: Option<String>,
     pub slot: usize,
     pub depth: usize,
@@ -394,7 +328,7 @@ pub struct Expression {
 pub enum ExpressionKind {
     Literal {
         r#type: LiteralExpressionKind,
-        value: ValueHolder,
+        value: Literal,
     },
     Unary {
         left: Box<Expression>,
@@ -460,7 +394,7 @@ impl Visibility {
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 #[serde(tag = "type")] // "type" field will contain the variant name
 pub struct Program<T> {
     pub body: Rc<[T]>,
@@ -472,7 +406,13 @@ pub type TypedProgram = Program<TypedStatement>;
 
 // Typing
 #[derive(Serialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct TypeId(pub u32);
+pub struct TypeId(pub i32, pub u32);
+
+impl TypeId {
+    pub fn unknown() -> Self {
+        Self(-1, 0)
+    }
+}
 
 #[derive(Serialize, Debug, Clone)]
 pub enum TypeRef {
@@ -498,15 +438,15 @@ impl TypeRef {
 
 #[derive(Serialize, Debug, Clone)]
 pub struct FunctionType {
-    pub arguments: Vec<Argument<Identifier, Type>>,
-    pub return_ty: Type
+    pub arguments: Vec<Argument<Identifier, TypeId>>,
+    pub return_ty: TypeId
 }
 
 #[derive(Serialize, Debug, Clone)]
 pub struct FieldType {
     pub name: String,
     pub visibility: Visibility,
-    pub ty: Type
+    pub ty: TypeId
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -529,7 +469,8 @@ pub enum Type {
     Array(Box<Type>),
     Object(IndexMap<String, Type>),
     Unknown,
-    Any
+    Any,
+    Alias(TypeId)
 }
 
 impl ToString for Type {
@@ -538,59 +479,92 @@ impl ToString for Type {
             Self::String => "string".to_string(),
             Self::Number => "number".to_string(),
             Self::Bool => "bool".to_string(),
-            Self::Function(function_type) => {
+            Self::Function(_function_type) => {
                 format!("({}) => {}",
-                    function_type.arguments
-                        .iter()
-                        .map(|argument| format!("{}: {}", argument.variable.value, argument.ty.to_string()))
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    function_type.return_ty.to_string()
+                    // function_type.arguments
+                    //     .iter()
+                    //     .map(|argument| format!("{}: {}", argument.variable.value, argument.ty.to_string()))
+                    //     .collect::<Vec<String>>()
+                    //     .join(", "),
+                    // function_type.return_ty.to_string()
+                    "not implemened",
+                    "still not implemented"
                 )
             },
-            Self::Class(box ClassType { name, .. }) => format!("class {}", name),
-            Self::Instance { class: box ClassType { name, .. }, .. } => format!("{}", name),
+            Self::Class(ClassType { name, .. }) => format!("class {}", name),
+            Self::Instance { class: ClassType { name, .. }, .. } => format!("{}", name),
             Self::Array(ty) => format!("{}[]", ty.to_string()),
             Self::Object(entries) => {
                 format!("{{ {} }}", entries.iter().map(|(key, value)| format!("{}: {}", key, value.to_string())).collect::<Vec<String>>().join(", "))
             },
             Self::Unknown => "unknown".to_string(),
-            Self::Any => "any".to_string()
+            Self::Any => "any".to_string(),
+            Self::Alias(_) => "type TODO = something".to_string()
         }
     }
 }
 
-impl FromStr for Type {
+impl FromStr for DefaultType {
     type Err = LanguageError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "string" => Ok(Type::String),
-            "number" => Ok(Type::Number),
-            "bool" => Ok(Type::Bool),
-            "unknown" => Ok(Type::Unknown),
-            "any" => Ok(Type::Any),
-            _ => Err(LanguageError::from(RuntimeError::Custom("Failed to convert str to Type".to_string())))
+            "string" => Ok(DefaultType::String),
+            "number" => Ok(DefaultType::Number),
+            "bool" => Ok(DefaultType::Bool),
+            "unknown" => Ok(DefaultType::Unknown),
+            "any" => Ok(DefaultType::Any),
+            _ => Err(LanguageError::from(RuntimeError::Custom("Failed to convert str to DefaultType".to_string())))
         }
     }
 }
 
-pub struct TypeArena {
-    types: Vec<Type>
+#[derive(Debug)]
+pub struct TypeArena<T = Type> where T: Debug {
+    types: Vec<T>,
+    defaults: HashMap<DefaultType, TypeId>
 }
 
-impl TypeArena {
-    pub fn new() -> Self {
-        Self { types: vec![] }
-    }
-
-    pub fn alloc(&mut self, ty: Type) -> TypeId {
-        let id = self.types.len() as u32;
-        self.types.push(ty);
-        TypeId(id)
-    }
-
-    pub fn get(&self, id: TypeId) -> &Type {
-        &self.types[id.0 as usize]
-    }
+#[derive(Hash, PartialEq, Eq, Debug)]
+pub enum DefaultType {
+    String,
+    Number,
+    Bool,
+    Any,
+    Unknown
 }
+
+// impl TypeArena<Type> {
+//     pub fn register_defaults(&mut self) {
+//         let mut register = |default_ty: DefaultType, ty: Type| {
+//             let type_id = self.alloc(ty);
+//             self.defaults.insert(default_ty, type_id);
+//         };
+
+//         register(DefaultType::String, Type::String);
+//         register(DefaultType::Number, Type::Number);
+//         register(DefaultType::Bool, Type::Bool);
+//         register(DefaultType::Any, Type::Any);
+//         register(DefaultType::Unknown, Type::Unknown);
+//     }
+
+//     pub fn get_default(&self, ty: DefaultType) -> TypeId {
+//         self.defaults.get(&ty).unwrap().clone()
+//     }
+// }
+
+// impl<T: Debug> TypeArena<T> {
+//     pub fn new() -> Self {
+//         Self { types: vec![], defaults: HashMap::new() }
+//     }
+
+//     pub fn alloc(&mut self, ty: T) -> TypeId {
+//         let id = self.types.len() as u32;
+//         self.types.push(ty);
+//         TypeId(id)
+//     }
+
+//     pub fn get(&self, id: TypeId) -> &T {
+//         &self.types[id.0 as usize]
+//     }
+// }

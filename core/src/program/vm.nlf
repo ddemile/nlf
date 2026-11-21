@@ -1,0 +1,15 @@
+import { get, increment, set } from "./main.nlf"
+
+set(1)
+
+for i in 0..8 {
+    set(get() * 2)
+}
+
+print(get())
+
+fn test() {
+    print("hello")
+}
+
+test()

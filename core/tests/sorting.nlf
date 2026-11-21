@@ -6,7 +6,7 @@ fn swap(t, a, b) {
 }
 
 fn sort(t) {
-    for i in ..t.len() {
+    for i in 0..t.len() {
         let m = i
         for j in i..t.len() {
             if t[j] < t[m] {
@@ -24,7 +24,7 @@ fn test_sort(t, expected) {
         panic("Array length does not match")
     }
 
-    for i in ..t.len() {
+    for i in 0..t.len() {
         if t[i] != expected[i] {
             panic("The array was not sorted correctly")
         }
@@ -56,7 +56,7 @@ fn test_sort(t, expected) {
         panic("Array length does not match")
     }
 
-    for i in ..t.len() {
+    for i in 0..t.len() {
         if t[i] != expected[i] {
             panic("The array was not sorted correctly")
         }

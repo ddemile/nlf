@@ -6,6 +6,9 @@ pub trait Visitor<A: SyntaxTree> {
     fn visit_statement(&mut self, _statement: &Statement<StatementKind<A>>) {}
     fn visit_argument(&mut self, _argument: &A::Argument) {}
 
+    fn leave_expression(&mut self, _expression: &Expression) {}
+    fn leave_statement(&mut self, _statement: &Statement<StatementKind<A>>) {}
+
     fn transform_expression(&mut self, expression: &Expression) -> Expression { expression.clone() }
     fn transform_statement(&mut self, statement: &Statement<StatementKind<A>>) -> Statement<StatementKind<A>> { statement.clone() }
     fn transform_argument(&mut self, argument: &A::Argument) -> A::Argument { argument.clone() }
@@ -83,14 +86,16 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
             let methods = methods.iter().map(|method| walk_statement(visitor, method)).collect();
 
             fields.iter().for_each(|field| {
-                let Statement { kind: StatementKind::Field { visibility, name, value }, start, end } = field else {
+                let Statement { kind: StatementKind::Field { visibility, name, value, type_ref, ty }, start, end } = field else {
                     unreachable!()
                 };
                 
                 walk_statement(visitor, &Statement { kind: StatementKind::Field {
                     name: name.clone(),
                     visibility: visibility.clone(),
-                    value: value.clone()
+                    value: value.clone(),
+                    type_ref: type_ref.clone(),
+                    ty: ty.clone()
                 }, start: *start, end: *end });
             });
 
@@ -100,7 +105,9 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
         }
         StatementKind::Method { name, arguments, block } => {
             let scope = visitor.enter_scope(block.get_span());
-            // TODO: find where Method is instanciated
+            // for argument in arguments {
+            //     visitor.visit_argument(argument);
+            // }
             // walk_block(visitor, block);
             visitor.exit_scope(scope);
 
@@ -119,13 +126,19 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
             StatementKind::VariableDefinition { expression: walk_expression(visitor, expression), descriptor: descriptor.clone(), type_ref: type_ref.clone(), ty: ty.clone() }
         }
         StatementKind::Break => StatementKind::Break,
-        StatementKind::Field { visibility, name, value } => {
-            StatementKind::Field { visibility: visibility.clone(), name: name.clone(), value: value.clone() }
+        StatementKind::Continue => StatementKind::Continue,
+        StatementKind::Field { visibility, name, value, type_ref, ty } => {
+            StatementKind::Field { visibility: visibility.clone(), name: name.clone(), value: value.clone(), type_ref: type_ref.clone(), ty: ty.clone() }
         }
         StatementKind::Import { specifiers, source } => {
             StatementKind::Import { specifiers: specifiers.clone(), source: source.clone() }
         }
+        StatementKind::TypeAlias { ident, type_ref, ty } => {
+            StatementKind::TypeAlias { ident: ident.clone(), type_ref: type_ref.clone(), ty: ty.clone() }
+        }
     };
+
+    visitor.leave_statement(&statement);
 
     kind.into_statement(statement.start, statement.end)
 }
@@ -196,6 +209,8 @@ fn walk_expression<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, expres
         }
         kind => kind.clone()
     };
+
+    visitor.leave_expression(&expression);
 
     Expression { kind, start: expression.start, end: expression.end }
 }
