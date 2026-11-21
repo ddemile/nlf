@@ -257,7 +257,7 @@ impl TypedTreeSyntaxTransformer {
                 };
 
                 match callee_type {
-                    Type::Function(box FunctionType { return_ty, .. }) => {
+                    Type::Function(FunctionType { return_ty, .. }) => {
                         return Some(self.arena.lock().get(return_ty).clone())
                     }
                     Type::Class(class_type) => {
@@ -427,8 +427,8 @@ fn check_statement(statement: ASTStatement, checker: &mut TypeChecker) -> Langua
         StatementKind::Expression { expression } => {
             StatementKind::Expression { expression: check_expression(expression, checker)? }
         }
-        StatementKind::Field { visibility, name, value } => {
-            StatementKind::Field { visibility, name, value }
+        StatementKind::Field { visibility, name, value, type_ref, ty } => {
+            StatementKind::Field { visibility, name, value, type_ref, ty }
         }
         StatementKind::For { variable, iterable, statements } => {
             let iterable = match iterable {
@@ -507,7 +507,7 @@ fn check_expression(expression: Expression, checker: &mut TypeChecker) -> Langua
             let r#type = match r#type {
                 LiteralExpressionKind::Function(statement_kind_wrapper) => {
                     let mut statement_kind_wrapper = statement_kind_wrapper.clone();
-                    if let box StatementKindWrapper::AST(statement) = statement_kind_wrapper {
+                    if let StatementKindWrapper::AST(statement) = statement_kind_wrapper {
                         let checked_statement = check_statement(statement.clone().into_statement(0, 0), checker)?;
                         statement_kind_wrapper = Box::new(StatementKindWrapper::Typed(checked_statement.kind))
                     }
@@ -615,7 +615,7 @@ fn resolve_expression_type(expression: &Expression, arena: Arc<Mutex<TypeArena>>
                 (LiteralExpressionKind::Literal, Literal::String(_)) => Ok(arena.lock().get_default(DefaultType::String)),
                 (LiteralExpressionKind::Literal, Literal::Number(_)) => Ok(arena.lock().get_default(DefaultType::Number)),
                 (LiteralExpressionKind::Literal, Literal::Bool(_)) => Ok(arena.lock().get_default(DefaultType::Bool)),
-                (LiteralExpressionKind::Function(box StatementKindWrapper::Typed(TypedStatementKind::Function { arguments, return_ty, .. })), _) => {
+                (LiteralExpressionKind::Function(StatementKindWrapper::Typed(TypedStatementKind::Function { arguments, return_ty, .. })), _) => {
                     Ok(arena.lock().alloc(Type::Function(Box::new(FunctionType { arguments: arguments.clone(), return_ty: return_ty.clone() }))))
                 }
                 _ => Ok(arena.lock().get_default(DefaultType::Unknown))

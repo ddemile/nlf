@@ -584,7 +584,8 @@ fn translate_statement(statement: ASTStatement, context: &mut Context) -> Langua
         ASTStatementKind::Break => StatementKind::Break,
         ASTStatementKind::Continue => StatementKind::Continue,
         ASTStatementKind::Method { name, arguments, block } => StatementKind::Method { name, arguments, block },
-        ASTStatementKind::Field { visibility, name, value } => StatementKind::Field { visibility, name, value }
+        ASTStatementKind::Field { visibility, name, value, type_ref, ty } => StatementKind::Field { visibility, name, value, type_ref, ty },
+        ASTStatementKind::TypeAlias { ident, type_ref, ty } => StatementKind::TypeAlias { ident, type_ref, ty }
     };
     Ok(IRStatement {
         kind: new_statement_kind,
@@ -637,7 +638,7 @@ fn translate_expression(mut expression: Expression, context: &mut Context) -> La
                     return Ok(ExpressionKind::Variable(variable_ref).into_expression(expression.start, expression.end));
                 }
                 LiteralExpressionKind::Function(statement) => {
-                    let box StatementKindWrapper::AST(ASTStatementKind::Function { variable, arguments, block, return_type_ref, return_ty }) = statement.clone() else {
+                    let StatementKindWrapper::AST(ASTStatementKind::Function { variable, arguments, block, return_type_ref, return_ty }) = statement.clone() else {
                         panic!()
                     };
 

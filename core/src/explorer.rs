@@ -86,14 +86,16 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
             let methods = methods.iter().map(|method| walk_statement(visitor, method)).collect();
 
             fields.iter().for_each(|field| {
-                let Statement { kind: StatementKind::Field { visibility, name, value }, start, end } = field else {
+                let Statement { kind: StatementKind::Field { visibility, name, value, type_ref, ty }, start, end } = field else {
                     unreachable!()
                 };
                 
                 walk_statement(visitor, &Statement { kind: StatementKind::Field {
                     name: name.clone(),
                     visibility: visibility.clone(),
-                    value: value.clone()
+                    value: value.clone(),
+                    type_ref: type_ref.clone(),
+                    ty: ty.clone()
                 }, start: *start, end: *end });
             });
 
@@ -125,11 +127,14 @@ fn walk_statement<A: SyntaxTree + 'static>(visitor: &mut dyn Visitor<A>, stateme
         }
         StatementKind::Break => StatementKind::Break,
         StatementKind::Continue => StatementKind::Continue,
-        StatementKind::Field { visibility, name, value } => {
-            StatementKind::Field { visibility: visibility.clone(), name: name.clone(), value: value.clone() }
+        StatementKind::Field { visibility, name, value, type_ref, ty } => {
+            StatementKind::Field { visibility: visibility.clone(), name: name.clone(), value: value.clone(), type_ref: type_ref.clone(), ty: ty.clone() }
         }
         StatementKind::Import { specifiers, source } => {
             StatementKind::Import { specifiers: specifiers.clone(), source: source.clone() }
+        }
+        StatementKind::TypeAlias { ident, type_ref, ty } => {
+            StatementKind::TypeAlias { ident: ident.clone(), type_ref: type_ref.clone(), ty: ty.clone() }
         }
     };
 

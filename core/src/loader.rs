@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, env, fs, path::{Path, PathBuf}, r
 
 use ron::ser::PrettyConfig;
 
-use crate::{compiler::{self, CompileInfo, CompilerBuild, resolvers::{FileSystemModuleResolver, ModuleResolver}}, errors::LanguageResult, lexer, translator::{self, TranslatorOutput}, parser, vm::{self, ExecutionInfo, VM, create_vm}};
+use crate::{compiler::{self, CompileInfo, CompilerBuild, resolvers::{FileSystemModuleResolver, ModuleResolver}}, errors::LanguageResult, lexer, parser, translator::{self, TranslatorOutput}, type_experiments, vm::{self, ExecutionInfo, VM, create_vm}};
 
 #[derive(Debug, Clone)]
 pub enum ModuleKind {
@@ -104,6 +104,8 @@ impl Loader {
             format!("core/debug/{}-ast.ron", name),
             ron::ser::to_string_pretty(&ast, PrettyConfig::default()).unwrap(),
         );
+
+        // type_experiments::type_program(ast.clone());
 
         let ir = translator::translate(ast)?;
         let _ = fs::write(

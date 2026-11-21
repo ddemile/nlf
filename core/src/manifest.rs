@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};

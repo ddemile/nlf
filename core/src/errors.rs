@@ -38,3 +38,18 @@ pub enum LoaderError {
 }
 
 impl LanguageErrorKind for LoaderError {}
+
+#[derive(Debug)]
+pub enum TypingError {
+    TypeNotFound(String),
+}
+
+impl LanguageErrorKind for TypingError {}
+
+impl fmt::Display for TypingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypingError::TypeNotFound(value) => write!(f, "[TypeNotFound] {}", value),
+        }
+    }
+}

@@ -1,0 +1,6 @@
+[package]
+name = "Project"
+version = "1.0.0"
+entry_point = "src/main.nlf"
+
+[dependencies]

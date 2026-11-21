@@ -1,5 +1,6 @@
-#![feature(box_patterns)]
+#![feature(deref_patterns)]
 #![feature(duration_millis_float)]
+#![feature(associated_type_defaults)]
 
 pub mod lexer;
 pub mod parser;
@@ -13,8 +14,9 @@ pub mod stdlib;
 pub mod addons;
 pub mod explorer;
 pub mod analysis;
-pub mod type_checker;
-pub mod type_resolver;
+// pub mod type_checker;
+// pub mod type_resolver;
+pub mod type_experiments;
 pub mod compiler;
 pub mod translator;
 pub mod manifest;

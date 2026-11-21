@@ -77,7 +77,8 @@ pub enum KeywordKind {
     Class,
     Public,
     Protected,
-    Private
+    Private,
+    Type
 }
 
 pub fn lex(code: String) -> LanguageResult<Vec<Token>> {
@@ -187,6 +188,7 @@ pub fn match_table() -> HashMap<&'static str, TokenKind> {
     map.insert("public", TokenKind::Keyword(KeywordKind::Public));
     map.insert("protected", TokenKind::Keyword(KeywordKind::Protected));
     map.insert("private", TokenKind::Keyword(KeywordKind::Private));
+    map.insert("type", TokenKind::Keyword(KeywordKind::Type));
 
     // Booleans
     map.insert("true", TokenKind::BooleanLiteral { value: true });

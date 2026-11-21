@@ -7,7 +7,7 @@ use std::{hash_map, panic, rc::Rc};
 use nlf_macros::native_fn;
 use nlf_shared::vm::VMContext;
 use wasm_bindgen::prelude::*;
-use nlf_core::{compiler::resolvers::{ModuleResolver, StaticModuleResolver}, errors::LanguageResult, loader::Loader, stdlib::FUNCTION_TABLE, vm::{Value, run_main}};
+use nlf_core::{compiler::resolvers::{ModuleResolver, StaticModuleResolver}, errors::LanguageResult, loader::Loader, stdlib::FUNCTION_TABLE, vm::Value};
 
 #[wasm_bindgen]
 extern "C" {

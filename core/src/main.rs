@@ -1,6 +1,6 @@
 use std::{env, path::Path, rc::Rc};
 
-use nlf_core::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver}, loader::Loader, manifest::{ManifestSearchResult, search_manifest}, package_manager::{create_project, install_packages}, vm};
+use nlf_core::{compiler::resolvers::{FileSystemModuleResolver, ModuleResolver}, loader::Loader, manifest::{ManifestSearchResult, search_manifest}, package_manager::{create_project, install_packages, publish_package}, vm};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
@@ -28,7 +28,8 @@ enum Commands {
     Uninstall {
         packages: Vec<String>
     },
-    Init
+    Init,
+    Publish
 }
 
 #[tokio::main]
@@ -49,11 +50,14 @@ async fn main() {
             Commands::Install { packages } => {
                 let _ = install_packages(packages).await;
             }
-            Commands::Uninstall { packages } => {
+            Commands::Uninstall { packages: _ } => {
                 todo!()
             },
             Commands::Init => {
                 create_project();
+            }
+            Commands::Publish => {
+                publish_package().await.unwrap();
             }
         }
         return;

@@ -70,6 +70,12 @@ pub struct Identifier {
     pub end: usize
 }
 
+impl Identifier {
+    pub fn get_span(&self) -> Span {
+        Span { start: self.start, end: self.end }
+    }
+}
+
 #[derive(Serialize, Debug, Clone)]
 pub enum VariableDescriptor {
     Identifier(Identifier),
@@ -93,12 +99,14 @@ pub struct Statement<T> {
 pub type ASTStatement = Statement<ASTStatementKind>;
 pub type IRStatement = Statement<IRStatementKind>;
 pub type TypedStatement = Statement<TypedStatementKind>;
+pub type TyStatement = Statement<TyStatementKind>;
 
 pub trait SyntaxTree: Clone {
     type Variable: Serialize + Clone;
     type Descriptor: Serialize + Clone;
     type Type: Serialize + Clone;
     type Argument: Serialize + Clone;
+    type Specifier: Serialize + Clone = Self::Variable;
     
     fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper;
 
@@ -138,7 +146,7 @@ pub enum StatementKind<A: SyntaxTree> {
     Continue,
     Block(Block<Statement<Self>>),
     Import {
-        specifiers: Vec<A::Variable>,
+        specifiers: Vec<A::Specifier>,
         source: StringLiteral,
     },
     Export {
@@ -155,6 +163,8 @@ pub enum StatementKind<A: SyntaxTree> {
         visibility: Visibility,
         name: String,
         value: Expression,
+        type_ref: Option<TypeRef>,
+        ty: TypeId
     },
     Method {
         name: String,
@@ -165,6 +175,11 @@ pub enum StatementKind<A: SyntaxTree> {
         descriptor: A::Descriptor,
         expression: Expression,
         type_ref: Option<TypeRef>,
+        ty: A::Type
+    },
+    TypeAlias {
+        ident: Identifier,
+        type_ref: TypeRef,
         ty: A::Type
     }
 }
@@ -235,9 +250,33 @@ impl SyntaxTree for TypedSyntaxTree {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TySyntaxTree;
+
+impl SyntaxTree for TySyntaxTree {
+    type Argument = Argument<Identifier, TypeId>;
+    type Descriptor = VariableDescriptor;
+    type Type = TypeId;
+    type Variable = Identifier;
+    type Specifier = (Identifier, TypeId);
+
+    fn wrap_statement_kind_wrapper(statement_kind: StatementKind<Self>) -> StatementKindWrapper {
+        StatementKindWrapper::Ty(statement_kind)
+    }
+
+    fn unwrap_statement_kind_wrapper(statement_kind_wrapper: StatementKindWrapper) -> StatementKind<Self> {
+        let StatementKindWrapper::Ty(statement_kind) = statement_kind_wrapper else {
+            unreachable!()
+        };
+
+        statement_kind
+    }
+}
+
 pub type ASTStatementKind = StatementKind<ASTSyntaxTree>;
 pub type IRStatementKind = StatementKind<IRSyntaxTree>; 
-pub type TypedStatementKind = StatementKind<TypedSyntaxTree>; 
+pub type TypedStatementKind = StatementKind<TypedSyntaxTree>;
+pub type TyStatementKind = StatementKind<TySyntaxTree>; 
 
 impl<A: SyntaxTree> StatementKind<A> {
     pub fn into_statement(self, start: usize, end: usize) -> Statement<Self> {
@@ -249,6 +288,7 @@ impl<A: SyntaxTree> StatementKind<A> {
 pub enum StatementKindWrapper {
     AST(ASTStatementKind),
     Typed(TypedStatementKind),
+    Ty(StatementKind<TySyntaxTree>),
     IR(IRStatementKind)
 }
 
@@ -366,7 +406,13 @@ pub type TypedProgram = Program<TypedStatement>;
 
 // Typing
 #[derive(Serialize, Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct TypeId(pub u32);
+pub struct TypeId(pub i32, pub u32);
+
+impl TypeId {
+    pub fn unknown() -> Self {
+        Self(-1, 0)
+    }
+}
 
 #[derive(Serialize, Debug, Clone)]
 pub enum TypeRef {
@@ -423,7 +469,8 @@ pub enum Type {
     Array(Box<Type>),
     Object(IndexMap<String, Type>),
     Unknown,
-    Any
+    Any,
+    Alias(TypeId)
 }
 
 impl ToString for Type {
@@ -444,14 +491,15 @@ impl ToString for Type {
                     "still not implemented"
                 )
             },
-            Self::Class(box ClassType { name, .. }) => format!("class {}", name),
-            Self::Instance { class: box ClassType { name, .. }, .. } => format!("{}", name),
+            Self::Class(ClassType { name, .. }) => format!("class {}", name),
+            Self::Instance { class: ClassType { name, .. }, .. } => format!("{}", name),
             Self::Array(ty) => format!("{}[]", ty.to_string()),
             Self::Object(entries) => {
                 format!("{{ {} }}", entries.iter().map(|(key, value)| format!("{}: {}", key, value.to_string())).collect::<Vec<String>>().join(", "))
             },
             Self::Unknown => "unknown".to_string(),
-            Self::Any => "any".to_string()
+            Self::Any => "any".to_string(),
+            Self::Alias(_) => "type TODO = something".to_string()
         }
     }
 }
@@ -486,37 +534,37 @@ pub enum DefaultType {
     Unknown
 }
 
-impl TypeArena<Type> {
-    pub fn register_defaults(&mut self) {
-        let mut register = |default_ty: DefaultType, ty: Type| {
-            let type_id = self.alloc(ty);
-            self.defaults.insert(default_ty, type_id);
-        };
+// impl TypeArena<Type> {
+//     pub fn register_defaults(&mut self) {
+//         let mut register = |default_ty: DefaultType, ty: Type| {
+//             let type_id = self.alloc(ty);
+//             self.defaults.insert(default_ty, type_id);
+//         };
 
-        register(DefaultType::String, Type::String);
-        register(DefaultType::Number, Type::Number);
-        register(DefaultType::Bool, Type::Bool);
-        register(DefaultType::Any, Type::Any);
-        register(DefaultType::Unknown, Type::Unknown);
-    }
+//         register(DefaultType::String, Type::String);
+//         register(DefaultType::Number, Type::Number);
+//         register(DefaultType::Bool, Type::Bool);
+//         register(DefaultType::Any, Type::Any);
+//         register(DefaultType::Unknown, Type::Unknown);
+//     }
 
-    pub fn get_default(&self, ty: DefaultType) -> TypeId {
-        self.defaults.get(&ty).unwrap().clone()
-    }
-}
+//     pub fn get_default(&self, ty: DefaultType) -> TypeId {
+//         self.defaults.get(&ty).unwrap().clone()
+//     }
+// }
 
-impl<T: Debug> TypeArena<T> {
-    pub fn new() -> Self {
-        Self { types: vec![], defaults: HashMap::new() }
-    }
+// impl<T: Debug> TypeArena<T> {
+//     pub fn new() -> Self {
+//         Self { types: vec![], defaults: HashMap::new() }
+//     }
 
-    pub fn alloc(&mut self, ty: T) -> TypeId {
-        let id = self.types.len() as u32;
-        self.types.push(ty);
-        TypeId(id)
-    }
+//     pub fn alloc(&mut self, ty: T) -> TypeId {
+//         let id = self.types.len() as u32;
+//         self.types.push(ty);
+//         TypeId(id)
+//     }
 
-    pub fn get(&self, id: TypeId) -> &T {
-        &self.types[id.0 as usize]
-    }
-}
+//     pub fn get(&self, id: TypeId) -> &T {
+//         &self.types[id.0 as usize]
+//     }
+// }

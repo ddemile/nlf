@@ -339,6 +339,17 @@ fn match_statement(parser: &mut Parser) -> LanguageResult<Option<ASTStatement>> 
             Ok(Some(ASTStatementKind::Return { expression }.into_statement(start, end)))
         },
         Some(TokenKind::Keyword(KeywordKind::Class)) => Ok(Some(match_class(parser)?)),
+        Some(TokenKind::Keyword(KeywordKind::Type)) => {
+            let Token { start, .. } = expect_keyword!(parser, KeywordKind::Type);
+            let ident = expect_identifier!(parser);
+
+            expect_token!(parser, TokenKind::Assign);
+
+            let type_ref = match_type_ref(parser)?;
+            let end = type_ref.get_span().end;
+
+            Ok(Some(ASTStatementKind::TypeAlias { ident, type_ref, ty: () }.into_statement(start, end)))
+        },
         _ => {
             if parser.peek().is_none() {
                 return Ok(None);
@@ -571,6 +582,14 @@ fn match_class(parser: &mut Parser) -> LanguageResult<ASTStatement> {
 
             let Identifier { value: field_name, .. } = expect_identifier!(parser);
 
+            let mut type_ref = None;
+
+            if matches!(parser.peek(), Some(Token { kind: TokenKind::Colon, .. })) {
+                parser.advance();
+
+                type_ref = Some(match_type_ref(parser)?);
+            }
+
             expect_token!(parser, TokenKind::Assign);
             let expression = parse_expression(parser, 0)?;
             let end = expression.end;
@@ -578,7 +597,9 @@ fn match_class(parser: &mut Parser) -> LanguageResult<ASTStatement> {
             fields.push(ASTStatementKind::Field {
                 name: field_name,
                 value: expression,
-                visibility
+                visibility,
+                type_ref: type_ref.clone(),
+                ty: TypeId::unknown()
             }.into_statement(start, end));
         }
     }

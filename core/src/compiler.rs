@@ -548,9 +548,8 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
                 locals: constructor_info.locals.clone()
             });
 
-
             for field in fields.iter().rev() {
-                let Statement { kind: ASTStatementKind::Field { visibility: _, name, value }, .. } = field else {
+                let Statement { kind: ASTStatementKind::Field { visibility: _, name, value, .. }, .. } = field else {
                     unreachable!()
                 };
 
@@ -608,6 +607,9 @@ pub fn compile_statement(statement: &IRStatement, compiler: &mut Compiler) {
                 compiler.emit(Op::WriteProperty);
             }
         }
+        StatementKind::TypeAlias { .. } => {
+            // This statement does not emit anything because it's only a type
+        }
         _ => todo!()
     }
 }
@@ -655,7 +657,7 @@ pub fn compile_expression(expression: &Expression, usage: ValueUsage, compiler: 
                     compiler.emit(Op::BuildArray(values.len()));
                 }
                 LiteralExpressionKind::Function(wrapper) => {
-                    let box StatementKindWrapper::IR(StatementKind::Function { variable, arguments, block, .. }) = wrapper else {
+                    let StatementKindWrapper::IR(StatementKind::Function { variable, arguments, block, .. }) = wrapper else {
                         unreachable!()
                     };
 

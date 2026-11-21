@@ -4,7 +4,7 @@ members = [
     "core",
     "shared",
     "macros",
-    # "lsp",
+    "lsp",
     "addon-maker",
     "wasm"
 ]
