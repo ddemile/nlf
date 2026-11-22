@@ -20,4 +20,5 @@ pub mod type_experiments;
 pub mod compiler;
 pub mod translator;
 pub mod manifest;
+#[cfg(feature = "package_manager")]
 pub mod package_manager;

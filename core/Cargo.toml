@@ -28,12 +28,18 @@ smallvec = { version = "1.15.1", features = ["union"] }
 ron = "0.12.1"
 toml = "1.1.6"
 anyhow = "1.0.104"
-tokio = { version = "1.53.1", features = ["full"] }
-semver = { version = "1.0.28", features = ["serde"] }
-futures-util = "0.3.34"
-flate2 = "1.1.10"
-tar = "0.4.46"
+tokio = { version = "1.53.1", features = ["full"], optional = true }
+semver = { version = "1.0.28", features = ["serde"], optional = true }
+futures-util = { version =  "0.3.34", optional = true }
+flate2 = { version = "1.1.10", optional = true }
+tar = { version = "0.4.46", optional = true }
+
+[features]
+default = ["cli"]
+package_manager = ["dep:tokio", "dep:semver", "dep:futures-util", "dep:flate2", "dep:tar"]
+cli = ["package_manager"]
 
 [[bin]]
 name = "nlf"
 path = "src/main.rs"
+required-features = ["cli"]

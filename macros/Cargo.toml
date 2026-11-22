@@ -9,5 +9,5 @@ proc-macro = true
 
 [dependencies]
 quote = "1.0.45"
-syn = "2.0.117"
-nlf-shared = { path = "../shared"}
+syn = { version = "2.0.117", features = ["full"] }
+nlf-shared = { path = "../shared" }

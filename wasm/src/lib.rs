@@ -7,7 +7,7 @@ use std::{hash_map, panic, rc::Rc};
 use nlf_macros::native_fn;
 use nlf_shared::vm::VMContext;
 use wasm_bindgen::prelude::*;
-use nlf_core::{compiler::resolvers::{ModuleResolver, StaticModuleResolver}, errors::LanguageResult, loader::Loader, stdlib::FUNCTION_TABLE, vm::Value};
+use nlf_core::{compiler::resolvers::{ModuleResolver, StaticModuleResolver}, errors::LanguageResult, loader::Loader, stdlib::{CoreModules, FUNCTION_TABLE}, vm::Value};
 
 #[wasm_bindgen]
 extern "C" {
@@ -57,9 +57,18 @@ pub fn run(code: &str) {
     FUNCTION_TABLE.lock().insert("confirm", confirm_function);
     FUNCTION_TABLE.lock().insert("input", input_function);
 
-    let modules = hash_map! {
+    let mut modules = hash_map! {
         "main".to_string() => code.to_string()
     };
+
+    // Load standard library
+    for core_module in CoreModules::iter() {
+        let module_name = core_module.split(".").collect::<Vec<&str>>()[0];
+        let source = format!("core:{module_name}");
+
+        let contents = String::from_utf8(CoreModules::get(&core_module).unwrap().data.to_vec()).unwrap();
+        modules.insert(source, contents);
+    }
 
     let resolver: Rc<dyn ModuleResolver> = Rc::new(StaticModuleResolver {
         modules
